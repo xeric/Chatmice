@@ -29,6 +29,7 @@ struct TabGeneralSettingsView: View {
     @AppStorage("chatFontSize") var chatFontSize: Double = 14.0
     @AppStorage("preferredColorScheme") private var preferredColorSchemeRaw: Int = 0
     @AppStorage("codeFont") private var codeFont: String = AppConstants.firaCode
+    @AppStorage("showAssistantNameInSidebar") private var showAssistantNameInSidebar: Bool = true
     @AppStorage(PersistenceController.iCloudSyncEnabledKey) private var iCloudSyncEnabled: Bool = false
     @AppStorage(SettingsIndicatorKeys.generalSeen) private var generalSettingsSeen: Bool = false
     @Environment(\.colorScheme) private var systemColorScheme
@@ -191,6 +192,21 @@ struct TabGeneralSettingsView: View {
                             }
                             .gridColumnAlignment(.trailing)
                             .frame(maxWidth: .infinity)
+                        }
+
+                        Divider()
+
+                        GridRow {
+                            HStack {
+                                Text("Sidebar")
+                                Spacer()
+                            }
+                            .frame(width: 120)
+                            .gridCellAnchor(.top)
+
+                            Toggle("Show assistant name", isOn: $showAssistantNameInSidebar)
+                                .toggleStyle(.switch)
+                                .frame(maxWidth: .infinity, alignment: .leading)
                         }
                     }
                     .padding(8)

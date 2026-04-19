@@ -542,7 +542,7 @@ class CloudSyncManager: ObservableObject {
         log("Checking iCloud account status...", type: "Setup")
 
         let container = cloudContainerIdentifier.map { CKContainer(identifier: $0) } ?? CKContainer.default()
-        container.accountStatus { [weak self] status, error in
+        container.accountStatus { [weak self] status, error in 
             DispatchQueue.main.async {
                 if let error = error {
                     self?.log("iCloud account check failed: \(error.localizedDescription)", type: "Setup", isError: true)
