@@ -40,13 +40,16 @@ struct ContentView: View {
 
     @State private var windowRef: NSWindow?
     @State private var openedChatId: String? = nil
-    @State private var columnVisibility = NavigationSplitViewVisibility.all
-    @State private var lastChatCount = 0
+    @AppStorage("isSidebarVisible") var isSidebarVisible = true
+    @State private var lastChatCount: Int? = nil
     @State private var searchText = ""
     @State private var isSearchPresented = false
 
     var body: some View {
-        NavigationSplitView(columnVisibility: $columnVisibility) {
+        NavigationSplitView(columnVisibility: Binding(
+            get: { isSidebarVisible ? .all : .detailOnly },
+            set: { isSidebarVisible = $0 != .detailOnly }
+        )) {
             ChatListView(selectedChat: $selectedChat, searchText: $searchText)
                 .environmentObject(attentionStore)
                 .navigationSplitViewColumnWidth(
@@ -117,7 +120,7 @@ struct ContentView: View {
             }
         }
         .onAppear(perform: {
-            updateSidebarVisibilityForChatCount(previousCount: lastChatCount, newCount: chats.count)
+            if chats.count == 0 { isSidebarVisible = false }
             lastChatCount = chats.count
             if let lastOpenedChatId = UUID(uuidString: lastOpenedChatId) {
                 if let lastOpenedChat = chats.first(where: { $0.id == lastOpenedChatId }) {
@@ -126,7 +129,9 @@ struct ContentView: View {
             }
         })
         .onChange(of: chats.count) { newCount in
-            updateSidebarVisibilityForChatCount(previousCount: lastChatCount, newCount: newCount)
+            if let prev = lastChatCount {
+                updateSidebarVisibilityForChatCount(previousCount: prev, newCount: newCount)
+            }
             lastChatCount = newCount
         }
         .background(WindowAccessor(window: $window))
@@ -444,12 +449,12 @@ struct ContentView: View {
 
     private func updateSidebarVisibilityForChatCount(previousCount: Int, newCount: Int) {
         if newCount == 0 {
-            columnVisibility = .detailOnly
+            isSidebarVisible = false
             return
         }
 
         if previousCount == 0 && newCount > 0 {
-            columnVisibility = .all
+            isSidebarVisible = true
         }
     }
 }
