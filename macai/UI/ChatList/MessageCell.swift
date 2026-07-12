@@ -9,6 +9,13 @@ import CoreData
 import SwiftUI
 
 struct MessageCell: View, Equatable {
+    static func assistantDisplayName(personaName: String?, showAssistantNameInSidebar: Bool) -> String? {
+        guard showAssistantNameInSidebar else {
+            return nil
+        }
+        return personaName ?? "No assistant selected"
+    }
+
     static func == (lhs: MessageCell, rhs: MessageCell) -> Bool {
         lhs.chatObjectID == rhs.chatObjectID &&
         lhs.timestamp == rhs.timestamp &&
@@ -16,7 +23,8 @@ struct MessageCell: View, Equatable {
         lhs.showsAttentionIndicator == rhs.showsAttentionIndicator &&
         lhs.$isActive.wrappedValue == rhs.$isActive.wrappedValue &&
         lhs.isPinned == rhs.isPinned &&
-        lhs.searchText == rhs.searchText
+        lhs.searchText == rhs.searchText &&
+        lhs.showAssistantNameInSidebar == rhs.showAssistantNameInSidebar
     }
 
     let chatObjectID: NSManagedObjectID
@@ -28,6 +36,7 @@ struct MessageCell: View, Equatable {
     let isPinned: Bool
     @Binding var isActive: Bool
     let searchText: String
+    @AppStorage("showAssistantNameInSidebar") private var showAssistantNameInSidebar: Bool = true
     @State private var isHovered = false
     @Environment(\.colorScheme) var colorScheme
 
@@ -52,13 +61,11 @@ struct MessageCell: View, Equatable {
         } label: {
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
-                    if let personaName {
-                        HighlightedText(personaName, highlight: searchText, elementType: "chatlist")
-                            .font(.caption)
-                            .lineLimit(1)
-                    }
-                    else {
-                        HighlightedText("No assistant selected", highlight: searchText, elementType: "chatlist")
+                    if let assistantDisplayName = MessageCell.assistantDisplayName(
+                        personaName: personaName,
+                        showAssistantNameInSidebar: showAssistantNameInSidebar
+                    ) {
+                        HighlightedText(assistantDisplayName, highlight: searchText, elementType: "chatlist")
                             .font(.caption)
                             .lineLimit(1)
                     }
