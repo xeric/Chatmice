@@ -177,6 +177,13 @@ struct ChatView: View {
                 newMessage = draftManager.draftMessage(for: chat)
             }
         }
+        .onChange(of: chatViewModel.sortedMessages.count) { newCount in
+            if newCount == 1 {
+                withAnimation {
+                    isBottomContainerExpanded = false
+                }
+            }
+        }
         .onChange(of: chat.lastMessage?.body) { _ in
             guard let lastMessage = chat.lastMessage, !lastMessage.own else { return }
             updateReasoningTiming(for: lastMessage, isStreamingActive: logicHandler.isStreaming)
@@ -235,12 +242,6 @@ struct ChatView: View {
         attachedImages = []
         attachedFiles = []
         draftManager.clearDraft(chat: chat)
-
-        if chatViewModel.sortedMessages.count == 1 { // First message just sent
-            withAnimation {
-                isBottomContainerExpanded = false
-            }
-        }
     }
 
     private func handleAddImage() {
