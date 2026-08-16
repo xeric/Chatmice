@@ -6,7 +6,6 @@
 //
 
 import AppKit
-import Sparkle
 import SwiftUI
 import AttributedText
 
@@ -34,6 +33,7 @@ struct TabGeneralSettingsView: View {
     @AppStorage(SettingsIndicatorKeys.generalSeen) private var generalSettingsSeen: Bool = false
     @Environment(\.colorScheme) private var systemColorScheme
     @StateObject private var cloudSyncManager = CloudSyncManager.shared
+    @ObservedObject private var updateCoordinator = V3UpdateCoordinator.shared
     @State private var selectedColorSchemeRaw: Int = 0
     @State private var codeResult: String = ""
     @State private var showRestartAlert: Bool = false
@@ -75,12 +75,6 @@ struct TabGeneralSettingsView: View {
             }
         )
     }
-
-    private let updaterController = SPUStandardUpdaterController(
-        startingUpdater: true,
-        updaterDelegate: nil,
-        userDriverDelegate: nil
-    )
 
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
@@ -309,16 +303,52 @@ struct TabGeneralSettingsView: View {
 
             HStack {
                 Toggle("Automatically check for updates", isOn: $autoCheckForUpdates)
-                    .onChange(of: autoCheckForUpdates) { newValue in
-                        updaterController.updater.automaticallyChecksForUpdates = newValue
+                    .onChange(of: autoCheckForUpdates) {
+                        updateCoordinator.updater.automaticallyChecksForUpdates = autoCheckForUpdates
                     }
 
                 Spacer()
 
                 Button("Check for Updates Now") {
-                    updaterController.checkForUpdates(nil)
+                    updateCoordinator.checkForUpdates()
                 }
             }
+
+            if let version = updateCoordinator.availableV3Version {
+                HStack(spacing: 12) {
+                    Image(systemName: "sparkles")
+                        .font(.title2)
+                        .foregroundStyle(.blue)
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("macai \(version) is available")
+                            .font(.headline)
+                        Text("AI Assistants and API Services work together differently in macai 3.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Spacer()
+
+                    Button("See What’s Changing…") {
+                        updateCoordinator.showAvailableV3Upgrade()
+                    }
+                    .buttonStyle(.borderedProminent)
+                }
+                .padding(12)
+                .background(.blue.opacity(0.07), in: .rect(cornerRadius: 12))
+            }
+
+            #if DEBUG
+            HStack {
+                Spacer()
+                Button("Preview macai 3 Upgrade Notice") {
+                    updateCoordinator.previewV3UpgradeNotice()
+                }
+                .buttonStyle(.link)
+                .help("Opens the upgrade notice without marking it as shown.")
+            }
+            #endif
 
         }
         .padding()

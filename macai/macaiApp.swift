@@ -27,17 +27,17 @@ final class CheckForUpdatesViewModel: ObservableObject {
 // See https://stackoverflow.com/questions/68553092/menu-not-updating-swiftui-bug for more info
 struct CheckForUpdatesView: View {
     @ObservedObject private var checkForUpdatesViewModel: CheckForUpdatesViewModel
-    private let updater: SPUUpdater
+    private let updateCoordinator: V3UpdateCoordinator
 
-    init(updater: SPUUpdater) {
-        self.updater = updater
+    init(updateCoordinator: V3UpdateCoordinator) {
+        self.updateCoordinator = updateCoordinator
 
         // Create our view model for our CheckForUpdatesView
-        self.checkForUpdatesViewModel = CheckForUpdatesViewModel(updater: updater)
+        self.checkForUpdatesViewModel = CheckForUpdatesViewModel(updater: updateCoordinator.updater)
     }
 
     var body: some View {
-        Button("Check for Updates…", action: updater.checkForUpdates)
+        Button("Check for Updates…", action: updateCoordinator.checkForUpdates)
             .disabled(!checkForUpdatesViewModel.canCheckForUpdates)
     }
 }
@@ -362,7 +362,7 @@ struct macaiApp: App {
     }
     @Environment(\.scenePhase) private var scenePhase
 
-    private let updaterController: SPUStandardUpdaterController
+    private let updateCoordinator = V3UpdateCoordinator.shared
     let persistenceController = PersistenceController.shared
 
     init() {
@@ -380,12 +380,6 @@ struct macaiApp: App {
         // Enable badge for existing users who were authorized without .badge
         NotificationPresenter.shared.enableBadgeForExistingUsers()
 
-        updaterController = SPUStandardUpdaterController(
-            startingUpdater: true,
-            updaterDelegate: nil,
-            userDriverDelegate: nil
-        )
-
     }
 
     var body: some Scene {
@@ -398,13 +392,13 @@ struct macaiApp: App {
         .onChange(of: scenePhase) { phase in
             if phase == .active {
                 if UserDefaults.standard.bool(forKey: "autoCheckForUpdates") {
-                    updaterController.updater.checkForUpdatesInBackground()
+                    updateCoordinator.checkForUpdatesInBackground()
                 }
             }
         }
         .commands {
             CommandGroup(after: .appInfo) {
-                CheckForUpdatesView(updater: updaterController.updater)
+                CheckForUpdatesView(updateCoordinator: updateCoordinator)
             }
 
             CommandMenu("Chat") {
