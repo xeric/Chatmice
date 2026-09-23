@@ -115,8 +115,10 @@ struct ChatMessagesView: View {
                         scrollDebounceWorkItem?.cancel()
 
                         let workItem = DispatchWorkItem {
-                            if let lastMessage = chatViewModel.sortedMessages.last {
-                                withAnimation(.easeOut(duration: 1)) {
+                            withAnimation(.easeOut(duration: 0.22)) {
+                                if activeActivity != nil {
+                                    scrollView.scrollTo(activityAnchorID, anchor: .bottom)
+                                } else if let lastMessage = chatViewModel.sortedMessages.last {
                                     scrollView.scrollTo(lastMessage.objectID, anchor: .bottom)
                                 }
                             }
