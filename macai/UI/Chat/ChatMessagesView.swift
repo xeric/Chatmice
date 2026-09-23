@@ -28,7 +28,9 @@ struct ChatMessagesView: View {
     var backgroundColor = Color(NSColor.controlBackgroundColor)
 
     private var activeActivity: ChatActivitySnapshot? {
-        activityStore.activeSnapshot(for: chat.id)
+        guard let snapshot = activityStore.activeSnapshot(for: chat.id),
+              snapshot.phase.showsInlineIndicator else { return nil }
+        return snapshot
     }
 
     private var activityAnchorID: String {
@@ -205,6 +207,18 @@ struct ChatMessagesView: View {
     }
 }
 
+private extension ChatActivityPhase {
+    var showsInlineIndicator: Bool {
+        switch self {
+        case .awaitingApproval, .runningTool:
+            return false
+        default:
+            return true
+        }
+    }
+}
+
+
 private struct ChatActivityIndicatorView: View {
     let snapshot: ChatActivitySnapshot
 
@@ -224,53 +238,46 @@ private struct ChatActivityIndicatorView: View {
     }
 
     var body: some View {
-        HStack(alignment: .center, spacing: 12) {
+        HStack(alignment: .center, spacing: 7) {
             ActivityWave(color: accent)
-                .frame(width: 34, height: 30)
+                .frame(width: 22, height: 18)
 
-            VStack(alignment: .leading, spacing: 3) {
+            VStack(alignment: .leading, spacing: 1) {
                 Text(snapshot.phase.title)
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(.primary)
 
                 if let detail = snapshot.phase.detail, !detail.isEmpty {
                     Text(cleanDetail(detail))
-                        .font(.system(size: 11))
+                        .font(.system(size: 9.5))
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                         .truncationMode(.middle)
                 }
             }
 
-            Spacer(minLength: 12)
+            Spacer(minLength: 6)
 
             TimelineView(.periodic(from: .now, by: 1)) { context in
                 Text(elapsedText(at: context.date))
-                    .font(.system(size: 10, design: .monospaced))
+                    .font(.system(size: 9, design: .monospaced))
                     .foregroundStyle(.tertiary)
             }
         }
-        .padding(.horizontal, 13)
-        .padding(.vertical, 10)
-        .frame(maxWidth: 520, alignment: .leading)
+        .padding(.horizontal, 9)
+        .padding(.vertical, 6)
+        .frame(maxWidth: 360, alignment: .leading)
         .background(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(.thinMaterial)
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(Color(NSColor.controlBackgroundColor).opacity(0.72))
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(
-                    LinearGradient(
-                        colors: [accent.opacity(0.55), accent.opacity(0.08)],
-                        startPoint: .leading,
-                        endPoint: .trailing
-                    ),
-                    lineWidth: 1
-                )
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(accent.opacity(0.24), lineWidth: 0.75)
         )
         .frame(maxWidth: .infinity, alignment: .leading)
-        .transition(.opacity.combined(with: .move(edge: .bottom)))
-        .animation(.easeInOut(duration: 0.2), value: snapshot.phase)
+        .transition(.opacity)
+        .animation(.easeInOut(duration: 0.15), value: snapshot.phase)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(snapshot.phase.title)
     }
@@ -291,18 +298,18 @@ private struct ActivityWave: View {
     let color: Color
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 0.18)) { context in
+        TimelineView(.animation(minimumInterval: 0.22)) { context in
             let time = context.date.timeIntervalSinceReferenceDate
-            HStack(alignment: .center, spacing: 3) {
-                ForEach(0..<4, id: \.self) { index in
-                    let wave = (sin(time * 5 + Double(index) * 0.9) + 1) / 2
+            HStack(alignment: .center, spacing: 2) {
+                ForEach(0..<3, id: \.self) { index in
+                    let wave = (sin(time * 4.5 + Double(index) * 1.1) + 1) / 2
                     Capsule()
-                        .fill(color.gradient)
-                        .frame(width: 3, height: 8 + wave * 18)
+                        .fill(color.opacity(0.82))
+                        .frame(width: 2, height: 5 + wave * 9)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(color.opacity(0.1), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .background(color.opacity(0.08), in: RoundedRectangle(cornerRadius: 5, style: .continuous))
         }
     }
 }
