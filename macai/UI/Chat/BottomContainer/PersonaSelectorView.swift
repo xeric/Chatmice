@@ -5,6 +5,7 @@
 //  Created by Renat Notfullin on 08.11.2024.
 //
 
+import AppKit
 import CoreData
 import SwiftUI
 
@@ -60,6 +61,32 @@ struct PersonaChipView: View {
     }
 }
 
+private struct PersonaScrollViewConfigurator: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        DispatchQueue.main.async {
+            configureScrollView(containing: view)
+        }
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        DispatchQueue.main.async {
+            configureScrollView(containing: nsView)
+        }
+    }
+
+    private func configureScrollView(containing view: NSView) {
+        guard let scrollView = view.enclosingScrollView else { return }
+        scrollView.hasHorizontalScroller = false
+        scrollView.hasVerticalScroller = false
+        scrollView.autohidesScrollers = true
+        scrollView.verticalScrollElasticity = .none
+        scrollView.horizontalScrollElasticity = .automatic
+        scrollView.usesPredominantAxisScrolling = true
+    }
+}
+
 struct PersonaSelectorView: View {
     @FetchRequest(
         sortDescriptors: [NSSortDescriptor(keyPath: \PersonaEntity.order, ascending: true)],
@@ -98,8 +125,11 @@ struct PersonaSelectorView: View {
                     }
                 }
                 .padding(.horizontal, 14)
-                .padding(.vertical, 12)
+                .padding(.vertical, 4)
+                .background(PersonaScrollViewConfigurator())
             }
+            .scrollIndicators(.hidden)
+            .scrollBounceBehavior(.basedOnSize, axes: .horizontal)
             .overlay(alignment: .leading) {
                 LinearGradient(
                     colors: [colorScheme == .dark ? edgeDarkColor : edgeLightColor, .clear],
@@ -124,7 +154,8 @@ struct PersonaSelectorView: View {
                 }
             }
         }
-        .frame(height: 64)
+        .frame(height: 52)
+        .clipped()
     }
 }
 
