@@ -17,6 +17,7 @@ struct ChatListRow: View, Equatable {
         lhs.lastMessageBody == rhs.lastMessageBody &&
         lhs.isPinned == rhs.isPinned &&
         lhs.showsAttentionIndicator == rhs.showsAttentionIndicator &&
+        lhs.activitySnapshot == rhs.activitySnapshot &&
         (lhs.selectedChat?.objectID == rhs.selectedChat?.objectID) &&
         lhs.searchText == rhs.searchText
     }
@@ -29,6 +30,7 @@ struct ChatListRow: View, Equatable {
     let lastMessageTimestamp: Date
     let updatedDate: Date?
     let showsAttentionIndicator: Bool
+    let activitySnapshot: ChatActivitySnapshot?
     @Binding var selectedChat: ChatEntity?
     let viewContext: NSManagedObjectContext
     let searchText: String
@@ -37,6 +39,7 @@ struct ChatListRow: View, Equatable {
     init(
         chat: ChatEntity,
         showsAttentionIndicator: Bool,
+        activitySnapshot: ChatActivitySnapshot?,
         selectedChat: Binding<ChatEntity?>,
         viewContext: NSManagedObjectContext,
         searchText: String
@@ -50,6 +53,7 @@ struct ChatListRow: View, Equatable {
         self.lastMessageTimestamp = chat.lastMessage?.timestamp ?? .distantPast
         self.updatedDate = chat.updatedDate
         self.showsAttentionIndicator = showsAttentionIndicator
+        self.activitySnapshot = activitySnapshot
         self._selectedChat = selectedChat
         self.viewContext = viewContext
         self.searchText = searchText
@@ -80,6 +84,7 @@ struct ChatListRow: View, Equatable {
             timestamp: lastMessageTimestamp,
             message: lastMessageBody,
             showsAttentionIndicator: showsAttentionIndicator,
+            activitySnapshot: activitySnapshot,
             isPinned: isPinned,
             isActive: isActive,
             searchText: searchText

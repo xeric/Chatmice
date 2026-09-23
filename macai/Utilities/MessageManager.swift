@@ -15,6 +15,7 @@ class MessageManager: ObservableObject {
     private let updateInterval = AppConstants.streamedResponseUpdateUIInterval
     private var streamTask: Task<Void, Never>?
     private var cancelRequested = false
+    private var activeChatId: UUID?
 
     init(apiService: APIService, viewContext: NSManagedObjectContext) {
         self.apiService = apiService
@@ -26,6 +27,35 @@ class MessageManager: ObservableObject {
         self.viewContext = viewContext
     }
 
+    private func beginActivity(for chatId: UUID) {
+        activeChatId = chatId
+        ChatActivityEvents.post(ChatActivityEvent(chatId: chatId, kind: .started))
+        ChatActivityEvents.post(ChatActivityEvent(chatId: chatId, kind: .waitingForModel))
+
+        (apiService as? AgentActivityReporting)?.setActivityHandler { signal in
+            let kind: ChatActivityEventKind
+            switch signal {
+            case .waitingForModel:
+                kind = .waitingForModel
+            case .awaitingApproval(let tool, let detail):
+                kind = .awaitingApproval(tool: tool, detail: detail)
+            case .runningTool(let tool, let detail):
+                kind = .runningTool(tool: tool, detail: detail)
+            case .processingToolResult(let tool):
+                kind = .processingToolResult(tool: tool)
+            }
+            ChatActivityEvents.post(ChatActivityEvent(chatId: chatId, kind: kind))
+        }
+    }
+
+    private func endActivity(for chatId: UUID, kind: ChatActivityEventKind) {
+        ChatActivityEvents.post(ChatActivityEvent(chatId: chatId, kind: kind))
+        (apiService as? AgentActivityReporting)?.setActivityHandler(nil)
+        if activeChatId == chatId {
+            activeChatId = nil
+        }
+    }
+
     func sendMessage(
         _ message: String,
         in chat: ChatEntity,
@@ -33,6 +63,7 @@ class MessageManager: ObservableObject {
         completion: @escaping (Result<Void, Error>) -> Void
     ) {
         let requestMessages = prepareRequestMessages(userMessage: message, chat: chat, contextSize: contextSize)
+        beginActivity(for: chat.id)
         chat.waitingForResponse = true
         let temperature = (chat.persona?.temperature ?? AppConstants.defaultTemperatureForChat).roundedToOneDecimal()
 
@@ -54,6 +85,7 @@ class MessageManager: ObservableObject {
                     geminiParts: decodePartsEnvelopeToBase64(partsEnvelope)
                 )
                 self.viewContext.saveWithRetry(attempts: 1)
+                self.endActivity(for: chat.id, kind: .completed)
                 
                 DispatchQueue.main.async {
                     NotificationCenter.default.post(name: NSNotification.Name("NonStreamingMessageCompleted"), object: chat)
@@ -73,8 +105,9 @@ class MessageManager: ObservableObject {
 
             case .failure(let error):
                 chat.waitingForResponse = false
+                self.endActivity(for: chat.id, kind: .failed(message: error.localizedDescription))
                 completion(.failure(error))
-            }
+        }
         }
 
         apiService.sendMessage(requestMessages, temperature: temperature) { result in
@@ -92,6 +125,7 @@ class MessageManager: ObservableObject {
         cancelRequested = false
         let requestMessages = prepareRequestMessages(userMessage: message, chat: chat, contextSize: contextSize)
         let temperature = (chat.persona?.temperature ?? AppConstants.defaultTemperatureForChat).roundedToOneDecimal()
+        beginActivity(for: chat.id)
 
         streamTask?.cancel()
         streamTask = Task { [weak self] in
@@ -109,6 +143,9 @@ class MessageManager: ObservableObject {
                         break
                     }
                     guard !chunk.isEmpty else { continue }
+                    if !chunk.contains(ToolActivityRecord.openingTag) {
+                        ChatActivityEvents.post(ChatActivityEvent(chatId: chat.id, kind: .streamingResponse))
+                    }
 
                     accumulatedResponse += chunk
 
@@ -149,11 +186,13 @@ class MessageManager: ObservableObject {
                 if Task.isCancelled || cancelRequested {
                     cancelRequested = false
                     chat.waitingForResponse = false
+                    self.endActivity(for: chat.id, kind: .cancelled)
                     completion(.failure(CancellationError()))
                     return
                 }
 
                 guard !accumulatedResponse.isEmpty else {
+                    self.endActivity(for: chat.id, kind: .failed(message: APIError.invalidResponse.localizedDescription))
                     completion(.failure(APIError.invalidResponse))
                     return
                 }
@@ -201,15 +240,18 @@ class MessageManager: ObservableObject {
                         ]
                     )
                 }
+                self.endActivity(for: chat.id, kind: .completed)
                 completion(.success(()))
             }
             catch is CancellationError {
                 chat.waitingForResponse = false
+                self.endActivity(for: chat.id, kind: .cancelled)
                 completion(.failure(CancellationError()))
             }
             catch {
                 print("Streaming error: \(error)")
                 chat.waitingForResponse = false
+                self.endActivity(for: chat.id, kind: .failed(message: error.localizedDescription))
                 completion(.failure(error))
             }
         }
@@ -219,6 +261,9 @@ class MessageManager: ObservableObject {
         cancelRequested = true
         streamTask?.cancel()
         apiService.cancelCurrentRequest()
+        if let activeChatId {
+            endActivity(for: activeChatId, kind: .cancelled)
+        }
     }
 
     func generateChatNameIfNeeded(chat: ChatEntity, force: Bool = false) {

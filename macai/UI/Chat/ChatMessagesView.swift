@@ -23,11 +23,16 @@ struct ChatMessagesView: View {
     @State private var codeBlocksRendered = false
     @State private var pendingCodeBlocks = 0
     @State private var isInitialLoad = true
+    @ObservedObject private var activityStore = ChatActivityStore.shared
     
     var backgroundColor = Color(NSColor.controlBackgroundColor)
 
-    private var shouldShowWaitingBubble: Bool {
-        chat.waitingForResponse && (chat.lastMessage?.own ?? true)
+    private var activeActivity: ChatActivitySnapshot? {
+        activityStore.activeSnapshot(for: chat.id)
+    }
+
+    private var activityAnchorID: String {
+        "chat-activity-\(chat.id.uuidString)"
     }
     
     var body: some View {
@@ -62,21 +67,9 @@ struct ChatMessagesView: View {
                         }
                     }
 
-                    if shouldShowWaitingBubble {
-                        let bubbleContent = ChatBubbleContent(
-                            message: "",
-                            own: false,
-                            waitingForResponse: true,
-                            errorMessage: nil,
-                            systemMessage: false,
-                            isStreaming: isStreaming,
-                            isLatestMessage: false,
-                            reasoningDuration: nil,
-                            isActiveReasoning: false
-                        )
-
-                        ChatBubbleView(content: bubbleContent, searchText: $searchText)
-                            .id(-1)
+                    if let activeActivity {
+                        ChatActivityIndicatorView(snapshot: activeActivity)
+                            .id(activityAnchorID)
                     }
                     else if let error = currentError {
                         let bubbleContent = ChatBubbleContent(
@@ -131,10 +124,20 @@ struct ChatMessagesView: View {
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1, execute: workItem)
                     }
                 }
+                .onChange(of: activeActivity?.phase) { phase in
+                    guard phase != nil, !userIsScrolling else { return }
+                    withAnimation(.easeOut(duration: 0.22)) {
+                        scrollView.scrollTo(activityAnchorID, anchor: .bottom)
+                    }
+                }
                 .onChange(of: chatViewModel.sortedMessages.count) { _ in
-                    if shouldShowWaitingBubble || currentError != nil {
+                    if activeActivity != nil {
                         withAnimation {
-                            scrollView.scrollTo(-1)
+                            scrollView.scrollTo(activityAnchorID, anchor: .bottom)
+                        }
+                    } else if currentError != nil {
+                        withAnimation {
+                            scrollView.scrollTo(-2, anchor: .bottom)
                         }
                     }
                 }
@@ -198,6 +201,108 @@ struct ChatMessagesView: View {
             .frame(height: 40)
             .padding(.trailing, 16)
             .allowsHitTesting(false)
+        }
+    }
+}
+
+private struct ChatActivityIndicatorView: View {
+    let snapshot: ChatActivitySnapshot
+
+    private var accent: Color {
+        switch snapshot.phase {
+        case .awaitingApproval:
+            return .orange
+        case .runningTool:
+            return .purple
+        case .processingToolResult:
+            return .cyan
+        case .failed:
+            return .red
+        default:
+            return .accentColor
+        }
+    }
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 12) {
+            ActivityWave(color: accent)
+                .frame(width: 34, height: 30)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(snapshot.phase.title)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.primary)
+
+                if let detail = snapshot.phase.detail, !detail.isEmpty {
+                    Text(cleanDetail(detail))
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+            }
+
+            Spacer(minLength: 12)
+
+            TimelineView(.periodic(from: .now, by: 1)) { context in
+                Text(elapsedText(at: context.date))
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundStyle(.tertiary)
+            }
+        }
+        .padding(.horizontal, 13)
+        .padding(.vertical, 10)
+        .frame(maxWidth: 520, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(.thinMaterial)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(
+                    LinearGradient(
+                        colors: [accent.opacity(0.55), accent.opacity(0.08)],
+                        startPoint: .leading,
+                        endPoint: .trailing
+                    ),
+                    lineWidth: 1
+                )
+        )
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .transition(.opacity.combined(with: .move(edge: .bottom)))
+        .animation(.easeInOut(duration: 0.2), value: snapshot.phase)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(snapshot.phase.title)
+    }
+
+    private func cleanDetail(_ detail: String) -> String {
+        detail
+            .replacingOccurrences(of: "Execute command:\n", with: "")
+            .replacingOccurrences(of: "\n", with: " ")
+    }
+
+    private func elapsedText(at date: Date) -> String {
+        let seconds = max(0, Int(date.timeIntervalSince(snapshot.startedAt)))
+        return seconds < 60 ? "\(seconds)s" : "\(seconds / 60)m \(seconds % 60)s"
+    }
+}
+
+private struct ActivityWave: View {
+    let color: Color
+
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 0.18)) { context in
+            let time = context.date.timeIntervalSinceReferenceDate
+            HStack(alignment: .center, spacing: 3) {
+                ForEach(0..<4, id: \.self) { index in
+                    let wave = (sin(time * 5 + Double(index) * 0.9) + 1) / 2
+                    Capsule()
+                        .fill(color.gradient)
+                        .frame(width: 3, height: 8 + wave * 18)
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(color.opacity(0.1), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
         }
     }
 }

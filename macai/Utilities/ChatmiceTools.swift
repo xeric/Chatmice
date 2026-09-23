@@ -77,6 +77,14 @@ struct ToolActivityRecord: Codable, Hashable {
             }
             .joined(separator: "\n")
     }
+
+    static func removingMarkers(in content: String) -> String {
+        content
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .filter { decode(markerLine: String($0)) == nil }
+            .joined(separator: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
 }
 
 // MARK: - JSONSchema
@@ -285,6 +293,17 @@ public struct ToolDefinition: Codable, Hashable, Sendable {
         self.description = description
         self.parameters = parameters
     }
+}
+
+enum AgentActivitySignal: Equatable, Sendable {
+    case waitingForModel
+    case awaitingApproval(tool: String, detail: String)
+    case runningTool(tool: String, detail: String)
+    case processingToolResult(tool: String)
+}
+
+protocol AgentActivityReporting: AnyObject {
+    func setActivityHandler(_ handler: (@Sendable (AgentActivitySignal) -> Void)?)
 }
 
 public typealias ConfirmationRequest = @Sendable (String) async -> Bool

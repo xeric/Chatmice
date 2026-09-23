@@ -21,6 +21,7 @@ struct MessageCell: View, Equatable {
         lhs.timestamp == rhs.timestamp &&
         lhs.message == rhs.message &&
         lhs.showsAttentionIndicator == rhs.showsAttentionIndicator &&
+        lhs.activitySnapshot == rhs.activitySnapshot &&
         lhs.$isActive.wrappedValue == rhs.$isActive.wrappedValue &&
         lhs.isPinned == rhs.isPinned &&
         lhs.searchText == rhs.searchText &&
@@ -33,6 +34,7 @@ struct MessageCell: View, Equatable {
     @State var timestamp: Date
     var message: String
     let showsAttentionIndicator: Bool
+    let activitySnapshot: ChatActivitySnapshot?
     let isPinned: Bool
     @Binding var isActive: Bool
     let searchText: String
@@ -43,16 +45,15 @@ struct MessageCell: View, Equatable {
 
     
     private var filteredMessage: String {
-        if !message.starts(with: "<think>") {
-            return message
-        }
-        let messageWithoutNewlines = message.replacingOccurrences(of: "\n", with: " ")
-        let messageWithoutThinking = messageWithoutNewlines.replacingOccurrences(
+        let withoutToolActivity = ToolActivityRecord.removingMarkers(in: message)
+        let withoutThinking = withoutToolActivity.replacingOccurrences(
             of: "<think>.*?</think>",
             with: "",
             options: .regularExpression
         )
-        return messageWithoutThinking.trimmingCharacters(in: .whitespacesAndNewlines)
+        return withoutThinking
+            .replacingOccurrences(of: "\n", with: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     var body: some View {
@@ -93,10 +94,11 @@ struct MessageCell: View, Equatable {
                 Spacer()
                 
                 HStack(spacing: 6) {
-                    if showsAttentionIndicator && !isActive {
-                        ChatAttentionDot()
+                    if let activitySnapshot, activitySnapshot.phase.isActive {
+                        SidebarActivityBadge(phase: activitySnapshot.phase)
+                    } else if showsAttentionIndicator && !isActive {
+                        ChatCompletionBadge()
                     }
-
                     if isPinned {
                         Image(systemName: "pin.fill")
                             .foregroundColor(self.isActive ? .white : .gray)
@@ -170,6 +172,7 @@ struct MessageCell_Previews: PreviewProvider {
             timestamp: Date(),
             message: message,
             showsAttentionIndicator: showsAttentionIndicator,
+            activitySnapshot: nil,
             isPinned: isPinned,
             isActive: .constant(isActive),
             searchText: ""
@@ -191,12 +194,35 @@ struct MessageCell_Previews: PreviewProvider {
     }
 }
 
-private struct ChatAttentionDot: View {
+private struct ChatCompletionBadge: View {
     var body: some View {
-        Circle()
-            .fill(Color.accentColor)
-            .frame(width: 6, height: 6)
-            .shadow(color: Color.accentColor.opacity(0.3), radius: 1, x: 0, y: 0)
-            .accessibilityLabel("New response")
+        Label("Done", systemImage: "checkmark")
+            .font(.system(size: 9, weight: .bold))
+            .foregroundStyle(.green)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 3)
+            .background(Color.green.opacity(0.14), in: Capsule())
+            .accessibilityLabel("New response completed")
+    }
+}
+
+private struct SidebarActivityBadge: View {
+    let phase: ChatActivityPhase
+
+    var body: some View {
+        HStack(spacing: 4) {
+            ProgressView()
+                .controlSize(.mini)
+                .scaleEffect(0.62)
+                .frame(width: 10, height: 10)
+            Text(phase.compactTitle)
+                .lineLimit(1)
+        }
+        .font(.system(size: 9, weight: .semibold))
+        .foregroundStyle(.secondary)
+        .padding(.horizontal, 6)
+        .padding(.vertical, 3)
+        .background(Color.secondary.opacity(0.12), in: Capsule())
+        .accessibilityLabel(phase.title)
     }
 }

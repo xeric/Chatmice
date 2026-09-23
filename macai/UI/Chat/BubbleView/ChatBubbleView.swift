@@ -159,16 +159,20 @@ struct ChatBubbleView: View, Equatable {
     private func bubbleContent(prefetchedElements: [MessageElements]?) -> some View {
         Group {
             if content.waitingForResponse ?? false {
-                HStack {
-                    Circle()
-                        .fill(Color.blue)
-                        .frame(width: 6, height: 6)
-                        .modifier(PulsatingCircle())
-                        .padding(.top, 4)
-                    Text("Thinking")
-                        .foregroundColor(.primary)
-                        .font(.system(size: 14))
+                HStack(spacing: 10) {
+                    ProgressView()
+                        .controlSize(.small)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Waiting for model")
+                            .font(.system(size: 13, weight: .semibold))
+                        Text("The model is processing your request")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                    }
                 }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 9)
+                .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
             }
             else if let errorMessage = content.errorMessage {
                 ErrorBubbleView(

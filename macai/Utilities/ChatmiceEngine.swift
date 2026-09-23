@@ -17,12 +17,14 @@ private actor BashApprovalSession {
 }
 
 
-class ChatmiceEngine: APIService {
+class ChatmiceEngine: APIService, AgentActivityReporting {
     let name: String
     let baseURL: URL
     private let baseService: APIService
     private let config: APIServiceConfiguration
     private var activeTask: Task<Void, Never>?
+    private let activityHandlerLock = NSLock()
+    private var activityHandler: (@Sendable (AgentActivitySignal) -> Void)?
 
     static let toolsEnabledKey = "chatmiceToolsEnabled"
     static let bashEnabledKey = "chatmiceBashEnabled"
@@ -36,6 +38,19 @@ class ChatmiceEngine: APIService {
         self.config = config
         self.name = config.name
         self.baseURL = config.apiUrl
+    }
+
+    func setActivityHandler(_ handler: (@Sendable (AgentActivitySignal) -> Void)?) {
+        activityHandlerLock.lock()
+        activityHandler = handler
+        activityHandlerLock.unlock()
+    }
+
+    private func reportActivity(_ signal: AgentActivitySignal) {
+        activityHandlerLock.lock()
+        let handler = activityHandler
+        activityHandlerLock.unlock()
+        handler?(signal)
     }
 
     func sendMessage(
@@ -197,6 +212,7 @@ class ChatmiceEngine: APIService {
                     if await approvalSession.isApproved() {
                         return true
                     }
+                    self.reportActivity(.awaitingApproval(tool: "bash", detail: prompt))
                     let approved = await Self.requestBashApproval(
                         prompt: prompt,
                         allowTitle: "Allow for This Session"
@@ -206,6 +222,7 @@ class ChatmiceEngine: APIService {
                     }
                     return approved
                 case .alwaysAsk:
+                    self.reportActivity(.awaitingApproval(tool: "bash", detail: prompt))
                     return await Self.requestBashApproval(
                         prompt: prompt,
                         allowTitle: "Allow Once"
@@ -220,6 +237,9 @@ class ChatmiceEngine: APIService {
         while rounds < maxRounds {
             rounds += 1
             if Task.isCancelled { break }
+            if rounds == 1 {
+                reportActivity(.waitingForModel)
+            }
 
             let rawResult = try await executeTurn(
                 messages: conversationHistory,
@@ -240,6 +260,8 @@ class ChatmiceEngine: APIService {
             for call in rawResult.toolCalls {
                 if Task.isCancelled { break }
                 let registeredName = registeredNameByWireName[call.name] ?? call.name
+                let input = call.argumentsJSON?["command"] as? String ?? call.arguments
+                reportActivity(.runningTool(tool: registeredName, detail: input))
 
                 let result: ToolExecutionResult
                 do {
@@ -254,7 +276,6 @@ class ChatmiceEngine: APIService {
                 }
 
                 results.append(result)
-                let input = call.argumentsJSON?["command"] as? String ?? call.arguments
                 let activity = ToolActivityRecord(
                     name: registeredName,
                     input: input,
@@ -262,6 +283,7 @@ class ChatmiceEngine: APIService {
                     isError: result.isError
                 )
                 continuation.yield("\n\(activity.marker)\n")
+                reportActivity(.processingToolResult(tool: registeredName))
             }
 
             if !results.isEmpty {

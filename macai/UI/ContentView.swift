@@ -37,7 +37,7 @@ struct ContentView: View {
     @AppStorage("apiUrl") var apiUrl = AppConstants.apiUrlOpenAIResponses
     @AppStorage(SettingsIndicatorKeys.generalSeen) private var generalSettingsSeen: Bool = false
     @StateObject private var previewStateManager = PreviewStateManager()
-    @StateObject private var attentionStore = ChatAttentionStore.shared
+    @StateObject private var activityStore = ChatActivityStore.shared
 
     @State private var windowRef: NSWindow?
     @State private var openedChatId: String? = nil
@@ -54,7 +54,7 @@ struct ContentView: View {
         )) {
             VStack(spacing: 0) {
                 ChatListView(selectedChat: $selectedChat, searchText: $searchText)
-                    .environmentObject(attentionStore)
+                    .environmentObject(activityStore)
 
                 Divider()
 
@@ -173,6 +173,10 @@ struct ContentView: View {
                     selectedChat = lastOpenedChat
                 }
             }
+            activityStore.updatePresentationContext(
+                focusedChatId: selectedChat?.id,
+                applicationIsActive: scenePhase == .active && NSApp.isActive
+            )
         })
         .onChange(of: chats.count) { newCount in
             if let prev = lastChatCount {
@@ -223,9 +227,10 @@ struct ContentView: View {
                 object: nil,
                 queue: .main
             ) { _ in
-                if let selectedId = selectedChat?.id {
-                    attentionStore.clear(selectedId)
-                }
+                activityStore.updatePresentationContext(
+                    focusedChatId: selectedChat?.id,
+                    applicationIsActive: true
+                )
             }
         }
         .navigationTitle("")
@@ -276,10 +281,10 @@ struct ContentView: View {
         }
 
         .onChange(of: scenePhase) { phase in
-            print("Scene phase changed: \(phase)")
-            if phase == .inactive {
-                print("Saving state...")
-            }
+            activityStore.updatePresentationContext(
+                focusedChatId: selectedChat?.id,
+                applicationIsActive: phase == .active && NSApp.isActive
+            )
         }
         .onChange(of: selectedChat) { newValue in
             if self.openedChatId != newValue?.id.uuidString {
@@ -287,8 +292,12 @@ struct ContentView: View {
                 previewStateManager.hidePreview()
             }
             if let selectedId = newValue?.id {
-                attentionStore.clear(selectedId)
+                activityStore.clear(selectedId)
             }
+            activityStore.updatePresentationContext(
+                focusedChatId: newValue?.id,
+                applicationIsActive: scenePhase == .active && NSApp.isActive
+            )
         }
         .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("ChatResponseCompleted"))) { notification in
             if let responseId = notification.userInfo?["responseId"] as? String {
@@ -308,8 +317,6 @@ struct ContentView: View {
             }
 
             if !isActiveChat || !appIsActive {
-                attentionStore.mark(chatId)
-
                 let chatName = chatDisplayName(
                     for: chatId,
                     fallback: notification.userInfo?["chatName"] as? String
@@ -567,7 +574,8 @@ private extension ContentView {
             return "Response finished"
         }
 
-        let messageWithoutNewlines = message.replacingOccurrences(of: "\n", with: " ")
+        let messageWithoutNewlines = ToolActivityRecord.removingMarkers(in: message)
+            .replacingOccurrences(of: "\n", with: " ")
         let messageWithoutThinking = messageWithoutNewlines.replacingOccurrences(
             of: "<think>.*?</think>",
             with: "",

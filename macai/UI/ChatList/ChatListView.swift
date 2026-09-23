@@ -10,7 +10,7 @@ import SwiftUI
 
 struct ChatListView: View {
     @Environment(\.managedObjectContext) private var viewContext
-    @EnvironmentObject private var attentionStore: ChatAttentionStore
+    @EnvironmentObject private var activityStore: ChatActivityStore
     @State private var scrollOffset: CGFloat = 0
     @State private var previousOffset: CGFloat = 0
     @State private var debouncedSearchText: String = ""
@@ -76,7 +76,8 @@ struct ChatListView: View {
                     ForEach(filteredChats, id: \.objectID) { chat in
                         ChatListRow(
                             chat: chat,
-                            showsAttentionIndicator: attentionStore.contains(chat.id),
+                            showsAttentionIndicator: activityStore.contains(chat.id),
+                            activitySnapshot: activityStore.snapshot(for: chat.id),
                             selectedChat: $selectedChat,
                             viewContext: viewContext,
                             searchText: debouncedSearchText
