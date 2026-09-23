@@ -19,6 +19,7 @@ struct ContentView: View {
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.managedObjectContext) private var viewContext
 
+    @Environment(\.openWindow) private var openWindow
     @FetchRequest(
         entity: ChatEntity.entity(),
         sortDescriptors: [NSSortDescriptor(keyPath: \ChatEntity.updatedDate, ascending: false)]
@@ -465,12 +466,7 @@ struct ContentView: View {
     }
 
     func openPreferencesView() {
-        if #available(macOS 13.0, *) {
-            NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
-        }
-        else {
-            NSApp.sendAction(Selector(("showPreferencesWindow:")), to: nil, from: nil)
-        }
+        openWindow(id: "settings")
     }
 
     func clearSelectedChat() {

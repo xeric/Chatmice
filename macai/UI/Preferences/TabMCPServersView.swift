@@ -2,7 +2,7 @@
 //  TabMCPServersView.swift
 //  Chatmice / macai
 //
-//  Settings tab for managing Model Context Protocol (MCP) servers.
+//  Settings tab for managing Model Context Protocol (MCP) servers (stdio & HTTP/SSE).
 //
 
 import SwiftUI
@@ -10,11 +10,15 @@ import SwiftUI
 struct TabMCPServersView: View {
     @AppStorage("mcpServersJSON") private var mcpServersJSON: String = "[]"
     @State private var servers: [MCPServerConfig] = []
-    @State private var showingAddSheet = false
-    @State private var newServerName = ""
-    @State private var newServerCommand = "node"
-    @State private var newServerArgs = ""
-    @State private var newServerEnv = ""
+    @State private var showingEditSheet = false
+    @State private var editingServer: MCPServerConfig? = nil
+
+    @State private var formKind: MCPServerConfig.Kind = .stdio
+    @State private var formName = ""
+    @State private var formCommand = "npx"
+    @State private var formArgs = ""
+    @State private var formURL = "http://localhost:8000/sse"
+    @State private var formEnv = ""
     @State private var statuses: [MCPStatus] = []
 
     var body: some View {
@@ -23,7 +27,7 @@ struct TabMCPServersView: View {
                 Text("Configured MCP Servers")
                     .font(.headline)
                 Spacer()
-                Button(action: { showingAddSheet = true }) {
+                Button(action: openAddServer) {
                     Label("Add Server", systemImage: "plus")
                 }
                 .buttonStyle(.borderedProminent)
@@ -37,11 +41,11 @@ struct TabMCPServersView: View {
                     Text("No MCP servers configured")
                         .font(.headline)
                         .foregroundStyle(.secondary)
-                    Text("Add an MCP server (e.g. SQLite, Git, Filesystem via npx or node) to give your assistant tool capabilities.")
+                    Text("Add an MCP server (Local stdio via npx/node/uvx, or Remote HTTP/SSE) to give your assistant tool capabilities.")
                         .font(.subheadline)
                         .foregroundStyle(.tertiary)
                         .multilineTextAlignment(.center)
-                        .frame(maxWidth: 380)
+                        .frame(maxWidth: 420)
                 }
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 32)
@@ -63,10 +67,13 @@ struct TabMCPServersView: View {
         }
         .onAppear {
             loadServers()
-            refreshStatus()
+            Task {
+                await MCPService.shared.sync(servers: servers)
+                refreshStatus()
+            }
         }
-        .sheet(isPresented: $showingAddSheet) {
-            addServerSheet
+        .sheet(isPresented: $showingEditSheet) {
+            serverFormSheet
         }
     }
 
@@ -74,16 +81,25 @@ struct TabMCPServersView: View {
         let status = statuses.first(where: { $0.name == server.name })
         let isConnected = status?.connected ?? false
         let toolCount = status?.toolCount ?? 0
+        let lastError = status?.lastError
 
         return HStack(spacing: 12) {
             Circle()
                 .fill(isConnected ? Color.green : (server.enabled ? Color.orange : Color.gray))
                 .frame(width: 10, height: 10)
 
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
                     Text(server.name)
                         .font(.body.weight(.medium))
+
+                    Text(server.kind == .stdio ? "stdio" : "http")
+                        .font(.system(size: 9, weight: .bold))
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1)
+                        .background(Capsule().fill(Color.secondary.opacity(0.15)))
+                        .foregroundStyle(.secondary)
+
                     if isConnected {
                         Text("\(toolCount) tools")
                             .font(.caption2.weight(.medium))
@@ -94,14 +110,60 @@ struct TabMCPServersView: View {
                     }
                 }
 
-                Text("\(server.command ?? "") \(server.args.joined(separator: " "))")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
+                if server.kind == .stdio {
+                    Text("\(server.command ?? "") \(server.args.joined(separator: " "))")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                } else {
+                    Text(server.url ?? "")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+
+                if let err = lastError, !isConnected && server.enabled {
+                    Text(err)
+                        .font(.caption2)
+                        .foregroundStyle(.red)
+                        .lineLimit(2)
+                }
+            }
+            .contentShape(Rectangle())
+            .onTapGesture {
+                openEditServer(server)
             }
 
             Spacer()
 
+            // Reconnect button
+            Button(action: {
+                Task {
+                    await MCPService.shared.sync(servers: servers)
+                    refreshStatus()
+                }
+            }) {
+                Image(systemName: "arrow.clockwise")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+            .help("Reconnect / Refresh Server")
+            .padding(.trailing, 2)
+
+            // Edit button
+            Button(action: {
+                openEditServer(server)
+            }) {
+                Image(systemName: "pencil")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+            .help("Edit Server Configuration")
+            .padding(.trailing, 2)
+
+            // Enable toggle
             Toggle("", isOn: Binding(
                 get: { server.enabled },
                 set: { val in
@@ -111,6 +173,7 @@ struct TabMCPServersView: View {
             .toggleStyle(.switch)
             .labelsHidden()
 
+            // Delete button
             Button(role: .destructive, action: { deleteServer(server) }) {
                 Image(systemName: "trash")
                     .foregroundStyle(.red)
@@ -129,37 +192,81 @@ struct TabMCPServersView: View {
         )
     }
 
-    private var addServerSheet: some View {
+    private var isSaveDisabled: Bool {
+        if formName.trimmingCharacters(in: .whitespaces).isEmpty { return true }
+        if formKind == .stdio {
+            return formCommand.trimmingCharacters(in: .whitespaces).isEmpty
+        } else {
+            return formURL.trimmingCharacters(in: .whitespaces).isEmpty
+        }
+    }
+
+    private var serverFormSheet: some View {
         VStack(spacing: 16) {
-            Text("Add MCP Stdio Server")
+            Text(editingServer == nil ? "Add MCP Server" : "Edit MCP Server")
                 .font(.headline)
 
+            Picker("Transport Type", selection: $formKind) {
+                Text("Local (stdio)").tag(MCPServerConfig.Kind.stdio)
+                Text("Remote (HTTP / SSE)").tag(MCPServerConfig.Kind.http)
+            }
+            .pickerStyle(.segmented)
+            .padding(.bottom, 4)
+
             Form {
-                TextField("Server Name:", text: $newServerName, prompt: Text("e.g. filesystem"))
-                TextField("Command:", text: $newServerCommand, prompt: Text("node or npx"))
-                TextField("Arguments (space-separated):", text: $newServerArgs, prompt: Text("-y @modelcontextprotocol/server-..."))
-                TextField("Environment (KEY=VAL;...):", text: $newServerEnv, prompt: Text("API_KEY=xyz"))
+                TextField("Server Name:", text: $formName, prompt: Text(formKind == .stdio ? "e.g. filesystem" : "e.g. jira"))
+
+                if formKind == .stdio {
+                    TextField("Command:", text: $formCommand, prompt: Text("e.g. npx, node, uvx, python3"))
+                    TextField("Arguments (space-separated):", text: $formArgs, prompt: Text("-y @modelcontextprotocol/server-..."))
+                    TextField("Environment (KEY=VAL;...):", text: $formEnv, prompt: Text("API_KEY=xyz;DEBUG=1"))
+                } else {
+                    TextField("Server URL (SSE or HTTP):", text: $formURL, prompt: Text("http://127.0.0.1:7766/mcp/jira or http://.../sse"))
+                    TextField("Headers / Auth (KEY=VAL;...):", text: $formEnv, prompt: Text("Authorization=Bearer xyz;X-Custom=abc"))
+                }
             }
 
             HStack {
                 Button("Cancel") {
-                    showingAddSheet = false
+                    showingEditSheet = false
                 }
                 .keyboardShortcut(.cancelAction)
 
                 Spacer()
 
                 Button("Save") {
-                    addServer()
-                    showingAddSheet = false
+                    saveServerForm()
+                    showingEditSheet = false
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(newServerName.trimmingCharacters(in: .whitespaces).isEmpty || newServerCommand.trimmingCharacters(in: .whitespaces).isEmpty)
+                .disabled(isSaveDisabled)
                 .keyboardShortcut(.defaultAction)
             }
         }
         .padding()
-        .frame(width: 440)
+        .frame(width: 480)
+    }
+
+    private func openAddServer() {
+        editingServer = nil
+        formKind = .stdio
+        formName = ""
+        formCommand = "npx"
+        formArgs = ""
+        formURL = "http://127.0.0.1:7766/mcp/"
+        formEnv = ""
+        showingEditSheet = true
+    }
+
+    private func openEditServer(_ server: MCPServerConfig) {
+        editingServer = server
+        formKind = server.kind
+        formName = server.name
+        formCommand = server.command ?? "npx"
+        formArgs = server.args.joined(separator: " ")
+        formURL = server.url ?? ""
+        formEnv = server.env.map { "\($0.key)=\($0.value)" }.joined(separator: ";")
+        showingEditSheet = true
     }
 
     private func loadServers() {
@@ -181,30 +288,48 @@ struct TabMCPServersView: View {
         }
     }
 
-    private func addServer() {
-        let args = newServerArgs.split(separator: " ").map(String.init)
+    private func saveServerForm() {
         var envMap: [String: String] = [:]
-        for pair in newServerEnv.split(separator: ";") {
+        for pair in formEnv.split(separator: ";") {
             let kv = pair.split(separator: "=", maxSplits: 1).map(String.init)
             if kv.count == 2 {
                 envMap[kv[0].trimmingCharacters(in: .whitespaces)] = kv[1].trimmingCharacters(in: .whitespaces)
             }
         }
-        let config = MCPServerConfig(
-            name: newServerName.trimmingCharacters(in: .whitespaces),
-            kind: .stdio,
-            command: newServerCommand.trimmingCharacters(in: .whitespaces),
-            args: args,
-            env: envMap,
-            enabled: true
-        )
+
+        let name = formName.trimmingCharacters(in: .whitespaces)
+        let config: MCPServerConfig
+        if formKind == .stdio {
+            let args = formArgs.split(separator: " ").map(String.init)
+            config = MCPServerConfig(
+                name: name,
+                kind: .stdio,
+                command: formCommand.trimmingCharacters(in: .whitespaces),
+                args: args,
+                env: envMap,
+                enabled: editingServer?.enabled ?? true
+            )
+        } else {
+            config = MCPServerConfig(
+                name: name,
+                kind: .http,
+                env: envMap,
+                url: formURL.trimmingCharacters(in: .whitespaces),
+                enabled: editingServer?.enabled ?? true
+            )
+        }
+
         var updated = servers
-        updated.removeAll { $0.name == config.name }
+        if let old = editingServer, old.name != config.name {
+            updated.removeAll { $0.name == old.name }
+            Task {
+                await MCPService.shared.disconnect(name: old.name)
+            }
+        } else {
+            updated.removeAll { $0.name == config.name }
+        }
         updated.append(config)
         saveServers(updated)
-        newServerName = ""
-        newServerArgs = ""
-        newServerEnv = ""
     }
 
     private func toggleServer(_ server: MCPServerConfig, enabled: Bool) {

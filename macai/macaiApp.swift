@@ -360,7 +360,7 @@ struct macaiApp: App {
         }
     }
     @Environment(\.scenePhase) private var scenePhase
-
+    @Environment(\.openWindow) private var openWindow
     private func updateDockIcon() {
         DispatchQueue.main.async {
             let isDark: Bool = {
@@ -403,6 +403,12 @@ struct macaiApp: App {
                 .preferredColorScheme(preferredColorScheme)
                 .onAppear {
                     updateDockIcon()
+                    if let data = UserDefaults.standard.string(forKey: "mcpServersJSON")?.data(using: .utf8),
+                       let servers = try? JSONDecoder().decode([MCPServerConfig].self, from: data) {
+                        Task {
+                            await MCPService.shared.sync(servers: servers)
+                        }
+                    }
                 }
         }
         .windowToolbarStyle(.unified)
@@ -417,6 +423,12 @@ struct macaiApp: App {
             }
         }
         .commands {
+            CommandGroup(replacing: .appSettings) {
+                Button("Settings...") {
+                    openWindow(id: "settings")
+                }
+                .keyboardShortcut(",", modifiers: [.command])
+            }
             CommandGroup(after: .appInfo) {
                 CheckForUpdatesView(updateCoordinator: updateCoordinator)
             }
@@ -482,10 +494,13 @@ struct macaiApp: App {
             }
         }
 
-        Settings {
+        WindowGroup("Settings", id: "settings") {
             PreferencesView()
                 .environment(\.managedObjectContext, persistenceController.container.viewContext)
                 .preferredColorScheme(preferredColorScheme)
         }
+        .windowStyle(.titleBar)
+        .windowToolbarStyle(.unified(showsTitle: false))
+        .defaultSize(width: 960, height: 680)
     }
 }
