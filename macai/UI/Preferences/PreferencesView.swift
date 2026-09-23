@@ -2,11 +2,13 @@
 //  PreferencesView.swift
 //  Chatmice / macai
 //
-//  Pixel-accurate macOS Settings window matching Bartender 5 & modern Apple HIG:
-//  - Unified window with full-size content view and traffic lights in sidebar
-//  - NavigationSplitView with [ ◫ ] <Title> toolbar navigation
-//  - Translucent icon badges and solid blue pill selection
-//  - Top hero card + grouped settings cards
+//  1:1 Pixel-accurate implementation of Bartender 5 Settings window (Reference Image #2):
+//  - Traffic lights top-left in sidebar
+//  - Top toolbar in detail pane: [ ◫ ] <Page Title> at exact same height as traffic lights
+//  - Translucent icon badges (24x24) with white symbols
+//  - Solid blue pill (cornerRadius: 8) on selected row with white text
+//  - Compact top hero card (52x52 icon, bold title, subtitle)
+//  - Inset rounded cards below
 //
 
 import AppKit
@@ -80,18 +82,80 @@ enum SettingsPage: String, CaseIterable, Identifiable {
 
 struct PreferencesView: View {
     @StateObject private var store = ChatStore(persistenceController: PersistenceController.shared)
-    @State private var selectedPage: SettingsPage? = .providers
+    @State private var selectedPage: SettingsPage = .providers
 
     var body: some View {
-        NavigationSplitView {
-            sidebarContent
-                .navigationSplitViewColumnWidth(min: 200, ideal: 210, max: 240)
-        } detail: {
-            detailContent
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                .navigationTitle(selectedPage?.title ?? "Settings")
+        HStack(spacing: 0) {
+            // MARK: - Left Sidebar (matching Bartender 5)
+            VStack(alignment: .leading, spacing: 0) {
+                // Top area reserved for macOS traffic lights (height 52)
+                Color.clear
+                    .frame(height: 52)
+
+                // Scrollable sidebar categories
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 14) {
+                        ForEach(SettingsGroup.allCases, id: \.self) { group in
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(group.rawValue)
+                                    .font(.system(size: 11, weight: .semibold))
+                                    .foregroundStyle(Color.secondary.opacity(0.8))
+                                    .padding(.horizontal, 10)
+                                    .padding(.bottom, 2)
+
+                                ForEach(group.pages) { page in
+                                    sidebarButton(page)
+                                }
+                            }
+                        }
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.bottom, 16)
+                }
+            }
+            .frame(width: 215)
+            .background(Color(NSColor.controlBackgroundColor))
+
+            // Vertical 1px Divider
+            Rectangle()
+                .fill(Color(NSColor.separatorColor).opacity(0.4))
+                .frame(width: 1)
+
+            // MARK: - Right Detail Pane (matching Bartender 5)
+            VStack(alignment: .leading, spacing: 0) {
+                // Top Toolbar Bar: [ ◫ ]  <Page Title> (height 52, exactly on same horizontal line as traffic lights!)
+                HStack(spacing: 10) {
+                    Image(systemName: "sidebar.leading")
+                        .font(.system(size: 15, weight: .regular))
+                        .foregroundStyle(Color.primary.opacity(0.9))
+
+                    Text(selectedPage.title)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(Color.primary)
+
+                    Spacer()
+                }
+                .padding(.horizontal, 24)
+                .frame(height: 52)
+
+                // Detail Content ScrollView
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 16) {
+                        // Compact Top Hero Card (matching Bartender 5 Image #2)
+                        heroCard(for: selectedPage)
+
+                        // Page Detail Form / Cards
+                        pageBody(for: selectedPage)
+                    }
+                    .padding(.horizontal, 24)
+                    .padding(.top, 4)
+                    .padding(.bottom, 28)
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Color(NSColor.windowBackgroundColor))
         }
-        .navigationSplitViewStyle(.balanced)
+        .ignoresSafeArea(.container, edges: .top)
         .background(SettingsWindowConfigurator { window in
             window.titlebarAppearsTransparent = true
             window.titleVisibility = .hidden
@@ -104,77 +168,56 @@ struct PreferencesView: View {
         }
     }
 
-    // MARK: - Sidebar
+    // MARK: - Sidebar Button (matching Bartender 5)
 
-    private var sidebarContent: some View {
-        List(selection: $selectedPage) {
-            ForEach(SettingsGroup.allCases, id: \.self) { group in
-                Section(group.rawValue) {
-                    ForEach(group.pages) { page in
-                        sidebarRow(page)
-                            .tag(page)
-                    }
-                }
-            }
-        }
-        .listStyle(.sidebar)
-    }
-
-    private func sidebarRow(_ page: SettingsPage) -> some View {
+    private func sidebarButton(_ page: SettingsPage) -> some View {
         let isSelected = selectedPage == page
-        return HStack(spacing: 10) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(isSelected ? Color.white.opacity(0.22) : Color.white.opacity(0.12))
-                    .frame(width: 24, height: 24)
+        return Button(action: { selectedPage = page }) {
+            HStack(spacing: 10) {
+                // Translucent Icon Badge (24x24)
+                ZStack {
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(isSelected ? Color.white.opacity(0.25) : Color.white.opacity(0.12))
+                        .frame(width: 24, height: 24)
 
-                Image(systemName: page.symbol)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(.white)
+                    Image(systemName: page.symbol)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(Color.white)
+                }
+
+                Text(page.title)
+                    .font(.system(size: 13, weight: isSelected ? .medium : .regular))
+                    .foregroundStyle(isSelected ? Color.white : Color.primary)
+
+                Spacer()
             }
-
-            Text(page.title)
-                .font(.system(size: 13, weight: isSelected ? .medium : .regular))
-                .foregroundStyle(isSelected ? Color.white : Color.primary)
-
-            Spacer()
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(isSelected ? Color(red: 0.08, green: 0.44, blue: 0.96) : Color.clear)
+            )
+            .contentShape(Rectangle())
         }
-        .padding(.vertical, 3)
+        .buttonStyle(.plain)
     }
 
-    // MARK: - Detail Content
-
-    @ViewBuilder
-    private var detailContent: some View {
-        let page = selectedPage ?? .providers
-        ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
-                // Top Hero Card (matching Bartender 5 Image #1)
-                heroCard(for: page)
-
-                // Page Specific Content
-                pageBody(for: page)
-            }
-            .padding(.horizontal, 24)
-            .padding(.top, 14)
-            .padding(.bottom, 28)
-        }
-    }
+    // MARK: - Compact Hero Card (matching Bartender 5 Image #2)
 
     private func heroCard(for page: SettingsPage) -> some View {
-        VStack(spacing: 8) {
+        VStack(spacing: 6) {
             ZStack {
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
                     .fill(Color.white.opacity(0.12))
-                    .frame(width: 52, height: 52)
+                    .frame(width: 48, height: 48)
 
                 Image(systemName: page.symbol)
-                    .font(.system(size: 24, weight: .medium))
+                    .font(.system(size: 22, weight: .medium))
                     .foregroundStyle(Color.white)
             }
 
             Text(page.title)
-                .font(.system(size: 18, weight: .bold))
+                .font(.system(size: 17, weight: .bold))
                 .foregroundStyle(Color.primary)
 
             Text(page.subtitle)
@@ -183,17 +226,19 @@ struct PreferencesView: View {
                 .multilineTextAlignment(.center)
         }
         .frame(maxWidth: .infinity)
-        .padding(.vertical, 22)
+        .padding(.vertical, 16)
         .padding(.horizontal, 16)
         .background(
             RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .fill(Color(NSColor.controlBackgroundColor))
                 .overlay(
                     RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .strokeBorder(Color(NSColor.separatorColor).opacity(0.4), lineWidth: 0.5)
+                        .strokeBorder(Color(NSColor.separatorColor).opacity(0.35), lineWidth: 0.5)
                 )
         )
     }
+
+    // MARK: - Page Body
 
     @ViewBuilder
     private func pageBody(for page: SettingsPage) -> some View {
