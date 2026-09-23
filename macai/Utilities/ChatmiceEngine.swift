@@ -57,17 +57,9 @@ class ChatmiceEngine: APIService {
         temperature: Float
     ) async throws -> AsyncThrowingStream<String, Error> {
         let toolsEnabled = (UserDefaults.standard.object(forKey: Self.toolsEnabledKey) as? Bool) ?? true
-        
-        // Check if service uses OpenAI-compatible protocol (chatgpt / openai / deepseek / openrouter / ollama)
-        let serviceType: String = {
-            if let c = config as? APIServiceConfig { return c.type.lowercased() }
-            if let e = config as? APIServiceEntity { return (e.type ?? "").lowercased() }
-            return ""
-        }()
-        let isOpenAICompatible = serviceType == "chatgpt" || serviceType == "openai" || serviceType == "openai-responses" || serviceType == "deepseek" || serviceType == "openrouter" || serviceType == "ollama" || serviceType.isEmpty
 
-        // If tools disabled or service uses native protocol (e.g. Google Gemini, Anthropic), route directly
-        guard toolsEnabled && isOpenAICompatible else {
+        // If tools disabled, route directly to base service
+        guard toolsEnabled else {
             return try await baseService.sendMessageStream(requestMessages, temperature: temperature)
         }
         return AsyncThrowingStream { continuation in
@@ -237,29 +229,52 @@ class ChatmiceEngine: APIService {
         var toolCalls: [ToolCall]
     }
 
+    private var serviceType: String {
+        if let c = config as? APIServiceConfig { return c.type.lowercased() }
+        if let e = config as? APIServiceEntity { return (e.type ?? "").lowercased() }
+        return "chatgpt"
+    }
+
+    private var effectiveKey: String {
+        if !config.apiKey.isEmpty { return config.apiKey }
+        if let entity = config as? APIServiceEntity,
+           let id = entity.tokenIdentifier ?? entity.id?.uuidString,
+           let token = try? TokenManager.getToken(for: id), !token.isEmpty {
+            return token
+        }
+        return ProcessInfo.processInfo.environment["LOCAL_SAP_AI_CORE_PROXY_KEY"] ?? ""
+    }
+
     private func executeTurn(
         messages: [[String: String]],
         tools: [ToolDefinition],
         temperature: Float
     ) async throws -> TurnResult {
-        // Ensure URL has /chat/completions endpoint
+        let type = serviceType
+        if type == "gemini" {
+            return try await executeTurnGemini(messages: messages, tools: tools, temperature: temperature)
+        } else if type == "claude" {
+            return try await executeTurnClaude(messages: messages, tools: tools, temperature: temperature)
+        } else {
+            return try await executeTurnOpenAI(messages: messages, tools: tools, temperature: temperature)
+        }
+    }
+
+    // MARK: - OpenAI / ChatGPT Execution
+    private func executeTurnOpenAI(
+        messages: [[String: String]],
+        tools: [ToolDefinition],
+        temperature: Float
+    ) async throws -> TurnResult {
         var targetURL = baseURL
         if !targetURL.absoluteString.hasSuffix("/chat/completions") {
             targetURL = targetURL.appendingPathComponent("chat/completions")
         }
         var req = URLRequest(url: targetURL)
         req.httpMethod = "POST"
-        let effectiveKey: String = {
-            if !config.apiKey.isEmpty { return config.apiKey }
-            if let entity = config as? APIServiceEntity,
-               let id = entity.tokenIdentifier ?? entity.id?.uuidString,
-               let token = try? TokenManager.getToken(for: id), !token.isEmpty {
-                return token
-            }
-            return ProcessInfo.processInfo.environment["LOCAL_SAP_AI_CORE_PROXY_KEY"] ?? ""
-        }()
-        if !effectiveKey.isEmpty {
-            req.setValue("Bearer \(effectiveKey)", forHTTPHeaderField: "Authorization")
+        let key = effectiveKey
+        if !key.isEmpty {
+            req.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
         }
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         let toolsPayload = tools.map { t -> [String: Any] in
@@ -305,6 +320,184 @@ class ChatmiceEngine: APIService {
                       let fName = fn["name"] as? String else { continue }
                 let args = fn["arguments"] as? String ?? "{}"
                 calls.append(ToolCall(id: id, name: fName, arguments: args))
+            }
+        }
+
+        return TurnResult(text: text, toolCalls: calls)
+    }
+
+    // MARK: - Gemini Execution
+    private func executeTurnGemini(
+        messages: [[String: String]],
+        tools: [ToolDefinition],
+        temperature: Float
+    ) async throws -> TurnResult {
+        var targetURL = baseURL
+        let urlStr = targetURL.absoluteString
+        if !urlStr.contains(":generateContent") {
+            if !urlStr.contains("/models/") {
+                targetURL = targetURL.appendingPathComponent("models/\(config.model):generateContent")
+            } else {
+                targetURL = targetURL.appendingPathComponent(":generateContent")
+            }
+        }
+        var req = URLRequest(url: targetURL)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        let key = effectiveKey
+        if !key.isEmpty {
+            req.setValue(key, forHTTPHeaderField: "x-goog-api-key")
+            req.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+        }
+
+        let systemText = messages.filter { $0["role"] == "system" }.compactMap { $0["content"] }.joined(separator: "\n\n")
+        let nonSystemMsgs = messages.filter { $0["role"] != "system" }
+        let contents = nonSystemMsgs.map { m -> [String: Any] in
+            let role = m["role"] == "user" ? "user" : "model"
+            return [
+                "role": role,
+                "parts": [["text": m["content"] ?? ""]]
+            ]
+        }
+
+        let geminiTools: [[String: Any]] = [
+            [
+                "functionDeclarations": tools.map { t -> [String: Any] in
+                    [
+                        "name": t.name,
+                        "description": t.description,
+                        "parameters": t.parameters.openAIWireDict
+                    ]
+                }
+            ]
+        ]
+
+        var body: [String: Any] = [
+            "contents": contents,
+            "tools": geminiTools,
+            "generationConfig": [
+                "temperature": temperature
+            ]
+        ]
+        if !systemText.isEmpty {
+            body["systemInstruction"] = [
+                "parts": [["text": systemText]]
+            ]
+        }
+
+        req.httpBody = try JSONSerialization.data(withJSONObject: body)
+        let (data, response) = try await URLSession.shared.data(for: req)
+
+        guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+            let errStr = String(data: data, encoding: .utf8) ?? "HTTP Error"
+            throw APIError.serverError(errStr)
+        }
+
+        guard let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw APIError.decodingFailed("Failed to parse Gemini response")
+        }
+
+        var text = ""
+        var calls: [ToolCall] = []
+
+        if let candidates = obj["candidates"] as? [[String: Any]],
+           let first = candidates.first,
+           let content = first["content"] as? [String: Any],
+           let parts = content["parts"] as? [[String: Any]] {
+            for part in parts {
+                if let t = part["text"] as? String {
+                    text += t
+                }
+                if let fnCall = part["functionCall"] as? [String: Any],
+                   let fName = fnCall["name"] as? String {
+                    let argsObj = fnCall["args"] as? [String: Any] ?? [:]
+                    let argsData = (try? JSONSerialization.data(withJSONObject: argsObj)) ?? Data()
+                    let argsStr = String(data: argsData, encoding: .utf8) ?? "{}"
+                    calls.append(ToolCall(id: UUID().uuidString, name: fName, arguments: argsStr))
+                }
+            }
+        }
+
+        return TurnResult(text: text, toolCalls: calls)
+    }
+
+    // MARK: - Claude Execution
+    private func executeTurnClaude(
+        messages: [[String: String]],
+        tools: [ToolDefinition],
+        temperature: Float
+    ) async throws -> TurnResult {
+        var targetURL = baseURL
+        if !targetURL.absoluteString.hasSuffix("/messages") {
+            targetURL = targetURL.appendingPathComponent("messages")
+        }
+        var req = URLRequest(url: targetURL)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
+        let key = effectiveKey
+        if !key.isEmpty {
+            req.setValue(key, forHTTPHeaderField: "x-api-key")
+            req.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+        }
+
+        let systemText = messages.filter { $0["role"] == "system" }.compactMap { $0["content"] }.joined(separator: "\n\n")
+        let nonSystemMsgs = messages.filter { $0["role"] != "system" }
+        let claudeMsgs = nonSystemMsgs.map { m -> [String: Any] in
+            let role = m["role"] == "user" ? "user" : "assistant"
+            return [
+                "role": role,
+                "content": m["content"] ?? ""
+            ]
+        }
+
+        let claudeTools = tools.map { t -> [String: Any] in
+            [
+                "name": t.name,
+                "description": t.description,
+                "input_schema": t.parameters.openAIWireDict
+            ]
+        }
+
+        var body: [String: Any] = [
+            "model": config.model,
+            "max_tokens": 4096,
+            "messages": claudeMsgs,
+            "tools": claudeTools,
+            "temperature": temperature
+        ]
+        if !systemText.isEmpty {
+            body["system"] = systemText
+        }
+
+        req.httpBody = try JSONSerialization.data(withJSONObject: body)
+        let (data, response) = try await URLSession.shared.data(for: req)
+
+        guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+            let errStr = String(data: data, encoding: .utf8) ?? "HTTP Error"
+            throw APIError.serverError(errStr)
+        }
+
+        guard let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw APIError.decodingFailed("Failed to parse Claude response")
+        }
+
+        var text = ""
+        var calls: [ToolCall] = []
+
+        if let contentList = obj["content"] as? [[String: Any]] {
+            for item in contentList {
+                if let type = item["type"] as? String {
+                    if type == "text", let t = item["text"] as? String {
+                        text += t
+                    } else if type == "tool_use", let fName = item["name"] as? String {
+                        let id = item["id"] as? String ?? UUID().uuidString
+                        let inputObj = item["input"] as? [String: Any] ?? [:]
+                        let inputData = (try? JSONSerialization.data(withJSONObject: inputObj)) ?? Data()
+                        let inputStr = String(data: inputData, encoding: .utf8) ?? "{}"
+                        calls.append(ToolCall(id: id, name: fName, arguments: inputStr))
+                    }
+                }
             }
         }
 
