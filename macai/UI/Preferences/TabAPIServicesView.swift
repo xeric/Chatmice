@@ -2,7 +2,7 @@
 //  TabAPIServicesView.swift
 //  Chatmice / macai
 //
-//  Plan A: Clean native macOS Provider List + Dedicated Edit Sheet (matching Internet Accounts / Printers pattern).
+//  Pixel-perfect native macOS Provider List & Edit Sheet (Apple HIG).
 //
 
 import AppKit
@@ -29,7 +29,7 @@ struct TabAPIServicesView: View {
                     Text("No AI providers configured. Click '+ Add Provider' below to configure your first endpoint.")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
-                        .padding(.vertical, 8)
+                        .padding(.vertical, 12)
                 } else {
                     ForEach(apiServices, id: \.objectID) { service in
                         providerRow(service)
@@ -44,10 +44,10 @@ struct TabAPIServicesView: View {
                                 name: "CPA OpenAI", type: "chatgpt", defaultURL: "http://127.0.0.1:8899/v1", defaultModel: "gpt-5.6-terra",
                                 subtitle: "OpenAI-compatible local endpoint",
                                 models: [
-                                    ServiceModelRow(nickname: "optional", modelID: "gpt-5.6-terra"),
-                                    ServiceModelRow(nickname: "optional", modelID: "gpt-5.6-luna"),
-                                    ServiceModelRow(nickname: "optional", modelID: "gpt-4o"),
-                                    ServiceModelRow(nickname: "optional", modelID: "gpt-4o-mini")
+                                    ServiceModelRow(nickname: "", modelID: "gpt-5.6-terra"),
+                                    ServiceModelRow(nickname: "", modelID: "gpt-5.6-luna"),
+                                    ServiceModelRow(nickname: "", modelID: "gpt-4o"),
+                                    ServiceModelRow(nickname: "", modelID: "gpt-4o-mini")
                                 ]
                             ))
                         }
@@ -55,7 +55,7 @@ struct TabAPIServicesView: View {
                             presentAddSheet(preset: ProviderPresetItem(
                                 name: "CPA Anthropic", type: "claude", defaultURL: "http://127.0.0.1:8899/v1", defaultModel: "anthropic--claude-4.8-opus",
                                 subtitle: "Claude local endpoint",
-                                models: [ServiceModelRow(nickname: "optional", modelID: "anthropic--claude-4.8-opus")]
+                                models: [ServiceModelRow(nickname: "", modelID: "anthropic--claude-4.8-opus")]
                             ))
                         }
                         Divider()
@@ -63,35 +63,35 @@ struct TabAPIServicesView: View {
                             presentAddSheet(preset: ProviderPresetItem(
                                 name: "OpenAI", type: "openai-responses", defaultURL: "https://api.openai.com/v1", defaultModel: "gpt-4o",
                                 subtitle: "Official OpenAI API",
-                                models: [ServiceModelRow(nickname: "optional", modelID: "gpt-4o"), ServiceModelRow(nickname: "optional", modelID: "gpt-4o-mini")]
+                                models: [ServiceModelRow(nickname: "", modelID: "gpt-4o"), ServiceModelRow(nickname: "", modelID: "gpt-4o-mini")]
                             ))
                         }
                         Button("Anthropic") {
                             presentAddSheet(preset: ProviderPresetItem(
                                 name: "Anthropic", type: "claude", defaultURL: "https://api.anthropic.com/v1", defaultModel: "claude-3-5-sonnet-latest",
                                 subtitle: "Official Anthropic API",
-                                models: [ServiceModelRow(nickname: "optional", modelID: "claude-3-5-sonnet-latest")]
+                                models: [ServiceModelRow(nickname: "", modelID: "claude-3-5-sonnet-latest")]
                             ))
                         }
                         Button("Google AI") {
                             presentAddSheet(preset: ProviderPresetItem(
                                 name: "Google AI", type: "gemini", defaultURL: "https://generativelanguage.googleapis.com/v1beta", defaultModel: "gemini-2.5-flash",
                                 subtitle: "Google Gemini API",
-                                models: [ServiceModelRow(nickname: "optional", modelID: "gemini-2.5-flash")]
+                                models: [ServiceModelRow(nickname: "", modelID: "gemini-2.5-flash")]
                             ))
                         }
                         Button("DeepSeek") {
                             presentAddSheet(preset: ProviderPresetItem(
                                 name: "DeepSeek", type: "deepseek", defaultURL: "https://api.deepseek.com/v1", defaultModel: "deepseek-chat",
                                 subtitle: "DeepSeek Official API",
-                                models: [ServiceModelRow(nickname: "optional", modelID: "deepseek-chat")]
+                                models: [ServiceModelRow(nickname: "", modelID: "deepseek-chat")]
                             ))
                         }
                         Button("Ollama") {
                             presentAddSheet(preset: ProviderPresetItem(
                                 name: "Ollama", type: "ollama", defaultURL: "http://localhost:11434/api/chat", defaultModel: "llama3.1",
                                 subtitle: "Local Ollama server",
-                                models: [ServiceModelRow(nickname: "optional", modelID: "llama3.1")]
+                                models: [ServiceModelRow(nickname: "", modelID: "llama3.1")]
                             ))
                         }
                         Divider()
@@ -185,7 +185,7 @@ struct TabAPIServicesView: View {
 
                 Image(systemName: "chevron.right")
                     .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(Color.secondary.opacity(0.5))
+                    .foregroundStyle(Color.secondary.opacity(0.4))
             }
             .padding(.vertical, 6)
             .contentShape(Rectangle())
@@ -272,10 +272,10 @@ struct TabAPIServicesView: View {
             name: "CPA OpenAI", type: "chatgpt", url: "http://127.0.0.1:8899/v1", model: "gpt-5.6-terra",
             apiKey: proxyKey, isDefault: true,
             models: [
-                ServiceModelRow(nickname: "optional", modelID: "gpt-5.6-terra"),
-                ServiceModelRow(nickname: "optional", modelID: "gpt-5.6-luna"),
-                ServiceModelRow(nickname: "optional", modelID: "gpt-4o"),
-                ServiceModelRow(nickname: "optional", modelID: "gpt-4o-mini")
+                ServiceModelRow(nickname: "", modelID: "gpt-5.6-terra"),
+                ServiceModelRow(nickname: "", modelID: "gpt-5.6-luna"),
+                ServiceModelRow(nickname: "", modelID: "gpt-4o"),
+                ServiceModelRow(nickname: "", modelID: "gpt-4o-mini")
             ]
         )
         _ = createRosterEntity(name: "SAP Anthropic", type: "claude", url: "http://127.0.0.1:8899/v1", model: "anthropic--claude-4.8-opus")
@@ -346,7 +346,7 @@ struct ProviderPresetItem: Identifiable {
     let models: [ServiceModelRow]
 }
 
-// MARK: - Native Edit / Add Sheet (Scheme A)
+// MARK: - Native Edit / Add Sheet (Scheme A - Perfectly Aligned)
 
 struct ProviderEditorSheet: View {
     @Environment(\.dismiss) private var dismiss
@@ -366,6 +366,10 @@ struct ProviderEditorSheet: View {
     @State private var activeModelID = ""
     @State private var isShowingAPIKey = false
 
+    // Add custom model alert
+    @State private var showingAddModelSheet = false
+    @State private var newModelInput = ""
+
     // Model fetching
     @State private var isFetchingModels = false
     @State private var fetchError: String?
@@ -378,10 +382,17 @@ struct ProviderEditorSheet: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // Sheet Header
-            HStack {
-                Text(isEditing ? "Edit Provider" : "Add AI Provider")
-                    .font(.headline)
+            // Header
+            HStack(alignment: .center) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(isEditing ? (nameText.isEmpty ? "Edit Provider" : nameText) : "Add AI Provider")
+                        .font(.headline)
+                        .foregroundStyle(Color.primary)
+
+                    Text("Configure endpoint connection parameters and models.")
+                        .font(.caption)
+                        .foregroundStyle(Color.secondary)
+                }
 
                 Spacer()
 
@@ -398,217 +409,323 @@ struct ProviderEditorSheet: View {
                 .keyboardShortcut(.defaultAction)
             }
             .padding(.horizontal, 20)
-            .padding(.top, 18)
+            .padding(.top, 16)
             .padding(.bottom, 12)
 
             Divider()
 
-            // Main Form
-            Form {
-                Section("Connection Settings") {
-                    LabeledContent("Provider Name") {
-                        TextField("Name", text: $nameText)
-                            .textFieldStyle(.roundedBorder)
-                    }
-
-                    LabeledContent {
-                        VStack(alignment: .leading, spacing: 3) {
-                            TextField("http://127.0.0.1:8899/v1", text: $urlText)
-                                .textFieldStyle(.roundedBorder)
-
-                            Text("Do NOT include /chat/completions in the URL")
-                                .font(.caption2)
-                                .foregroundStyle(Color.secondary)
-                        }
-                    } label: {
-                        Text("API Base URL")
-                    }
-
-                    LabeledContent {
-                        VStack(alignment: .leading, spacing: 3) {
-                            Picker("", selection: $typeText) {
-                                Text("Chat Completions").tag("chatgpt")
-                                Text("Responses").tag("openai-responses")
-                                Text("Anthropic Messages").tag("claude")
-                                Text("Google Gemini").tag("gemini")
-                                Text("Ollama").tag("ollama")
-                                Text("OpenRouter").tag("openrouter")
-                                Text("DeepSeek").tag("deepseek")
-                            }
-                            .labelsHidden()
-                            .pickerStyle(.menu)
-                            .frame(maxWidth: 220, alignment: .leading)
-
-                            Text("Select protocol format used by this endpoint")
-                                .font(.caption2)
-                                .foregroundStyle(Color.secondary)
-                        }
-                    } label: {
-                        Text("Wire API")
-                    }
-
-                    LabeledContent("API Key") {
-                        HStack(spacing: 8) {
-                            if isShowingAPIKey {
-                                TextField("Enter API key", text: $apiKeyText)
-                                    .textFieldStyle(.roundedBorder)
-                            } else {
-                                SecureField("••••••••••••••••••••••••••••••••", text: $apiKeyText)
-                                    .textFieldStyle(.roundedBorder)
-                            }
-
-                            Button(action: { isShowingAPIKey.toggle() }) {
-                                Image(systemName: isShowingAPIKey ? "eye.slash" : "eye")
-                                    .font(.system(size: 12))
+            // Scrollable Content
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    // Group 1: Connection Details
+                    GroupBox("Connection Details") {
+                        Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 12) {
+                            GridRow {
+                                Text("Provider Name")
+                                    .font(.subheadline)
                                     .foregroundStyle(Color.secondary)
+                                    .frame(width: 110, alignment: .trailing)
+
+                                TextField("", text: $nameText, prompt: Text("e.g. OpenAI, Anthropic"))
+                                    .textFieldStyle(.roundedBorder)
                             }
-                            .buttonStyle(.plain)
-                        }
-                    }
 
-                    VStack(alignment: .leading, spacing: 4) {
-                        Toggle("Default for New Chats", isOn: $isDefault)
-                            .toggleStyle(.switch)
+                            GridRow {
+                                Text("API Base URL")
+                                    .font(.subheadline)
+                                    .foregroundStyle(Color.secondary)
+                                    .frame(width: 110, alignment: .trailing)
 
-                        Text("Used automatically when starting a new conversation if no specific assistant is chosen.")
-                            .font(.caption2)
-                            .foregroundStyle(Color.secondary)
-                    }
-                    .padding(.vertical, 2)
-                }
+                                VStack(alignment: .leading, spacing: 3) {
+                                    TextField("", text: $urlText, prompt: Text("http://127.0.0.1:8899/v1"))
+                                        .textFieldStyle(.roundedBorder)
 
-                Section("Models") {
-                    HStack {
-                        Text("Configured Models (\(modelsList.count))")
-                            .font(.subheadline.weight(.medium))
-
-                        Spacer()
-
-                        Button(action: addNewModelRow) {
-                            Label("New", systemImage: "plus")
-                        }
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
-
-                        Button(action: fetchModelsFromAPI) {
-                            HStack(spacing: 4) {
-                                if isFetchingModels {
-                                    ProgressView().controlSize(.mini)
-                                } else {
-                                    Image(systemName: "arrow.clockwise")
+                                    Text("Do not include /chat/completions in the URL")
+                                        .font(.caption2)
+                                        .foregroundStyle(Color.secondary)
                                 }
-                                Text("Fetch Models")
+                            }
+
+                            GridRow {
+                                Text("Wire API")
+                                    .font(.subheadline)
+                                    .foregroundStyle(Color.secondary)
+                                    .frame(width: 110, alignment: .trailing)
+
+                                Picker("", selection: $typeText) {
+                                    Text("Chat Completions (OpenAI Compatible)").tag("chatgpt")
+                                    Text("Responses (OpenAI)").tag("openai-responses")
+                                    Text("Anthropic Messages").tag("claude")
+                                    Text("Google Gemini").tag("gemini")
+                                    Text("Ollama").tag("ollama")
+                                    Text("OpenRouter").tag("openrouter")
+                                    Text("DeepSeek").tag("deepseek")
+                                }
+                                .labelsHidden()
+                                .pickerStyle(.menu)
+                            }
+
+                            GridRow {
+                                Text("API Key")
+                                    .font(.subheadline)
+                                    .foregroundStyle(Color.secondary)
+                                    .frame(width: 110, alignment: .trailing)
+
+                                HStack(spacing: 6) {
+                                    if isShowingAPIKey {
+                                        TextField("", text: $apiKeyText, prompt: Text("API Key / Token"))
+                                            .textFieldStyle(.roundedBorder)
+                                    } else {
+                                        SecureField("", text: $apiKeyText, prompt: Text("API Key / Token"))
+                                            .textFieldStyle(.roundedBorder)
+                                    }
+
+                                    Button(action: { isShowingAPIKey.toggle() }) {
+                                        Image(systemName: isShowingAPIKey ? "eye.slash" : "eye")
+                                            .font(.system(size: 12))
+                                            .foregroundStyle(Color.secondary)
+                                            .frame(width: 20)
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+                            }
+
+                            GridRow {
+                                Text("Default")
+                                    .font(.subheadline)
+                                    .foregroundStyle(Color.secondary)
+                                    .frame(width: 110, alignment: .trailing)
+
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Toggle("Use as default for new conversations", isOn: $isDefault)
+                                        .toggleStyle(.checkbox)
+
+                                    Text("Automatically selected when starting a new chat if no specific assistant is chosen.")
+                                        .font(.caption2)
+                                        .foregroundStyle(Color.secondary)
+                                }
                             }
                         }
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
+                        .padding(10)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     }
 
-                    if let err = fetchError {
-                        Text(err)
-                            .font(.caption)
+                    // Group 2: Models Management
+                    GroupBox {
+                        VStack(alignment: .leading, spacing: 10) {
+                            // Toolbar
+                            HStack {
+                                Text("Configured Models (\(modelsList.count))")
+                                    .font(.subheadline.weight(.semibold))
+                                    .foregroundStyle(Color.primary)
+
+                                Spacer()
+
+                                Button(action: { showingAddModelSheet = true }) {
+                                    Label("Add Model", systemImage: "plus")
+                                }
+                                .buttonStyle(.bordered)
+                                .controlSize(.small)
+
+                                Button(action: fetchModelsFromAPI) {
+                                    HStack(spacing: 4) {
+                                        if isFetchingModels {
+                                            ProgressView().controlSize(.mini)
+                                        } else {
+                                            Image(systemName: "arrow.clockwise")
+                                        }
+                                        Text("Fetch from API")
+                                    }
+                                }
+                                .buttonStyle(.bordered)
+                                .controlSize(.small)
+                            }
+
+                            if let err = fetchError {
+                                Text(err)
+                                    .font(.caption)
+                                    .foregroundStyle(Color.red)
+                            }
+
+                            Divider()
+
+                            // Models List
+                            if modelsList.isEmpty {
+                                Text("No models added. Click 'Fetch from API' or 'Add Model'.")
+                                    .font(.subheadline)
+                                    .foregroundStyle(Color.secondary)
+                                    .padding(.vertical, 16)
+                                    .frame(maxWidth: .infinity, alignment: .center)
+                            } else {
+                                ScrollView {
+                                    LazyVStack(spacing: 2) {
+                                        ForEach(modelsList, id: \.id) { m in
+                                            let isActive = activeModelID == m.modelID
+                                            HStack(spacing: 10) {
+                                                Button(action: {
+                                                    activeModelID = m.modelID
+                                                }) {
+                                                    Image(systemName: isActive ? "checkmark.circle.fill" : "circle")
+                                                        .font(.system(size: 14))
+                                                        .foregroundStyle(isActive ? Color.accentColor : Color.secondary.opacity(0.4))
+                                                }
+                                                .buttonStyle(.plain)
+                                                .help(isActive ? "Active model for this provider" : "Click to set as active model")
+
+                                                Text(m.modelID)
+                                                    .font(.system(size: 12, design: .monospaced))
+                                                    .foregroundStyle(Color.primary)
+
+                                                Spacer()
+
+                                                if isActive {
+                                                    Text("Active")
+                                                        .font(.caption2)
+                                                        .padding(.horizontal, 6)
+                                                        .padding(.vertical, 2)
+                                                        .background(Capsule().fill(Color.accentColor.opacity(0.15)))
+                                                        .foregroundStyle(Color.accentColor)
+                                                }
+
+                                                Button(action: {
+                                                    deleteModel(m.id)
+                                                }) {
+                                                    Image(systemName: "trash")
+                                                        .font(.system(size: 11))
+                                                        .foregroundStyle(Color.secondary.opacity(0.8))
+                                                }
+                                                .buttonStyle(.plain)
+                                            }
+                                            .padding(.horizontal, 8)
+                                            .padding(.vertical, 5)
+                                            .background(
+                                                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                                    .fill(isActive ? Color.accentColor.opacity(0.08) : Color.clear)
+                                            )
+                                        }
+                                    }
+                                    .padding(.vertical, 2)
+                                }
+                                .frame(height: 140)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                        .fill(Color(NSColor.textBackgroundColor))
+                                        .overlay(
+                                            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                                .strokeBorder(Color(NSColor.separatorColor), lineWidth: 0.5)
+                                        )
+                                )
+                            }
+
+                            // Presets
+                            let presets = recommendedModels(for: typeText)
+                            if !presets.isEmpty {
+                                Divider()
+
+                                HStack(alignment: .center, spacing: 8) {
+                                    Text("Popular:")
+                                        .font(.caption)
+                                        .foregroundStyle(Color.secondary)
+
+                                    ScrollView(.horizontal, showsIndicators: false) {
+                                        HStack(spacing: 6) {
+                                            ForEach(presets, id: \.self) { preset in
+                                                Button(action: {
+                                                    if !modelsList.contains(where: { $0.modelID == preset }) {
+                                                        modelsList.append(ServiceModelRow(nickname: "", modelID: preset))
+                                                        if activeModelID.isEmpty { activeModelID = preset }
+                                                    }
+                                                }) {
+                                                    Text("+ \(preset)")
+                                                        .font(.system(size: 11, design: .monospaced))
+                                                        .padding(.horizontal, 6)
+                                                        .padding(.vertical, 2)
+                                                        .background(Capsule().fill(Color(NSColor.controlBackgroundColor)))
+                                                        .foregroundStyle(Color.secondary)
+                                                }
+                                                .buttonStyle(.plain)
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        .padding(10)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    } label: {
+                        Text("Models")
+                            .font(.headline)
+                    }
+                }
+                .padding(20)
+            }
+
+            // Bottom Footer
+            if isEditing {
+                Divider()
+                HStack {
+                    Button(role: .destructive, action: {
+                        onDelete()
+                        dismiss()
+                    }) {
+                        Label("Delete Provider", systemImage: "trash")
                             .foregroundStyle(Color.red)
                     }
+                    .buttonStyle(.borderless)
 
-                    // Table of models
-                    VStack(spacing: 6) {
-                        ForEach($modelsList) { $row in
-                            modelTableRow($row)
-                        }
-                    }
-
-                    Divider()
-
-                    quickAddChipsView
+                    Spacer()
                 }
-
-                if isEditing {
-                    Section {
-                        Button(role: .destructive, action: {
-                            onDelete()
-                            dismiss()
-                        }) {
-                            HStack {
-                                Spacer()
-                                Label("Delete Provider", systemImage: "trash")
-                                    .foregroundStyle(Color.red)
-                                Spacer()
-                            }
-                        }
-                    }
-                }
+                .padding(.horizontal, 20)
+                .padding(.vertical, 10)
             }
-            .formStyle(.grouped)
         }
-        .frame(width: 580, height: 600)
+        .frame(width: 580, height: 560)
         .onAppear {
             loadInitialData()
+        }
+        .sheet(isPresented: $showingAddModelSheet) {
+            addCustomModelSheet
         }
         .sheet(isPresented: $showingModelSelectionSheet) {
             modelSelectionSheetView
         }
     }
 
-    private func modelTableRow(_ row: Binding<ServiceModelRow>) -> some View {
-        let isActive = activeModelID == row.wrappedValue.modelID
-        return HStack(spacing: 8) {
-            TextField("optional", text: row.nickname)
-                .textFieldStyle(.roundedBorder)
-                .font(.system(size: 12))
-                .frame(width: 130)
+    // MARK: - Add Model Sheet
 
-            TextField("model-id", text: row.modelID)
+    private var addCustomModelSheet: some View {
+        VStack(spacing: 14) {
+            Text("Add Custom Model")
+                .font(.headline)
+
+            TextField("e.g. gpt-4o, claude-3-5-sonnet", text: $newModelInput)
                 .textFieldStyle(.roundedBorder)
                 .font(.system(size: 12, design: .monospaced))
-                .foregroundStyle(isActive ? Color.accentColor : Color.primary)
+                .frame(width: 280)
 
-            Button(action: {
-                activeModelID = row.wrappedValue.modelID
-            }) {
-                Image(systemName: isActive ? "checkmark.circle.fill" : "gearshape")
-                    .font(.system(size: 13))
-                    .foregroundStyle(isActive ? Color.accentColor : Color.secondary)
-            }
-            .buttonStyle(.plain)
-            .help(isActive ? "Active Model" : "Set as Active Model")
-
-            Button(action: {
-                deleteModelRow(id: row.wrappedValue.id)
-            }) {
-                Image(systemName: "trash")
-                    .font(.system(size: 12))
-                    .foregroundStyle(Color.secondary)
-            }
-            .buttonStyle(.plain)
-        }
-        .padding(.horizontal, 2)
-    }
-
-    private var quickAddChipsView: some View {
-        let presets = recommendedModels(for: typeText)
-        return HStack(spacing: 6) {
-            Text("Presets:")
-                .font(.caption)
-                .foregroundStyle(Color.secondary)
-
-            ForEach(presets, id: \.self) { mid in
-                Button(action: {
-                    if !modelsList.contains(where: { $0.modelID == mid }) {
-                        modelsList.append(ServiceModelRow(nickname: "optional", modelID: mid))
-                    }
-                }) {
-                    Text("+ \(mid)")
-                        .font(.system(size: 11, design: .monospaced))
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(Capsule().fill(Color(NSColor.controlBackgroundColor)))
-                        .foregroundStyle(Color.secondary)
+            HStack(spacing: 12) {
+                Button("Cancel") {
+                    newModelInput = ""
+                    showingAddModelSheet = false
                 }
-                .buttonStyle(.plain)
+                .keyboardShortcut(.cancelAction)
+
+                Button("Add") {
+                    let trimmed = newModelInput.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !trimmed.isEmpty && !modelsList.contains(where: { $0.modelID == trimmed }) {
+                        modelsList.append(ServiceModelRow(nickname: "", modelID: trimmed))
+                        if activeModelID.isEmpty { activeModelID = trimmed }
+                    }
+                    newModelInput = ""
+                    showingAddModelSheet = false
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(newModelInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .keyboardShortcut(.defaultAction)
             }
-            Spacer()
         }
-        .padding(.top, 2)
+        .padding(24)
+        .frame(width: 340)
     }
 
     // MARK: - Save / Load
@@ -626,7 +743,8 @@ struct ProviderEditorSheet: View {
                 let key = "service_models_\(id.uuidString)"
                 if let data = UserDefaults.standard.string(forKey: key)?.data(using: .utf8),
                    let list = try? JSONDecoder().decode([ServiceModelRow].self, from: data) {
-                    modelsList = list
+                    // Sanitize away any legacy "optional" nickname placeholder values
+                    self.modelsList = list.map { ServiceModelRow(id: $0.id, nickname: ($0.nickname == "optional" ? "" : $0.nickname), modelID: $0.modelID) }
                 }
             }
         } else if let preset = initialPreset {
@@ -634,7 +752,7 @@ struct ProviderEditorSheet: View {
             urlText = preset.defaultURL
             typeText = preset.type
             activeModelID = preset.defaultModel
-            modelsList = preset.models
+            modelsList = preset.models.map { ServiceModelRow(id: $0.id, nickname: "", modelID: $0.modelID) }
             apiKeyText = ProcessInfo.processInfo.environment["LOCAL_SAP_AI_CORE_PROXY_KEY"] ?? ""
         }
     }
@@ -685,13 +803,7 @@ struct ProviderEditorSheet: View {
         onSave()
     }
 
-    private func addNewModelRow() {
-        let row = ServiceModelRow(nickname: "optional", modelID: "new-model")
-        modelsList.append(row)
-        if activeModelID.isEmpty { activeModelID = row.modelID }
-    }
-
-    private func deleteModelRow(id: String) {
+    private func deleteModel(_ id: String) {
         modelsList.removeAll { $0.id == id }
         if !modelsList.contains(where: { $0.modelID == activeModelID }), let next = modelsList.first {
             activeModelID = next.modelID
@@ -892,7 +1004,7 @@ struct ProviderEditorSheet: View {
 
         for mid in idsToImport {
             if !modelsList.contains(where: { $0.modelID == mid }) {
-                modelsList.append(ServiceModelRow(nickname: "optional", modelID: mid))
+                modelsList.append(ServiceModelRow(nickname: "", modelID: mid))
             }
         }
         if activeModelID.isEmpty, let first = modelsList.first {
