@@ -387,23 +387,38 @@ struct ContentView: View {
         newChat.createdDate = Date()
         newChat.updatedDate = Date()
         newChat.systemMessage = systemMessage
-        newChat.gptModel = gptModel
         newChat.lastSequence = 0
 
+        // 1. If explicit preferredService passed, use it
         if let service = preferredService {
             newChat.apiService = service
             newChat.persona = service.defaultPersona
             newChat.gptModel = service.model ?? AppConstants.defaultModel(for: service.type)
             newChat.systemMessage = service.defaultPersona?.systemMessage ?? AppConstants.chatGptSystemMessage
         }
-        else if let defaultService = resolveDefaultAPIService() {
-            newChat.apiService = defaultService
-            newChat.persona = defaultService.defaultPersona
-            // TODO: Refactor the following code along with ChatView.swift
-            newChat.gptModel = defaultService.model ?? AppConstants.defaultModel(for: defaultService.type)
-            newChat.systemMessage = newChat.persona?.systemMessage ?? AppConstants.chatGptSystemMessage
+        // 2. Otherwise inherit from Global Model (the model chosen in previous chats)
+        else if let globalModel = UserDefaults.standard.string(forKey: "global_selected_model"),
+                !globalModel.isEmpty,
+                let globalServiceID = UserDefaults.standard.string(forKey: "global_selected_service_id"),
+                let matchedService = apiServices.first(where: { $0.id?.uuidString == globalServiceID })
+        {
+            newChat.apiService = matchedService
+            newChat.persona = matchedService.defaultPersona
+            newChat.gptModel = globalModel
+            newChat.systemMessage = matchedService.defaultPersona?.systemMessage ?? AppConstants.chatGptSystemMessage
         }
-
+        // 3. Fallback: inherit from the most recent chat if available
+        else if let lastChat = chats.first, let lastService = lastChat.apiService, !lastChat.gptModel.isEmpty {
+            newChat.apiService = lastService
+            newChat.persona = lastChat.persona
+            newChat.gptModel = lastChat.gptModel
+            newChat.systemMessage = lastChat.systemMessage
+        }
+        // 4. Otherwise: leave empty! User will be prompted to select a model
+        else {
+            newChat.apiService = nil
+            newChat.gptModel = ""
+        }
         do {
             try viewContext.save()
             selectedChat = newChat
@@ -504,6 +519,14 @@ struct ContentView: View {
             chat.gptModel = model
         } else if chat.gptModel.isEmpty {
             chat.gptModel = newService.model ?? AppConstants.defaultModel(for: newService.type)
+        }
+
+        // Record as Global Model for subsequent new chats
+        if !chat.gptModel.isEmpty {
+            UserDefaults.standard.set(chat.gptModel, forKey: "global_selected_model")
+        }
+        if let serviceID = newService.id?.uuidString {
+            UserDefaults.standard.set(serviceID, forKey: "global_selected_service_id")
         }
         chat.objectWillChange.send()
         try? viewContext.save()

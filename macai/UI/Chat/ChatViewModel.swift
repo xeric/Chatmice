@@ -235,26 +235,10 @@ class ChatViewModel: NSObject, ObservableObject, NSFetchedResultsControllerDeleg
     }
 
     var canSendMessage: Bool {
-        bindDefaultServiceIfNeeded()
-        return chat.apiService != nil
-    }
-
-    private func bindDefaultServiceIfNeeded() {
-        if chat.apiService == nil {
-            let req = NSFetchRequest<APIServiceEntity>(entityName: "APIServiceEntity")
-            req.predicate = NSPredicate(format: "isDefault == YES")
-            req.fetchLimit = 1
-            if let defaultService = (try? viewContext.fetch(req))?.first {
-                chat.apiService = defaultService
-                chat.gptModel = defaultService.model ?? AppConstants.defaultModel(for: defaultService.type)
-                try? viewContext.save()
-                recreateMessageManager()
-            }
-        }
+        return chat.apiService != nil && !chat.gptModel.isEmpty
     }
 
     private func loadCurrentAPIConfig() -> APIServiceConfiguration? {
-        bindDefaultServiceIfNeeded()
         guard let apiService = chat.apiService, let apiServiceUrl = apiService.url else {
             return nil
         }

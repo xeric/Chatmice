@@ -68,6 +68,9 @@ struct ChatBottomContainerView: View {
             }
         }
     }
+    private var hasModelSelected: Bool {
+        !chat.gptModel.isEmpty && chat.apiService != nil
+    }
 
     var body: some View {
         ZStack(alignment: .topTrailing) {
@@ -77,6 +80,26 @@ struct ChatBottomContainerView: View {
                         PersonaSelectorView(chat: chat)
                             .transition(.move(edge: .bottom).combined(with: .opacity))
                     }
+                }
+
+                if !hasModelSelected {
+                    HStack(spacing: 8) {
+                        Image(systemName: "exclamationmark.circle.fill")
+                            .foregroundStyle(Color.orange)
+                            .font(.system(size: 13))
+
+                        Text("Please select an AI Model from the top bar to start chatting.")
+                            .font(.system(size: 12))
+                            .foregroundStyle(Color.secondary)
+
+                        Spacer()
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+                    .background(Color.orange.opacity(0.12))
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .padding(.horizontal, 12)
+                    .padding(.top, 4)
                 }
 
                 HStack {
@@ -95,6 +118,8 @@ struct ChatBottomContainerView: View {
                         onStopInference: onStopInference,
                         onCancelEdit: onCancelEdit
                     )
+                    .disabled(!hasModelSelected)
+                    .opacity(hasModelSelected ? 1.0 : 0.6)
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)

@@ -162,15 +162,6 @@ struct TabAPIServicesView: View {
                         Text(service.name ?? "Provider")
                             .font(.system(size: 13, weight: .medium))
                             .foregroundStyle(Color.primary)
-
-                        if service.isDefault {
-                            Text("Default")
-                                .font(.system(size: 10, weight: .medium))
-                                .padding(.horizontal, 5)
-                                .padding(.vertical, 1)
-                                .background(Capsule().fill(Color.accentColor.opacity(0.15)))
-                                .foregroundStyle(Color.accentColor)
-                        }
                     }
 
                     let urlString = service.url?.absoluteString ?? "No URL"
@@ -361,9 +352,7 @@ struct ProviderEditorSheet: View {
     @State private var urlText = ""
     @State private var typeText = "chatgpt"
     @State private var apiKeyText = ""
-    @State private var isDefault = false
     @State private var modelsList: [ServiceModelRow] = []
-    @State private var activeModelID = ""
     @State private var isShowingAPIKey = false
 
     // Add custom model alert
@@ -489,22 +478,6 @@ struct ProviderEditorSheet: View {
                                     .buttonStyle(.plain)
                                 }
                             }
-
-                            GridRow {
-                                Text("Default")
-                                    .font(.subheadline)
-                                    .foregroundStyle(Color.secondary)
-                                    .frame(width: 110, alignment: .trailing)
-
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Toggle("Use as default for new conversations", isOn: $isDefault)
-                                        .toggleStyle(.checkbox)
-
-                                    Text("Automatically selected when starting a new chat if no specific assistant is chosen.")
-                                        .font(.caption2)
-                                        .foregroundStyle(Color.secondary)
-                                }
-                            }
                         }
                         .padding(10)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -560,32 +533,16 @@ struct ProviderEditorSheet: View {
                                 ScrollView {
                                     LazyVStack(spacing: 2) {
                                         ForEach(modelsList, id: \.id) { m in
-                                            let isActive = activeModelID == m.modelID
                                             HStack(spacing: 10) {
-                                                Button(action: {
-                                                    activeModelID = m.modelID
-                                                }) {
-                                                    Image(systemName: isActive ? "checkmark.circle.fill" : "circle")
-                                                        .font(.system(size: 14))
-                                                        .foregroundStyle(isActive ? Color.accentColor : Color.secondary.opacity(0.4))
-                                                }
-                                                .buttonStyle(.plain)
-                                                .help(isActive ? "Active model for this provider" : "Click to set as active model")
+                                                Image(systemName: "cpu")
+                                                    .font(.system(size: 12))
+                                                    .foregroundStyle(Color.secondary)
 
                                                 Text(m.modelID)
                                                     .font(.system(size: 12, design: .monospaced))
                                                     .foregroundStyle(Color.primary)
 
                                                 Spacer()
-
-                                                if isActive {
-                                                    Text("Active")
-                                                        .font(.caption2)
-                                                        .padding(.horizontal, 6)
-                                                        .padding(.vertical, 2)
-                                                        .background(Capsule().fill(Color.accentColor.opacity(0.15)))
-                                                        .foregroundStyle(Color.accentColor)
-                                                }
 
                                                 Button(action: {
                                                     deleteModel(m.id)
@@ -595,13 +552,10 @@ struct ProviderEditorSheet: View {
                                                         .foregroundStyle(Color.secondary.opacity(0.8))
                                                 }
                                                 .buttonStyle(.plain)
+                                                .help("Remove model")
                                             }
-                                            .padding(.horizontal, 8)
-                                            .padding(.vertical, 5)
-                                            .background(
-                                                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                                    .fill(isActive ? Color.accentColor.opacity(0.08) : Color.clear)
-                                            )
+                                            .padding(.horizontal, 10)
+                                            .padding(.vertical, 6)
                                         }
                                     }
                                     .padding(.vertical, 2)
@@ -633,7 +587,6 @@ struct ProviderEditorSheet: View {
                                                 Button(action: {
                                                     if !modelsList.contains(where: { $0.modelID == preset }) {
                                                         modelsList.append(ServiceModelRow(nickname: "", modelID: preset))
-                                                        if activeModelID.isEmpty { activeModelID = preset }
                                                     }
                                                 }) {
                                                     Text("+ \(preset)")
@@ -714,7 +667,6 @@ struct ProviderEditorSheet: View {
                     let trimmed = newModelInput.trimmingCharacters(in: .whitespacesAndNewlines)
                     if !trimmed.isEmpty && !modelsList.contains(where: { $0.modelID == trimmed }) {
                         modelsList.append(ServiceModelRow(nickname: "", modelID: trimmed))
-                        if activeModelID.isEmpty { activeModelID = trimmed }
                     }
                     newModelInput = ""
                     showingAddModelSheet = false
@@ -735,8 +687,6 @@ struct ProviderEditorSheet: View {
             nameText = service.name ?? ""
             urlText = service.url?.absoluteString ?? ""
             typeText = service.type ?? "chatgpt"
-            activeModelID = service.model ?? ""
-            isDefault = service.isDefault
 
             if let id = service.id {
                 apiKeyText = (try? TokenManager.getToken(for: id.uuidString)) ?? ""
@@ -751,7 +701,7 @@ struct ProviderEditorSheet: View {
             nameText = preset.name
             urlText = preset.defaultURL
             typeText = preset.type
-            activeModelID = preset.defaultModel
+            modelsList = preset.models.map { ServiceModelRow(id: $0.id, nickname: "", modelID: $0.modelID) }
             modelsList = preset.models.map { ServiceModelRow(id: $0.id, nickname: "", modelID: $0.modelID) }
             apiKeyText = ProcessInfo.processInfo.environment["LOCAL_SAP_AI_CORE_PROXY_KEY"] ?? ""
         }
@@ -767,7 +717,7 @@ struct ProviderEditorSheet: View {
                 name: nameText,
                 type: typeText,
                 url: URL(string: urlText) ?? URL(fileURLWithPath: ""),
-                model: activeModelID,
+                model: modelsList.first?.modelID ?? "",
                 contextSize: 20,
                 useStreamResponse: true,
                 generateChatNames: true
@@ -777,20 +727,7 @@ struct ProviderEditorSheet: View {
         targetService.name = nameText
         targetService.url = URL(string: urlText)
         targetService.type = typeText
-        targetService.model = activeModelID.isEmpty ? (modelsList.first?.modelID ?? "") : activeModelID
-
-        if isDefault {
-            let fetchReq: NSFetchRequest<APIServiceEntity> = APIServiceEntity.fetchRequest()
-            if let all = try? viewContext.fetch(fetchReq) {
-                for s in all {
-                    s.isDefault = (s.objectID == targetService.objectID)
-                }
-            }
-            targetService.isDefault = true
-        } else {
-            targetService.isDefault = false
-        }
-
+        targetService.model = modelsList.first?.modelID ?? ""
         if let id = targetService.id {
             try? TokenManager.setToken(apiKeyText, for: id.uuidString)
             let key = "service_models_\(id.uuidString)"
@@ -805,9 +742,6 @@ struct ProviderEditorSheet: View {
 
     private func deleteModel(_ id: String) {
         modelsList.removeAll { $0.id == id }
-        if !modelsList.contains(where: { $0.modelID == activeModelID }), let next = modelsList.first {
-            activeModelID = next.modelID
-        }
     }
 
     // MARK: - Fetch Models from API
@@ -817,7 +751,7 @@ struct ProviderEditorSheet: View {
             name: nameText,
             apiUrl: URL(string: urlText) ?? URL(fileURLWithPath: ""),
             apiKey: apiKeyText,
-            model: activeModelID,
+            model: modelsList.first?.modelID ?? "",
             type: typeText
         )
         let handler = APIServiceFactory.createAPIService(config: config, imageGenerationSupported: false)
@@ -1006,9 +940,6 @@ struct ProviderEditorSheet: View {
             if !modelsList.contains(where: { $0.modelID == mid }) {
                 modelsList.append(ServiceModelRow(nickname: "", modelID: mid))
             }
-        }
-        if activeModelID.isEmpty, let first = modelsList.first {
-            activeModelID = first.modelID
         }
     }
 
