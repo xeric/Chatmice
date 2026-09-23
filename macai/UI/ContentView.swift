@@ -230,7 +230,7 @@ struct ContentView: View {
         .navigationTitle("")
         .toolbarBackground(.visible, for: .windowToolbar)
         .toolbar {
-            ToolbarItem(placement: .principal) {
+            ToolbarItem(placement: .primaryAction) {
                 if let selectedChat = selectedChat {
                     Button(action: { isShowingModelPickerPopover.toggle() }) {
                         HStack(spacing: 6) {
