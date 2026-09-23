@@ -88,10 +88,10 @@ class ChatGPTHandler: OpenAIHandlerBase, APIService {
                         for try await byte in stream {
                             data.append(byte)
                         }
-                        let error = APIError.serverError(
-                            String(data: data, encoding: .utf8) ?? error.localizedDescription
-                        )
-                        continuation.finish(throwing: error)
+                        let errorResponse = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
+                        let finalMessage = (errorResponse?.isEmpty == false ? errorResponse : nil) ?? error.localizedDescription
+                        let apiError = APIError.serverError(finalMessage)
+                        continuation.finish(throwing: apiError)
                         return
                     case .success:
                         break
@@ -137,31 +137,45 @@ class ChatGPTHandler: OpenAIHandlerBase, APIService {
     }
 
     func fetchModels() async throws -> [AIModel] {
-        let modelsURL = baseURL.deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("models")
+        var base = baseURL
+        if base.absoluteString.hasSuffix("/chat/completions") {
+            base = base.deletingLastPathComponent().deletingLastPathComponent()
+        } else if base.absoluteString.hasSuffix("/completions") || base.absoluteString.hasSuffix("/chat") {
+            base = base.deletingLastPathComponent()
+        }
+        let modelsURL = base.appendingPathComponent("models")
 
         var request = URLRequest(url: modelsURL)
         request.httpMethod = "GET"
-        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        let effectiveKey = apiKey.isEmpty ? (ProcessInfo.processInfo.environment["LOCAL_SAP_AI_CORE_PROXY_KEY"] ?? "") : apiKey
+        if !effectiveKey.isEmpty {
+            request.setValue("Bearer \(effectiveKey)", forHTTPHeaderField: "Authorization")
+        }
 
         do {
             let (data, response) = try await session.data(for: request)
-
             let result = handleAPIResponse(response, data: data, error: nil)
             switch result {
             case .success(let responseData):
-                guard let responseData = responseData else {
-                    throw APIError.invalidResponse
+                guard let responseData else { throw APIError.invalidResponse }
+                if let gptResponse = try? JSONDecoder().decode(ChatGPTModelsResponse.self, from: responseData) {
+                    return gptResponse.data.map { AIModel(id: $0.id) }
                 }
-
-                let gptResponse = try JSONDecoder().decode(ChatGPTModelsResponse.self, from: responseData)
-
-                return gptResponse.data.map { AIModel(id: $0.id) }
-
+                if let obj = try? JSONSerialization.jsonObject(with: responseData) as? [String: Any] {
+                    if let dataArr = obj["data"] as? [[String: Any]] {
+                        let ids = dataArr.compactMap { $0["id"] as? String }
+                        if !ids.isEmpty { return ids.map { AIModel(id: $0) } }
+                    }
+                    if let modelsArr = obj["models"] as? [[String: Any]] {
+                        let ids = modelsArr.compactMap { ($0["name"] as? String) ?? ($0["id"] as? String) }
+                        if !ids.isEmpty { return ids.map { AIModel(id: $0) } }
+                    }
+                }
+                throw APIError.decodingFailed("未能解析模型列表")
             case .failure(let error):
                 throw error
             }
-        }
-        catch {
+        } catch {
             throw APIError.requestFailed(error)
         }
     }
@@ -174,9 +188,14 @@ class ChatGPTHandler: OpenAIHandlerBase, APIService {
     internal func prepareRequest(requestMessages: [[String: String]], model: String, temperature: Float, stream: Bool)
         -> URLRequest
     {
-        var request = URLRequest(url: baseURL)
+        var targetURL = baseURL
+        if !targetURL.absoluteString.hasSuffix("/chat/completions") {
+            targetURL = targetURL.appendingPathComponent("chat/completions")
+        }
+        var request = URLRequest(url: targetURL)
         request.httpMethod = "POST"
-        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        let effectiveKey = apiKey.isEmpty ? (ProcessInfo.processInfo.environment["LOCAL_SAP_AI_CORE_PROXY_KEY"] ?? "") : apiKey
+        request.setValue("Bearer \(effectiveKey)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
         var temperatureOverride = temperature
@@ -249,10 +268,13 @@ class ChatGPTHandler: OpenAIHandlerBase, APIService {
                 if let dict = json as? [String: Any] {
                     if let choices = dict["choices"] as? [[String: Any]],
                         let lastIndex = choices.indices.last,
-                        let content = choices[lastIndex]["message"] as? [String: Any],
-                        let messageRole = content["role"] as? String,
-                        let messageContent = content["content"] as? String
+                        let content = choices[lastIndex]["message"] as? [String: Any]
                     {
+                        let messageRole = content["role"] as? String ?? "assistant"
+                        let messageContent = (content["content"] as? String)
+                            ?? (content["reasoning"] as? String)
+                            ?? (content["reasoning_content"] as? String)
+                            ?? ""
                         return (messageContent, messageRole)
                     }
                 }
@@ -282,16 +304,25 @@ class ChatGPTHandler: OpenAIHandlerBase, APIService {
 
             if let dict = jsonResponse as? [String: Any] {
                 if let choices = dict["choices"] as? [[String: Any]],
-                    let firstChoice = choices.first,
-                    let delta = firstChoice["delta"] as? [String: Any],
-                    let contentPart = delta["content"] as? String
+                    let firstChoice = choices.first
                 {
-
-                    let finished = false
-                    if let finishReason = firstChoice["finish_reason"] as? String, finishReason == "stop" {
-                        _ = true
+                    var finished = false
+                    if let finishReason = firstChoice["finish_reason"] as? String,
+                        finishReason == "stop" || finishReason == "end_turn"
+                    {
+                        finished = true
                     }
-                    return (finished, nil, contentPart, defaultRole)
+
+                    if let delta = firstChoice["delta"] as? [String: Any] {
+                        let role = (delta["role"] as? String) ?? defaultRole
+                        let contentPart = (delta["content"] as? String)
+                            ?? (delta["reasoning"] as? String)
+                            ?? (delta["reasoning_content"] as? String)
+
+                        return (finished, nil, contentPart, role)
+                    }
+
+                    return (finished, nil, nil, defaultRole)
                 }
             }
         }

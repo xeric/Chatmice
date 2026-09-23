@@ -20,8 +20,105 @@ class ChatStore: ObservableObject {
         self.viewContext = persistenceController.container.viewContext
 
         migrateFromJSONIfNeeded()
+        ensureDefaultAPIServiceExists()
     }
 
+    private func ensureDefaultAPIServiceExists() {
+        let key = ProcessInfo.processInfo.environment["LOCAL_SAP_AI_CORE_PROXY_KEY"] ?? ""
+
+        // 1. Ensure Default Persona exists
+        let personaRequest = NSFetchRequest<PersonaEntity>(entityName: "PersonaEntity")
+        let persona: PersonaEntity
+        if let existingPersona = (try? viewContext.fetch(personaRequest))?.first {
+            persona = existingPersona
+        } else {
+            persona = PersonaEntity(context: viewContext)
+            persona.id = UUID()
+            persona.name = "Default Assistant"
+            persona.systemMessage = "You are a helpful AI assistant. Answer concisely and accurately."
+            persona.temperature = 0.7
+            persona.color = "#007AFF"
+        }
+
+        // 2. Ensure Default Services exist & tokens are set in Keychain
+        let request = NSFetchRequest<APIServiceEntity>(entityName: "APIServiceEntity")
+        let allServices = (try? viewContext.fetch(request)) ?? []
+
+        var openAIService = allServices.first(where: { $0.name == "CPA OpenAI" || $0.type == "chatgpt" })
+        var googleService = allServices.first(where: { $0.name == "Google AI" || $0.type == "gemini" })
+
+        if let service = openAIService {
+            service.imageUploadsAllowed = true
+            service.pdfUploadsAllowed = true
+            if let tokenID = service.tokenIdentifier, !key.isEmpty {
+                try? TokenManager.setToken(key, for: tokenID)
+            }
+        } else {
+            let service = APIServiceEntity(context: viewContext)
+            service.id = UUID()
+            service.name = "CPA OpenAI"
+            service.type = "chatgpt"
+            service.url = URL(string: "http://127.0.0.1:9988/openai/v1")
+            service.model = "gpt-5.6-luna"
+            service.contextSize = 20
+            service.useStreamResponse = true
+            service.generateChatNames = true
+            service.isDefault = true
+            service.imageUploadsAllowed = true
+            service.pdfUploadsAllowed = true
+            service.tokenIdentifier = service.id?.uuidString
+            if let tokenID = service.tokenIdentifier, !key.isEmpty {
+                try? TokenManager.setToken(key, for: tokenID)
+            }
+            service.defaultPersona = persona
+            openAIService = service
+        }
+
+        if let service = googleService {
+            service.imageUploadsAllowed = true
+            service.pdfUploadsAllowed = true
+            service.url = URL(string: "http://127.0.0.1:9988/google/v1beta")
+            if service.tokenIdentifier == nil || service.tokenIdentifier?.isEmpty == true {
+                service.tokenIdentifier = service.id?.uuidString ?? UUID().uuidString
+            }
+            if let tokenID = service.tokenIdentifier, !key.isEmpty {
+                try? TokenManager.setToken(key, for: tokenID)
+            }
+        } else {
+            let service = APIServiceEntity(context: viewContext)
+            service.id = UUID()
+            service.name = "Google AI"
+            service.type = "gemini"
+            service.url = URL(string: "http://127.0.0.1:9988/google/v1beta")
+            service.model = "gemini-3.8-flash"
+            service.contextSize = 20
+            service.useStreamResponse = true
+            service.generateChatNames = true
+            service.imageUploadsAllowed = true
+            service.pdfUploadsAllowed = true
+            service.tokenIdentifier = service.id?.uuidString
+            if let tokenID = service.tokenIdentifier, !key.isEmpty {
+                try? TokenManager.setToken(key, for: tokenID)
+            }
+            service.defaultPersona = persona
+            googleService = service
+        }
+        openAIService?.defaultPersona = persona
+        googleService?.defaultPersona = persona
+        // 3. Auto-link any chat missing persona or apiService
+        let chatReq = NSFetchRequest<ChatEntity>(entityName: "ChatEntity")
+        if let chats = try? viewContext.fetch(chatReq) {
+            let fallbackService = openAIService ?? allServices.first
+            for c in chats {
+                if c.persona == nil { c.persona = persona }
+                if c.apiService == nil { c.apiService = fallbackService }
+                if c.gptModel.isEmpty { c.gptModel = fallbackService?.model ?? "gpt-5.6-luna" }
+                if c.systemMessage.isEmpty { c.systemMessage = persona.systemMessage ?? "You are a helpful assistant." }
+            }
+        }
+
+        try? viewContext.save()
+    }
     func saveInCoreData() {
         //        DispatchQueue.main.async {
         //            do {

@@ -19,34 +19,44 @@ class APIServiceFactory {
         config: APIServiceConfiguration,
         imageGenerationSupported: Bool? = nil
     ) -> APIService {
-        let configName =
-            AppConstants.defaultApiConfigurations[config.name.lowercased()]?.inherits ?? config.name.lowercased()
+        let typeCandidate: String = {
+            if let c = config as? APIServiceConfig, !c.type.isEmpty {
+                return c.type.lowercased()
+            }
+            if let entity = config as? APIServiceEntity, let t = entity.type, !t.isEmpty {
+                return t.lowercased()
+            }
+            return AppConstants.defaultApiConfigurations[config.name.lowercased()]?.inherits ?? config.name.lowercased()
+        }()
 
+        let configName = AppConstants.defaultApiConfigurations[typeCandidate]?.inherits ?? typeCandidate
+
+        let base: APIService
         switch configName {
         case "openai-responses", "openai":
-            let supportsImageGeneration = imageGenerationSupported
-                ?? false
-            return OpenAIResponsesHandler(
+            let supportsImageGeneration = imageGenerationSupported ?? false
+            base = OpenAIResponsesHandler(
                 config: config,
                 session: session,
                 imageGenerationSupported: supportsImageGeneration
             )
         case "chatgpt":
-            return ChatGPTHandler(config: config, session: session)
+            base = ChatGPTHandler(config: config, session: session)
         case "ollama":
-            return OllamaHandler(config: config, session: session)
+            base = OllamaHandler(config: config, session: session)
         case "claude":
-            return ClaudeHandler(config: config, session: session)
+            base = ClaudeHandler(config: config, session: session)
         case "perplexity":
-            return PerplexityHandler(config: config, session: session)
+            base = PerplexityHandler(config: config, session: session)
         case "gemini":
-            return GeminiHandler(config: config, session: session)
+            base = GeminiHandler(config: config, session: session)
         case "deepseek":
-            return DeepseekHandler(config: config, session: session)
+            base = DeepseekHandler(config: config, session: session)
         case "openrouter":
-            return OpenRouterHandler(config: config, session: session)
+            base = OpenRouterHandler(config: config, session: session)
         default:
-            fatalError("Unsupported API service: \(config.name)")
+            base = ChatGPTHandler(config: config, session: session)
         }
+        return ChatmiceEngine(baseService: base, config: config)
     }
 }

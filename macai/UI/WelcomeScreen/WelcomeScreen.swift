@@ -29,7 +29,7 @@ struct WelcomeScreen: View {
                         .padding(64)
 
                     VStack {
-                        Text("Welcome to macai!").font(.title)
+                        Text("Welcome to Chatmice!").font(.title)
                         if !apiServiceIsPresent {
                             Text("To get started, please add at least one API Service in the settings")
                             if #available(macOS 14.0, *) {

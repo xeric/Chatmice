@@ -71,7 +71,7 @@ struct ErrorBubbleView: View {
     let onRetry: () -> Void
     let onIgnore: () -> Void
 
-    @State private var isExpanded = false
+    @State private var isExpanded = true
 
     var body: some View {
         VStack(alignment: .leading) {
@@ -80,7 +80,7 @@ struct ErrorBubbleView: View {
                     .foregroundColor(.white)
                     .padding(.top, 1)
 
-                VStack(alignment: .leading) {
+                VStack(alignment: .leading, spacing: 4) {
                     HStack {
                         Text(error.displayTitle)
                             .font(.headline)
@@ -95,21 +95,13 @@ struct ErrorBubbleView: View {
                         }
                     }
 
-                    if isExpanded {
+                    if !error.displayMessage.isEmpty {
                         Text(error.displayMessage)
                             .font(.subheadline)
-                            .foregroundColor(.white.opacity(0.9))
-                            .padding(.top, 4)
+                            .foregroundColor(.white.opacity(0.95))
                             .textSelection(.enabled)
                     }
                 }
-
-                Button(action: { isExpanded.toggle() }) {
-                    Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
-                        .foregroundColor(.white)
-                }
-                .buttonStyle(PlainButtonStyle())
-                .padding(.top, 4)
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)

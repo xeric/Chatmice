@@ -1,6 +1,40 @@
 {
     "providers": [
         {
+            "id": "chatgpt",
+            "displayName": "Custom OpenAI / Proxy",
+            "defaultName": "Local Proxy",
+            "note": "OpenAI-compatible proxy (e.g. SAP AI Core, LiteLLM, vLLM)",
+            "models": [
+                {
+                    "id": "gpt-5.6-luna",
+                    "displayName": "GPT-5.6 Luna",
+                    "isDefault": true,
+                    "settings": {
+                        "generateChatNames": true,
+                        "contextSize": 20,
+                        "useStreaming": true,
+                        "allowImageUploads": true,
+                        "allowPdfUploads": false,
+                        "imageGenerationSupported": false
+                    }
+                },
+                {
+                    "id": "gpt-4o",
+                    "displayName": "GPT-4o",
+                    "isDefault": false,
+                    "settings": {
+                        "generateChatNames": true,
+                        "contextSize": 20,
+                        "useStreaming": true,
+                        "allowImageUploads": true,
+                        "allowPdfUploads": false,
+                        "imageGenerationSupported": false
+                    }
+                }
+            ]
+        },
+        {
             "id": "openrouter",
             "displayName": "OpenRouter",
             "defaultName": "OpenRouter",

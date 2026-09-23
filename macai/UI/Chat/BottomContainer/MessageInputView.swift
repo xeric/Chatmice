@@ -34,6 +34,9 @@ struct MessageInputView: View {
     @State private var draggingAttachment: AttachmentKey?
     @State private var isShowingPhotosPicker = false
     @State private var photoPickerItems: [PhotosPickerItem] = []
+    @AppStorage("chatmiceToolsEnabled") private var toolsEnabled = true
+    @State private var webSearchEnabled = false
+    @State private var reasoningMode = "Standard"
 
     private let maxInputHeight = 160.0
     private let initialInputSize = 16.0
@@ -57,6 +60,19 @@ struct MessageInputView: View {
 
     private var defaultInputHeight: CGFloat {
         CGFloat(initialInputSize + inputPadding * 2)
+    }
+    private var inputBorderColor: Color {
+        if isHoveringDropZone { return Color.green.opacity(0.8) }
+        if isFocused == .focused { return Color.blue.opacity(0.6) }
+        return Color.white.opacity(0.12)
+    }
+
+    private var inputBorderWidth: CGFloat {
+        isHoveringDropZone ? 2 : 1
+    }
+
+    private var isSendDisabled: Bool {
+        text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && attachedImages.isEmpty && attachedFiles.isEmpty
     }
 
     private var stopButtonTransition: AnyTransition {
@@ -135,6 +151,148 @@ struct MessageInputView: View {
         self.cornerRadius = cornerRadius
     }
 
+    private var inputToolbar: some View {
+        HStack(spacing: 8) {
+            attachmentButton
+            webSearchButton
+            reasoningChip
+            toolsButton
+            promptsButton
+            Spacer()
+            micButton
+            sendOrStopButton
+        }
+        .padding(.horizontal, 12)
+        .padding(.bottom, 8)
+    }
+
+    private var attachmentButton: some View {
+        Menu {
+            if pdfUploadsAllowed { Button("Add Document / PDF", action: onAddFile) }
+            if imageUploadsAllowed {
+                Button("Add Image from File", action: onAddImage)
+                Button("Add Image from Photos") { isShowingPhotosPicker = true }
+            }
+        } label: {
+            Image(systemName: "paperclip")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(Color.white.opacity(0.65))
+                .frame(width: 24, height: 24)
+                .background(Circle().fill(Color.white.opacity(0.06)))
+        }
+        .menuStyle(.borderlessButton)
+        .help("Attach file or image")
+    }
+
+    private var webSearchButton: some View {
+        Button(action: { webSearchEnabled.toggle() }) {
+            HStack(spacing: 3) {
+                Image(systemName: "globe").font(.system(size: 10))
+                Text("Search").font(.system(size: 11, weight: .medium))
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(
+                Capsule()
+                    .fill(webSearchEnabled ? Color.blue.opacity(0.25) : Color.white.opacity(0.06))
+                    .overlay(Capsule().stroke(webSearchEnabled ? Color.blue : Color.clear, lineWidth: 1))
+            )
+            .foregroundStyle(webSearchEnabled ? Color.blue : Color.white.opacity(0.65))
+        }
+        .buttonStyle(.plain)
+        .help("Toggle Web Search")
+    }
+
+    private var reasoningChip: some View {
+        Menu {
+            Button("Standard Mode") { reasoningMode = "Standard" }
+            Button("Deep Reasoning") { reasoningMode = "Reasoning" }
+            Button("Creative Mode") { reasoningMode = "Creative" }
+        } label: {
+            HStack(spacing: 3) {
+                Image(systemName: "bolt.fill").font(.system(size: 9))
+                Text(reasoningMode).font(.system(size: 11, weight: .medium))
+                Image(systemName: "chevron.down").font(.system(size: 7))
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(Capsule().fill(Color.white.opacity(0.06)))
+            .foregroundStyle(Color.white.opacity(0.65))
+        }
+        .menuStyle(.borderlessButton)
+    }
+
+    private var toolsButton: some View {
+        Button(action: { toolsEnabled.toggle() }) {
+            HStack(spacing: 3) {
+                Image(systemName: "wrench.and.screwdriver.fill").font(.system(size: 10))
+                Text("Tools").font(.system(size: 11, weight: .medium))
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(
+                Capsule()
+                    .fill(toolsEnabled ? Color.blue.opacity(0.25) : Color.white.opacity(0.06))
+                    .overlay(Capsule().stroke(toolsEnabled ? Color.blue : Color.clear, lineWidth: 1))
+            )
+            .foregroundStyle(toolsEnabled ? Color.blue : Color.white.opacity(0.65))
+        }
+        .buttonStyle(.plain)
+        .help("Enable Agent Tools (MCP, Bash, Skills)")
+    }
+
+    private var promptsButton: some View {
+        Menu {
+            Button("Summarize text") { text = "Please summarize the following:\n" }
+            Button("Explain Code") { text = "Please explain how this code works in detail:\n" }
+            Button("Translate to English") { text = "Translate the following into English:\n" }
+            Button("Translate to Chinese") { text = "将以下内容翻译为地道中文：\n" }
+        } label: {
+            Image(systemName: "text.bubble")
+                .font(.system(size: 12))
+                .foregroundStyle(Color.white.opacity(0.65))
+                .frame(width: 24, height: 24)
+                .background(Circle().fill(Color.white.opacity(0.06)))
+        }
+        .menuStyle(.borderlessButton)
+        .help("Prompt templates")
+    }
+
+    private var micButton: some View {
+        Button(action: {}) {
+            Image(systemName: "mic.fill")
+                .font(.system(size: 12))
+                .foregroundStyle(Color.white.opacity(0.55))
+                .frame(width: 24, height: 24)
+                .background(Circle().fill(Color.white.opacity(0.06)))
+        }
+        .buttonStyle(.plain)
+        .help("Voice input")
+    }
+
+    private var sendOrStopButton: some View {
+        Group {
+            if isInferenceInProgress {
+                Button(action: onStopInference) {
+                    Image(systemName: "stop.circle.fill")
+                        .font(.system(size: 22))
+                        .foregroundStyle(Color.red)
+                }
+                .buttonStyle(.plain)
+                .help("Stop generating")
+            } else {
+                Button(action: onEnter) {
+                    Image(systemName: "arrow.up.circle.fill")
+                        .font(.system(size: 22))
+                        .foregroundStyle(isSendDisabled ? Color.white.opacity(0.2) : Color.blue)
+                }
+                .buttonStyle(.plain)
+                .disabled(isSendDisabled)
+                .help("Send message")
+            }
+        }
+    }
+
     var body: some View {
         let orderedAttachments = orderedAttachmentItems()
         let previewRequests = attachmentPreviewRequests(from: orderedAttachments)
@@ -211,34 +369,14 @@ struct MessageInputView: View {
             }
             .frame(height: (attachedImages.isEmpty && attachedFiles.isEmpty) ? 0 : 100)
             
-            HStack(spacing: 8) {
-                if let attachmentButtonIcon {
-                    Menu {
-                        if pdfUploadsAllowed {
-                            Button("Add PDF", action: onAddFile)
-                        }
-                        if imageUploadsAllowed {
-                            Button("Add Image from File", action: onAddImage)
-                            Button("Add Image from Photos") {
-                                isShowingPhotosPicker = true
-                            }
-                        }
-                    } label: {
-                        Image(systemName: attachmentButtonIcon)
-                            .font(.system(size: 16))
-                            .foregroundColor(.accentColor)
-                    }
-                    .buttonStyle(PlainButtonStyle())
-                    .help("Add attachment")
-                }
-                
+            VStack(alignment: .leading, spacing: 0) {
                 MacaiTextField(
-                    effectivePlaceholderText,
+                    "Enter a message here, press ↩ to send",
                     text: $text,
                     isFocused: $isFocused.equalTo(.focused),
                     returnKeyType: frontReturnKeyType,
                     fontSize: effectiveFontSize,
-                    minHeight: initialInputSize,
+                    minHeight: 28,
                     maxHeight: maxInputHeight,
                     onEscape: isEditingSystemMessage ? onCancelEdit : nil,
                     onCommit: {
@@ -246,38 +384,24 @@ struct MessageInputView: View {
                         onEnter()
                     }
                 )
-                .padding(inputPadding)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Color.clear)
-                .background(
-                    RoundedRectangle(cornerRadius: cornerRadius)
-                        .stroke(
-                            isHoveringDropZone
-                                ? Color.green.opacity(0.8)
-                                : (isFocused == .focused ? lineColorOnFocus : lineColorOnBlur),
-                            lineWidth: isHoveringDropZone
-                                ? 6 : (isFocused == .focused ? lineWidthOnFocus : lineWidthOnBlur)
-                        )
-                        .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
-                )
+                .padding(.horizontal, 14)
+                .padding(.top, 10)
+                .padding(.bottom, 6)
                 .onTapGesture {
                     isFocused = .focused
                 }
 
-                if shouldShowAccessoryButton {
-                    let config = accessoryButtonConfig
-                    InputAccessoryButton(
-                        systemName: config.systemName,
-                        size: defaultInputHeight,
-                        foregroundColor: config.foregroundColor,
-                        backgroundColor: config.backgroundColor,
-                        helpText: config.helpText,
-                        action: config.action
-                    )
-                    .transition(stopButtonTransition)
-                }
+                inputToolbar
             }
-            .animation(stopButtonAnimation, value: shouldShowAccessoryButton)
+            .background(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(Color(red: 0.14, green: 0.14, blue: 0.16))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .stroke(inputBorderColor, lineWidth: inputBorderWidth)
+                    )
+            )
+            .padding(.horizontal, 6)
         }
         .scaleEffect(isHoveringDropZone ? 1.02 : 1.0)
         .animation(.spring(response: 0.3, dampingFraction: 0.6), value: isHoveringDropZone)

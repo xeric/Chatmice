@@ -4,7 +4,7 @@
 <dict>
 	<key>com.apple.developer.icloud-container-identifiers</key>
 	<array>
-		<string>iCloud.notfullin.com.macai</string>
+		<string>iCloud.com.chatmice.app</string>
 	</array>
 	<key>com.apple.developer.icloud-services</key>
 	<array>
@@ -12,7 +12,7 @@
 	</array>
 	<key>keychain-access-groups</key>
 	<array>
-		<string>$(AppIdentifierPrefix)notfullin.com.macai</string>
+		<string>$(AppIdentifierPrefix)com.chatmice.app</string>
 	</array>
 	<key>com.apple.security.app-sandbox</key>
 	<true/>

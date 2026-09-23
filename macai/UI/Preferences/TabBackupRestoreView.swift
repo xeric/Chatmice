@@ -82,8 +82,9 @@ enum DatabaseBackupManager {
                       isDirectory.boolValue else { continue }
 
                 // Check if it contains sqlite files
-                let sqliteFile = folderURL.appendingPathComponent("macaiDataModel.sqlite")
-                guard fm.fileExists(atPath: sqliteFile.path) else { continue }
+                let sqliteFile = folderURL.appendingPathComponent("chatmiceDataModel.sqlite")
+                let fallbackFile = folderURL.appendingPathComponent("macaiDataModel.sqlite")
+                guard fm.fileExists(atPath: sqliteFile.path) || fm.fileExists(atPath: fallbackFile.path) else { continue }
 
                 // Calculate total size of backup
                 var totalSize: Int64 = 0
@@ -338,8 +339,9 @@ enum DatabaseBackupManager {
         }
 
         // Verify it contains sqlite files
-        let sqliteFile = extractedFolder.appendingPathComponent("macaiDataModel.sqlite")
-        guard fm.fileExists(atPath: sqliteFile.path) else {
+        let sqliteFile = extractedFolder.appendingPathComponent("chatmiceDataModel.sqlite")
+        let fallbackFile = extractedFolder.appendingPathComponent("macaiDataModel.sqlite")
+        guard fm.fileExists(atPath: sqliteFile.path) || fm.fileExists(atPath: fallbackFile.path) else {
             throw BackupError.invalidBackupArchive
         }
 

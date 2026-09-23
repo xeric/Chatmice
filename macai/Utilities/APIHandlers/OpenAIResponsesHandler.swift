@@ -166,32 +166,38 @@ class OpenAIResponsesHandler: OpenAIHandlerBase, APIService {
     }
 
     func fetchModels() async throws -> [AIModel] {
-        let modelsURL = baseURL
-            .deletingLastPathComponent()
-            .appendingPathComponent("models")
+        var base = baseURL
+        if base.path.hasSuffix("/responses") {
+            base = base.deletingLastPathComponent()
+        }
+        let modelsURL = base.appendingPathComponent("models")
 
         var request = URLRequest(url: modelsURL)
         request.httpMethod = "GET"
-        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        let effectiveKey = apiKey.isEmpty ? (ProcessInfo.processInfo.environment["LOCAL_SAP_AI_CORE_PROXY_KEY"] ?? "") : apiKey
+        if !effectiveKey.isEmpty {
+            request.setValue("Bearer \(effectiveKey)", forHTTPHeaderField: "Authorization")
+        }
 
         do {
             let (data, response) = try await session.data(for: request)
-
             let result = handleAPIResponse(response, data: data, error: nil)
             switch result {
             case .success(let responseData):
-                guard let responseData = responseData else {
-                    throw APIError.invalidResponse
+                guard let responseData else { throw APIError.invalidResponse }
+                if let decodedResponse = try? JSONDecoder().decode(OpenAIModelsResponse.self, from: responseData) {
+                    return decodedResponse.data.map { AIModel(id: $0.id) }
                 }
-
-                let decodedResponse = try JSONDecoder().decode(OpenAIModelsResponse.self, from: responseData)
-                return decodedResponse.data.map { AIModel(id: $0.id) }
-
+                if let obj = try? JSONSerialization.jsonObject(with: responseData) as? [String: Any],
+                   let dataArr = obj["data"] as? [[String: Any]] {
+                    let ids = dataArr.compactMap { $0["id"] as? String }
+                    if !ids.isEmpty { return ids.map { AIModel(id: $0) } }
+                }
+                throw APIError.decodingFailed("未能解析模型列表")
             case .failure(let error):
                 throw error
             }
-        }
-        catch {
+        } catch {
             throw APIError.requestFailed(error)
         }
     }

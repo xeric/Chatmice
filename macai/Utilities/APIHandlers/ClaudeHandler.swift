@@ -33,27 +33,37 @@ class ClaudeHandler: APIService {
     }
 
     func fetchModels() async throws -> [AIModel] {
-        let modelsURL = baseURL.deletingLastPathComponent().appendingPathComponent("models")
+        var base = baseURL
+        if base.lastPathComponent == "messages" {
+            base = base.deletingLastPathComponent()
+        }
+        let modelsURL = base.appendingPathComponent("models")
         
         var request = URLRequest(url: modelsURL)
         request.httpMethod = "GET"
-        request.setValue(apiKey, forHTTPHeaderField: "X-API-Key")
+        let effectiveKey = apiKey.isEmpty ? (ProcessInfo.processInfo.environment["LOCAL_SAP_AI_CORE_PROXY_KEY"] ?? "") : apiKey
+        if !effectiveKey.isEmpty {
+            request.setValue(effectiveKey, forHTTPHeaderField: "X-API-Key")
+        }
         request.setValue("2023-06-01", forHTTPHeaderField: "Anthropic-Version")
         
         do {
             let (data, response) = try await session.data(for: request)
-            
             let result = handleAPIResponse(response, data: data, error: nil)
             switch result {
             case .success(let responseData):
                 guard let responseData = responseData else {
                     throw APIError.invalidResponse
                 }
-                
-                let claudeResponse = try JSONDecoder().decode(ClaudeModelsResponse.self, from: responseData)
-                
-                return claudeResponse.data.map { AIModel(id: $0.id) }
-                
+                if let claudeResponse = try? JSONDecoder().decode(ClaudeModelsResponse.self, from: responseData) {
+                    return claudeResponse.data.map { AIModel(id: $0.id) }
+                }
+                if let obj = try? JSONSerialization.jsonObject(with: responseData) as? [String: Any],
+                   let dataArr = obj["data"] as? [[String: Any]] {
+                    let ids = dataArr.compactMap { $0["id"] as? String }
+                    if !ids.isEmpty { return ids.map { AIModel(id: $0) } }
+                }
+                throw APIError.decodingFailed("未能解析 Claude 模型列表")
             case .failure(let error):
                 throw error
             }
@@ -116,22 +126,20 @@ class ClaudeHandler: APIService {
             let streamTask = Task {
                 defer { self.activeStreamTask = nil }
                 do {
+                    print("[ClaudeHandler] Streaming request to: \(request.url?.absoluteString ?? "")")
                     let (stream, response) = try await session.bytes(for: request)
-                    let result = self.handleAPIResponse(response, data: nil, error: nil)
+                    let httpStatus = (response as? HTTPURLResponse)?.statusCode ?? 0
+                    print("[ClaudeHandler] Response status: \(httpStatus)")
 
-                    switch result {
-                    case .failure(let error):
+                    if !(200...299).contains(httpStatus) {
                         var data = Data()
                         for try await byte in stream {
                             data.append(byte)
                         }
-                        let error = APIError.serverError(
-                            String(data: data, encoding: .utf8) ?? error.localizedDescription
-                        )
-                        continuation.finish(throwing: error)
+                        let errorMsg = String(data: data, encoding: .utf8) ?? "HTTP \(httpStatus)"
+                        print("[ClaudeHandler] Error response: \(errorMsg)")
+                        continuation.finish(throwing: APIError.serverError(errorMsg))
                         return
-                    case .success:
-                        break
                     }
 
                     for try await line in stream.lines {
@@ -167,36 +175,80 @@ class ClaudeHandler: APIService {
     private func prepareRequest(requestMessages: [[String: String]], model: String, temperature: Float, stream: Bool)
         -> URLRequest
     {
-        var request = URLRequest(url: baseURL)
+        var targetURL = baseURL
+        if targetURL.lastPathComponent != "messages" {
+            targetURL = targetURL.appendingPathComponent("messages")
+        }
+        var request = URLRequest(url: targetURL)
         request.httpMethod = "POST"
-        request.setValue(apiKey, forHTTPHeaderField: "X-API-Key")
+
+        let effectiveKey = apiKey.isEmpty ? (ProcessInfo.processInfo.environment["LOCAL_SAP_AI_CORE_PROXY_KEY"] ?? "") : apiKey
+        if !effectiveKey.isEmpty {
+            request.setValue(effectiveKey, forHTTPHeaderField: "X-API-Key")
+            request.setValue(effectiveKey, forHTTPHeaderField: "x-api-key")
+            request.setValue("Bearer \(effectiveKey)", forHTTPHeaderField: "Authorization")
+        }
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("2023-06-01", forHTTPHeaderField: "Anthropic-Version")
+        request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
 
-        // Claude doesn't support 'system' role. Instead, we extract system message from request messages and insert into 'system' string parameter (more details: https://docs.anthropic.com/en/api/messages)
         var systemMessage = ""
-        let firstMessage = requestMessages.first
-        var updatedRequestMessages = requestMessages
+        var updatedRequestMessages: [[String: Any]] = []
 
-        if firstMessage?["role"] as? String == "system" {
-            systemMessage = firstMessage?["content"] as? String ?? ""
-            updatedRequestMessages.removeFirst()
+        for msg in requestMessages {
+            let role = msg["role"] ?? "user"
+            let content = msg["content"] ?? ""
+            if role == "system" {
+                if systemMessage.isEmpty {
+                    systemMessage = content
+                } else {
+                    systemMessage += "\n\n" + content
+                }
+            } else {
+                let claudeRole = (role == "assistant" || role == "model") ? "assistant" : "user"
+                updatedRequestMessages.append([
+                    "role": claudeRole,
+                    "content": content
+                ])
+            }
         }
 
-        let maxTokens =
-            model == "claude-3-5-sonnet-latest" ? 8192 : AppConstants.defaultApiConfigurations["claude"]!.maxTokens!
+        // Cherry Studio ensureValidHistory: merge consecutive messages with same role & ensure first is user
+        var sanitizedMessages: [[String: Any]] = []
+        for msg in updatedRequestMessages {
+            let currentRole = msg["role"] as? String ?? "user"
+            let currentContent = msg["content"] as? String ?? ""
+            if let last = sanitizedMessages.last, (last["role"] as? String) == currentRole {
+                let lastContent = last["content"] as? String ?? ""
+                sanitizedMessages[sanitizedMessages.count - 1]["content"] = lastContent + "\n\n" + currentContent
+            } else {
+                sanitizedMessages.append(msg)
+            }
+        }
 
-        let jsonDict: [String: Any] = [
+        if let first = sanitizedMessages.first, (first["role"] as? String) != "user" {
+            sanitizedMessages.insert(["role": "user", "content": "Hello"], at: 0)
+        }
+
+        let maxTokens = model.contains("3-5-sonnet") || model.contains("4-") || model.contains("4.") ? 8192 : (AppConstants.defaultApiConfigurations["claude"]?.maxTokens ?? 4096)
+
+        var jsonDict: [String: Any] = [
             "model": model,
-            "messages": updatedRequestMessages,
-            "system": systemMessage,
+            "messages": sanitizedMessages,
             "stream": stream,
-            "temperature": temperature,
             "max_tokens": maxTokens,
         ]
 
-        request.httpBody = try? JSONSerialization.data(withJSONObject: jsonDict, options: [])
+        if !systemMessage.isEmpty {
+            jsonDict["system"] = systemMessage
+        }
 
+        // Claude 4+ and Opus/thinking models reject temperature with HTTP 400
+        let isTempDeprecated = model.contains("4-") || model.contains("4.") || model.contains("opus") || model.contains("thinking")
+        if !isTempDeprecated {
+            jsonDict["temperature"] = temperature
+        }
+        request.httpBody = try? JSONSerialization.data(withJSONObject: jsonDict, options: [])
         return request
     }
 
@@ -275,30 +327,31 @@ class ClaudeHandler: APIService {
             return (isFinished, parseError, nil, nil)
         }
 
+        if jsonString.trimmingCharacters(in: .whitespacesAndNewlines) == "[DONE]" {
+            return (true, nil, nil, nil)
+        }
+
         guard let jsonData = jsonString.data(using: .utf8),
             let json = try? JSONSerialization.jsonObject(with: jsonData, options: []) as? [String: Any]
         else {
-            parseError = NSError(
-                domain: "SSEParsing",
-                code: 1,
-                userInfo: [NSLocalizedDescriptionKey: "Failed to parse JSON: \(jsonString)"]
-            )
-            return (isFinished, parseError, nil, nil)
+            return (isFinished, nil, nil, nil)
         }
 
         if let eventType = json["type"] as? String {
             switch eventType {
-            case "contenxt_block_start":
+            case "content_block_start":
                 if let contentBlock = json["content_block"] as? [String: Any],
                     let text = contentBlock["text"] as? String
                 {
                     textContent = text
                 }
             case "content_block_delta":
-                if let delta = json["delta"] as? [String: Any],
-                    let text = delta["text"] as? String
-                {
-                    textContent += text
+                if let delta = json["delta"] as? [String: Any] {
+                    if let text = delta["text"] as? String {
+                        textContent = text
+                    } else if let thinking = delta["thinking"] as? String {
+                        textContent = thinking
+                    }
                 }
             case "message_delta":
                 if let delta = json["delta"] as? [String: Any],

@@ -254,8 +254,7 @@ private struct MacaiTextFieldRep: NSViewRepresentable {
         func textView(_: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
             if let onCommit = parent.onCommit,
                commandSelector == #selector(NSResponder.insertNewline(_:)),
-               let event = NSApp.currentEvent,
-               !event.modifierFlags.contains(.shift)
+               !(NSApp.currentEvent?.modifierFlags.contains(.shift) ?? false)
             {
                 onCommit()
                 return true

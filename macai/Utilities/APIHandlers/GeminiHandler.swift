@@ -37,6 +37,12 @@ struct GeminiPartRequest: Codable {
     let inlineData: GeminiInlineData?
     let thoughtSignature: String?
 
+    init(text: String? = nil, inlineData: GeminiInlineData? = nil, thoughtSignature: String? = nil) {
+        self.text = text
+        self.inlineData = inlineData
+        self.thoughtSignature = thoughtSignature
+    }
+
     init(text: String, thoughtSignature: String? = nil) {
         self.text = text
         self.inlineData = nil
@@ -100,7 +106,7 @@ private struct GeminiErrorEnvelope: Decodable {
 
 private struct GeminiAPIError: Decodable {
     let code: Int?
-    let message: String
+    let message: String?
     let status: String?
 }
 
@@ -144,7 +150,10 @@ class GeminiHandler: APIService {
         var request = URLRequest(url: modelsURL)
         request.httpMethod = "GET"
         request.timeoutInterval = AppConstants.requestTimeout
-
+        if !apiKey.isEmpty {
+            request.setValue(apiKey, forHTTPHeaderField: "x-goog-api-key")
+            request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        }
         do {
             let (data, response) = try await session.data(for: request)
             let result = handleAPIResponse(response, data: data, error: nil)
@@ -213,7 +222,8 @@ class GeminiHandler: APIService {
                         }
                         catch {
                             if let envelope = try? self.makeDecoder().decode(GeminiErrorEnvelope.self, from: payload) {
-                                completion(.failure(.serverError(envelope.error.message)))
+                                let msg = envelope.error.message ?? envelope.error.status ?? "Unknown Gemini error"
+                                completion(.failure(.serverError(msg)))
                             }
                             else {
                                 completion(.failure(.decodingFailed("Failed to decode Gemini response: \(error.localizedDescription)")))
@@ -249,27 +259,27 @@ class GeminiHandler: APIService {
                     defer { self.activeStreamTask = nil }
                     self.resetStreamedParts()
                     do {
+                        print("[GeminiHandler] Streaming request to: \(request.url?.absoluteString ?? "")")
                         let (stream, response) = try await session.bytes(for: request)
-                        let responseCheck = self.handleAPIResponse(response, data: nil, error: nil)
+                        let httpStatus = (response as? HTTPURLResponse)?.statusCode ?? 0
+                        print("[GeminiHandler] Response status: \(httpStatus)")
 
-                        switch responseCheck {
-                        case .failure(let error):
+                        if !(200...299).contains(httpStatus) {
                             var errorData = Data()
                             for try await byte in stream {
                                 errorData.append(byte)
                             }
 
-                            if let envelope = try? self.makeDecoder().decode(GeminiErrorEnvelope.self, from: errorData) {
-                                continuation.finish(throwing: APIError.serverError(envelope.error.message))
+                            var errorMsg = "HTTP \(httpStatus)"
+                            if let envelope = try? self.makeDecoder().decode(GeminiErrorEnvelope.self, from: errorData),
+                               let m = envelope.error.message, !m.isEmpty {
+                                errorMsg = m
+                            } else if let raw = String(data: errorData, encoding: .utf8), !raw.isEmpty {
+                                errorMsg = raw
                             }
-                            else {
-                                let message = String(data: errorData, encoding: .utf8) ?? error.localizedDescription
-                                continuation.finish(throwing: APIError.serverError(message))
-                            }
+                            print("[GeminiHandler] Error received: \(errorMsg)")
+                            continuation.finish(throwing: APIError.serverError(errorMsg))
                             return
-
-                        case .success:
-                            break
                         }
 
                         let decoder = self.makeDecoder()
@@ -334,8 +344,10 @@ class GeminiHandler: APIService {
         request.httpMethod = "POST"
         request.timeoutInterval = AppConstants.requestTimeout
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue(apiKey, forHTTPHeaderField: "x-goog-api-key")
-
+        if !apiKey.isEmpty {
+            request.setValue(apiKey, forHTTPHeaderField: "x-goog-api-key")
+            request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        }
         if stream {
             request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
         }
@@ -369,7 +381,7 @@ class GeminiHandler: APIService {
         [GeminiContentRequest]
     ) {
         var systemInstruction: GeminiContentRequest?
-        var contents: [GeminiContentRequest] = []
+        var rawContents: [GeminiContentRequest] = []
         let requiresThoughtSignatures = model.lowercased().contains("gemini-3")
 
         for message in requestMessages {
@@ -385,13 +397,17 @@ class GeminiHandler: APIService {
                     parts: [GeminiPartRequest(text: text)]
                 )
             case "assistant":
-                let parts = resolveStoredParts(storedParts, fallbackContent: content, allowInlineData: true)
-                // For Gemini 3 models, we must include thought signatures; if missing, skip to avoid INVALID_ARGUMENT.
-                if requiresThoughtSignatures, !parts.contains(where: { $0.thoughtSignature != nil }) {
-                    continue
-                }
+                var parts = resolveStoredParts(storedParts, fallbackContent: content, allowInlineData: true)
                 guard !parts.isEmpty else { continue }
-                contents.append(
+                if requiresThoughtSignatures && !parts.contains(where: { $0.thoughtSignature != nil }) {
+                    parts = parts.map { part in
+                        if part.thoughtSignature == nil {
+                            return GeminiPartRequest(text: part.text, inlineData: part.inlineData, thoughtSignature: "skip_thought_signature_validator")
+                        }
+                        return part
+                    }
+                }
+                rawContents.append(
                     GeminiContentRequest(
                         role: "model",
                         parts: parts
@@ -400,7 +416,7 @@ class GeminiHandler: APIService {
             default:
                 let parts = resolveStoredParts(storedParts, fallbackContent: content, allowInlineData: true)
                 guard !parts.isEmpty else { continue }
-                contents.append(
+                rawContents.append(
                     GeminiContentRequest(
                         role: "user",
                         parts: parts
@@ -409,7 +425,24 @@ class GeminiHandler: APIService {
             }
         }
 
-        return (systemInstruction, contents)
+        // Cherry Studio Compatibility Layer Pattern (ensureValidHistory):
+        // 1. Merge consecutive messages with the same role (user + user -> user, model + model -> model)
+        // 2. Ensure first non-system message is role: "user"
+        var sanitizedContents: [GeminiContentRequest] = []
+        for item in rawContents {
+            if let last = sanitizedContents.last, last.role == item.role {
+                let mergedParts = last.parts + item.parts
+                sanitizedContents[sanitizedContents.count - 1] = GeminiContentRequest(role: last.role, parts: mergedParts)
+            } else {
+                sanitizedContents.append(item)
+            }
+        }
+
+        if let first = sanitizedContents.first, first.role != "user" {
+            sanitizedContents.insert(GeminiContentRequest(role: "user", parts: [GeminiPartRequest(text: "Hello")]), at: 0)
+        }
+
+        return (systemInstruction, sanitizedContents)
     }
 
     private func resolveStoredParts(
@@ -492,7 +525,7 @@ class GeminiHandler: APIService {
 
             if let data = data {
                 if let decodedError = try? makeDecoder().decode(GeminiErrorEnvelope.self, from: data) {
-                    message = decodedError.error.message
+                    message = decodedError.error.message ?? decodedError.error.status ?? "HTTP \(httpResponse.statusCode)"
                 }
                 else if let raw = String(data: data, encoding: .utf8), !raw.isEmpty {
                     message = raw
@@ -638,7 +671,8 @@ class GeminiHandler: APIService {
         }
 
         if let envelope = try? decoder.decode(GeminiErrorEnvelope.self, from: data) {
-            throw APIError.serverError(envelope.error.message)
+            let msg = envelope.error.message ?? envelope.error.status ?? "Unknown error"
+            throw APIError.serverError(msg)
         }
 
         if let stringPayload = try? decoder.decode(String.self, from: data) {

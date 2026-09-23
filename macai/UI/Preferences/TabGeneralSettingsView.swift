@@ -31,6 +31,9 @@ struct TabGeneralSettingsView: View {
     @AppStorage("showAssistantNameInSidebar") private var showAssistantNameInSidebar: Bool = true
     @AppStorage(PersistenceController.iCloudSyncEnabledKey) private var iCloudSyncEnabled: Bool = false
     @AppStorage(SettingsIndicatorKeys.generalSeen) private var generalSettingsSeen: Bool = false
+    @AppStorage("chatmiceToolsEnabled") private var chatmiceToolsEnabled: Bool = true
+    @AppStorage("chatmiceBashEnabled") private var chatmiceBashEnabled: Bool = true
+    @AppStorage("chatmiceSkillsEnabled") private var chatmiceSkillsEnabled: Bool = true
     @Environment(\.colorScheme) private var systemColorScheme
     @StateObject private var cloudSyncManager = CloudSyncManager.shared
     @ObservedObject private var updateCoordinator = V3UpdateCoordinator.shared
@@ -205,6 +208,47 @@ struct TabGeneralSettingsView: View {
                     }
                     .padding(8)
                 }
+                GroupBox {
+                    VStack(alignment: .leading, spacing: 12) {
+                        HStack {
+                            Image(systemName: "wrench.and.screwdriver.fill")
+                                .foregroundStyle(Color.accentColor)
+                            Text("Chatmice Agent Tools")
+                                .fontWeight(.medium)
+                            Spacer()
+                            Toggle("", isOn: $chatmiceToolsEnabled)
+                                .toggleStyle(.switch)
+                                .labelsHidden()
+                        }
+
+                        Text("Enables multi-turn tool calling: Model Context Protocol (MCP), local Bash execution, and Skills discovery.")
+                            .foregroundColor(.secondary)
+                            .font(.callout)
+                            .fixedSize(horizontal: false, vertical: true)
+
+                        if chatmiceToolsEnabled {
+                            Divider()
+
+                            HStack {
+                                Text("Local Bash Execution")
+                                Spacer()
+                                Toggle("", isOn: $chatmiceBashEnabled)
+                                    .toggleStyle(.switch)
+                                    .labelsHidden()
+                            }
+
+                            HStack {
+                                Text("Skills Discovery (SKILL.md)")
+                                Spacer()
+                                Toggle("", isOn: $chatmiceSkillsEnabled)
+                                    .toggleStyle(.switch)
+                                    .labelsHidden()
+                            }
+                        }
+                    }
+                    .padding(8)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
 
                 // iCloud Sync Section - hidden when DISABLE_ICLOUD flag is set or CloudKit is not configured
                 #if !DISABLE_ICLOUD

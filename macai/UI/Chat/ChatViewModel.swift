@@ -210,8 +210,8 @@ class ChatViewModel: NSObject, ObservableObject, NSFetchedResultsControllerDeleg
 
             var didChange = false
 
-            let newModel = apiService.model ?? AppConstants.defaultModel(for: apiService.type)
-            if chat.gptModel != newModel {
+            if chat.gptModel.isEmpty {
+                let newModel = apiService.model ?? AppConstants.defaultModel(for: apiService.type)
                 chat.gptModel = newModel
                 didChange = true
             }
@@ -235,35 +235,54 @@ class ChatViewModel: NSObject, ObservableObject, NSFetchedResultsControllerDeleg
     }
 
     var canSendMessage: Bool {
+        bindDefaultServiceIfNeeded()
         return chat.apiService != nil
     }
 
+    private func bindDefaultServiceIfNeeded() {
+        if chat.apiService == nil {
+            let req = NSFetchRequest<APIServiceEntity>(entityName: "APIServiceEntity")
+            req.predicate = NSPredicate(format: "isDefault == YES")
+            req.fetchLimit = 1
+            if let defaultService = (try? viewContext.fetch(req))?.first {
+                chat.apiService = defaultService
+                chat.gptModel = defaultService.model ?? AppConstants.defaultModel(for: defaultService.type)
+                try? viewContext.save()
+                recreateMessageManager()
+            }
+        }
+    }
+
     private func loadCurrentAPIConfig() -> APIServiceConfiguration? {
+        bindDefaultServiceIfNeeded()
         guard let apiService = chat.apiService, let apiServiceUrl = apiService.url else {
             return nil
         }
 
-        guard let serviceID = apiService.id else {
-            print("Error extracting token: missing apiService.id")
-            return nil
-        }
+        let serviceType = chat.apiService?.type ?? "chatgpt"
+        let tokenIdentifier = (chat.apiService?.tokenIdentifier?.isEmpty == false) ? chat.apiService!.tokenIdentifier! : (apiService.id?.uuidString ?? "")
 
         var apiKey = ""
-        do {
-            apiKey = try TokenManager.getToken(for: serviceID.uuidString) ?? ""
+        if !tokenIdentifier.isEmpty {
+            do {
+                apiKey = try TokenManager.getToken(for: tokenIdentifier) ?? ""
+            }
+            catch {
+                print("Error extracting token: \(error) for \(tokenIdentifier)")
+            }
         }
-        catch {
-            print("Error extracting token: \(error) for \(serviceID.uuidString)")
+        if apiKey.isEmpty {
+            apiKey = ProcessInfo.processInfo.environment["LOCAL_SAP_AI_CORE_PROXY_KEY"] ?? ""
         }
 
         return APIServiceConfig(
             name: getApiServiceName(),
             apiUrl: apiServiceUrl,
             apiKey: apiKey,
-            model: chat.gptModel
+            model: chat.gptModel,
+            type: serviceType
         )
     }
-
     private func getApiServiceName() -> String {
         return chat.apiService?.type ?? AppConstants.defaultApiType
     }

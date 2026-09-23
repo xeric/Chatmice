@@ -83,17 +83,16 @@ class PersistenceController {
             container = NSPersistentContainer(name: "macaiDataModel")
         }
 
-        // We handle migration manually by exporting/importing data, so no Core Data migration needed
-        // Set to true for any future lightweight migrations that Core Data can handle automatically
+        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        let chatmiceDir = appSupport.appendingPathComponent("Chatmice", isDirectory: true)
+        try? FileManager.default.createDirectory(at: chatmiceDir, withIntermediateDirectories: true)
+        let storeURL = chatmiceDir.appendingPathComponent("chatmiceDataModel.sqlite")
+
         for description in container.persistentStoreDescriptions {
+            description.url = inMemory ? URL(fileURLWithPath: "/dev/null") : storeURL
             description.shouldMigrateStoreAutomatically = true
             description.shouldInferMappingModelAutomatically = true
-            // Keep history tracking consistent to avoid Core Data forcing read-only on reopen.
             description.setOption(true as NSNumber, forKey: NSPersistentHistoryTrackingKey)
-        }
-
-        if inMemory {
-            container.persistentStoreDescriptions.first!.url = URL(fileURLWithPath: "/dev/null")
         }
 
         // Configure for CloudKit if enabled
@@ -362,6 +361,21 @@ struct macaiApp: App {
     }
     @Environment(\.scenePhase) private var scenePhase
 
+    private func updateDockIcon() {
+        DispatchQueue.main.async {
+            let isDark: Bool = {
+                if let preferred = preferredColorScheme {
+                    return preferred == .dark
+                }
+                return NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            }()
+            let iconName = isDark ? "AppIcon_dark" : "AppIcon_light"
+            if let image = NSImage(named: iconName) {
+                NSApp.applicationIconImage = image
+            }
+        }
+    }
+
     private let updateCoordinator = V3UpdateCoordinator.shared
     let persistenceController = PersistenceController.shared
 
@@ -387,7 +401,13 @@ struct macaiApp: App {
             ContentView()
                 .environment(\.managedObjectContext, persistenceController.container.viewContext)
                 .preferredColorScheme(preferredColorScheme)
-
+                .onAppear {
+                    updateDockIcon()
+                }
+        }
+        .windowToolbarStyle(.unified)
+        .onChange(of: preferredColorSchemeRaw) { _ in
+            updateDockIcon()
         }
         .onChange(of: scenePhase) { phase in
             if phase == .active {

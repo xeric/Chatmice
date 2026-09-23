@@ -95,12 +95,9 @@ struct ChatBottomContainerView: View {
                         onStopInference: onStopInference,
                         onCancelEdit: onCancelEdit
                     )
-                    .textFieldStyle(RoundedBorderTextFieldStyle())
-                    .multilineTextAlignment(.leading)
-                    .lineLimit(nil)
-                    .padding()
                 }
-                .border(width: 1, edges: [.top], color: Color(NSColor.windowBackgroundColor).opacity(0.8))
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
             }
 
             Button(action: {

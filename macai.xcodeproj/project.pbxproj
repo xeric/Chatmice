@@ -7,6 +7,14 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		A997E261F772F00CE3A311EB /* ModelPickerPopoverView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FC48E933415526988C090899 /* ModelPickerPopoverView.swift */; };
+		3B581D462F9C9596252A850F /* TabMCPServersView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2FBDC4DA445AA921C10781FA /* TabMCPServersView.swift */; };
+		55779915970806766322948B /* ChatmiceEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 14537C1CE42F2DC7966EBF04 /* ChatmiceEngine.swift */; };
+		56C4EDD2BD47159AAB2FE06A /* ComputerUseTool.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C64AA5DC1942A285D46D9A8 /* ComputerUseTool.swift */; };
+		F4301AF6864AC23C85794FB3 /* MCPService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F21BC6502437775046CA296A /* MCPService.swift */; };
+		A027BB1A51EC5A8229CED505 /* SkillStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 82D4DBC7B6E94DD02C348DF1 /* SkillStore.swift */; };
+		1232C0D881FF38BE2677A446 /* BashExecutor.swift in Sources */ = {isa = PBXBuildFile; fileRef = F53F64CEBB6B8132C4B6225C /* BashExecutor.swift */; };
+		F6B206AEFF2F7C12FEBA4C7C /* ChatmiceTools.swift in Sources */ = {isa = PBXBuildFile; fileRef = 58AA4C20D9658F9F22010192 /* ChatmiceTools.swift */; };
 		0BA0FF405FC14D3FABF82621 /* APIServiceTemplateProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3EA7767A135E47FFAB9E3289 /* APIServiceTemplateProvider.swift */; };
 		0E6BF47F5D74490F95504FF6 /* GeminiHandlerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1D1475CF2DC44692A9E47B9A /* GeminiHandlerTests.swift */; };
 		0E7C2F2B3A4D4E5F9B8C7D6E /* MessageCellTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0E7C2F2A3A4D4E5F9B8C7D6E /* MessageCellTests.swift */; };
@@ -67,7 +75,6 @@
 		4A7AFF182B0147A300C34BB4 /* ButtonTestApiTokenAndModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A7AFF172B0147A300C34BB4 /* ButtonTestApiTokenAndModel.swift */; };
 		4A7E1BDB29C910F900E57DC2 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = 4A7E1BDA29C910F900E57DC2 /* Sparkle */; };
 		4A7E44B92EFA0A76001DE975 /* ChatAttentionStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A7E44B82EFA0A76001DE975 /* ChatAttentionStore.swift */; };
-		4A7E44C12F06C91E001DE975 /* AppIcon.icon in Resources */ = {isa = PBXBuildFile; fileRef = 4A7E44C02F06C91E001DE975 /* AppIcon.icon */; };
 		4A8560DC2EF0C429007A5E42 /* V1ToV3Migration.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A8560DB2EF0C429007A5E42 /* V1ToV3Migration.swift */; };
 		4A885C522CEA3B130018BBED /* HTMLPreviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A885C512CEA3B130018BBED /* HTMLPreviewView.swift */; };
 		4A885C542CEA3D960018BBED /* PreviewStateManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A885C532CEA3D960018BBED /* PreviewStateManager.swift */; };
@@ -147,6 +154,14 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		FC48E933415526988C090899 /* ModelPickerPopoverView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelPickerPopoverView.swift; sourceTree = "<group>"; };
+		2FBDC4DA445AA921C10781FA /* TabMCPServersView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabMCPServersView.swift; sourceTree = "<group>"; };
+		14537C1CE42F2DC7966EBF04 /* ChatmiceEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatmiceEngine.swift; sourceTree = "<group>"; };
+		2C64AA5DC1942A285D46D9A8 /* ComputerUseTool.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComputerUseTool.swift; sourceTree = "<group>"; };
+		F21BC6502437775046CA296A /* MCPService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MCPService.swift; sourceTree = "<group>"; };
+		82D4DBC7B6E94DD02C348DF1 /* SkillStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SkillStore.swift; sourceTree = "<group>"; };
+		F53F64CEBB6B8132C4B6225C /* BashExecutor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BashExecutor.swift; sourceTree = "<group>"; };
+		58AA4C20D9658F9F22010192 /* ChatmiceTools.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatmiceTools.swift; sourceTree = "<group>"; };
 		04F05D023BB34EF796C7F7D3 /* MacaiTextField.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacaiTextField.swift; sourceTree = "<group>"; };
 		090CED78E6224CCB84778089 /* QuickLookPreviewer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuickLookPreviewer.swift; sourceTree = "<group>"; };
 		14461D2B9E6A48DEB427E5F1 /* NotificationPresenter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationPresenter.swift; sourceTree = "<group>"; };
@@ -208,7 +223,6 @@
 		4A775A032C1486F3004301D3 /* Extensions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Extensions.swift; sourceTree = "<group>"; };
 		4A7AFF172B0147A300C34BB4 /* ButtonTestApiTokenAndModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ButtonTestApiTokenAndModel.swift; sourceTree = "<group>"; };
 		4A7E44B82EFA0A76001DE975 /* ChatAttentionStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatAttentionStore.swift; sourceTree = "<group>"; };
-		4A7E44C02F06C91E001DE975 /* AppIcon.icon */ = {isa = PBXFileReference; lastKnownFileType = folder.iconcomposer.icon; path = AppIcon.icon; sourceTree = "<group>"; };
 		4A8560DB2EF0C429007A5E42 /* V1ToV3Migration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = V1ToV3Migration.swift; sourceTree = "<group>"; };
 		4A885C512CEA3B130018BBED /* HTMLPreviewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HTMLPreviewView.swift; sourceTree = "<group>"; };
 		4A885C532CEA3D960018BBED /* PreviewStateManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreviewStateManager.swift; sourceTree = "<group>"; };
@@ -324,6 +338,7 @@
 		4A164BB92C962E520060ECFE /* Components */ = {
 			isa = PBXGroup;
 			children = (
+				FC48E933415526988C090899 /* ModelPickerPopoverView.swift */,
 				4A4918792D9F4186007EB4A2 /* ToolbarButton.swift */,
 				4A2D3CEA2D5794B00082A262 /* ThemeMode.swift */,
 				4A0BCBBB2D5199140033AB96 /* ButtonWithStatusIndicator.swift */,
@@ -367,6 +382,7 @@
 		4A272A6929F5CD4700F93D0D /* Preferences */ = {
 			isa = PBXGroup;
 			children = (
+				2FBDC4DA445AA921C10781FA /* TabMCPServersView.swift */,
 				4AFAC2012EF496C3004B125E /* SettingsIndicators.swift */,
 				A31F00002F20000100C0D3E5 /* V3UpgradeNotice.swift */,
 				4A8A78C72D4C41980057A6CC /* TabGeneralSettingsView.swift */,
@@ -446,6 +462,12 @@
 		4A272A7029F5D9C200F93D0D /* Utilities */ = {
 			isa = PBXGroup;
 			children = (
+				14537C1CE42F2DC7966EBF04 /* ChatmiceEngine.swift */,
+				2C64AA5DC1942A285D46D9A8 /* ComputerUseTool.swift */,
+				F21BC6502437775046CA296A /* MCPService.swift */,
+				82D4DBC7B6E94DD02C348DF1 /* SkillStore.swift */,
+				F53F64CEBB6B8132C4B6225C /* BashExecutor.swift */,
+				58AA4C20D9658F9F22010192 /* ChatmiceTools.swift */,
 				4AC37B642F12D0F8006FD196 /* AttachmentActionHelper.swift */,
 				4A146A032F103E5E004249A2 /* AttachmentParser.swift */,
 				4A7E44B82EFA0A76001DE975 /* ChatAttentionStore.swift */,
@@ -475,7 +497,6 @@
 				4A399CB329BC8FF200E98796 /* macaiUITests */,
 				4A399C9629BC8FEF00E98796 /* Products */,
 				4A5C394629D834DC00BCB534 /* Frameworks */,
-				4A7E44C02F06C91E001DE975 /* AppIcon.icon */,
 			);
 			sourceTree = "<group>";
 		};
@@ -711,7 +732,6 @@
 				4A98B1C029CA60ED0064835A /* Info.plist in Resources */,
 				4A399CA129BC8FF100E98796 /* Preview Assets.xcassets in Resources */,
 				4A399C9D29BC8FF100E98796 /* Assets.xcassets in Resources */,
-				4A7E44C12F06C91E001DE975 /* AppIcon.icon in Resources */,
 				4A4F204B2D62650800D1F57F /* FiraCode-VF.ttf in Resources */,
 				4A37B8552C2A399800F36CC4 /* Credits.rtf in Resources */,
 				537028A45E2C4DD7A33DA2D2 /* APIServiceTemplates.json in Resources */,
@@ -739,6 +759,14 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A997E261F772F00CE3A311EB /* ModelPickerPopoverView.swift in Sources */,
+				3B581D462F9C9596252A850F /* TabMCPServersView.swift in Sources */,
+				55779915970806766322948B /* ChatmiceEngine.swift in Sources */,
+				56C4EDD2BD47159AAB2FE06A /* ComputerUseTool.swift in Sources */,
+				F4301AF6864AC23C85794FB3 /* MCPService.swift in Sources */,
+				A027BB1A51EC5A8229CED505 /* SkillStore.swift in Sources */,
+				1232C0D881FF38BE2677A446 /* BashExecutor.swift in Sources */,
+				F6B206AEFF2F7C12FEBA4C7C /* ChatmiceTools.swift in Sources */,
 				4A2D3CEB2D5794B10082A262 /* ThemeMode.swift in Sources */,
 				4A8560DC2EF0C429007A5E42 /* V1ToV3Migration.swift in Sources */,
 				4A1F0A0A29CEFB7F002A139A /* MessageCell.swift in Sources */,
@@ -901,7 +929,7 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
 				DEBUG_INFORMATION_FORMAT = dwarf;
-				DEVELOPMENT_TEAM = ZRB8WDV435;
+				DEVELOPMENT_TEAM = KJ5KHP7B96;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_TESTABILITY = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu11;
@@ -962,7 +990,7 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
-				DEVELOPMENT_TEAM = ZRB8WDV435;
+				DEVELOPMENT_TEAM = KJ5KHP7B96;
 				ENABLE_NS_ASSERTIONS = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu11;
@@ -989,12 +1017,12 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = NO;
-				CODE_SIGN_ENTITLEMENTS = macai/macai.entitlements;
+				CODE_SIGN_ENTITLEMENTS = macai/macai-no-icloud.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 2.4.3;
-				DEVELOPMENT_TEAM = ZRB8WDV435;
+				DEVELOPMENT_TEAM = KJ5KHP7B96;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -1014,8 +1042,10 @@
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				MARKETING_VERSION = 2.4.3;
 				ONLY_ACTIVE_ARCH = YES;
-				PRODUCT_BUNDLE_IDENTIFIER = notfullin.com.macai;
-				PRODUCT_NAME = "$(TARGET_NAME)";
+				PRODUCT_BUNDLE_IDENTIFIER = xeric.com.chatmice;
+				PRODUCT_NAME = Chatmice;
+				INFOPLIST_KEY_CFBundleDisplayName = Chatmice;
+				INFOPLIST_KEY_CFBundleName = Chatmice;
 				SDKROOT = auto;
 				SUPPORTED_PLATFORMS = macosx;
 				SUPPORTS_MACCATALYST = NO;
@@ -1032,12 +1062,12 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = NO;
-				CODE_SIGN_ENTITLEMENTS = macai/macai.entitlements;
+				CODE_SIGN_ENTITLEMENTS = macai/macai-no-icloud.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 2.4.3;
-				DEVELOPMENT_TEAM = ZRB8WDV435;
+				DEVELOPMENT_TEAM = KJ5KHP7B96;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -1057,8 +1087,10 @@
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				MARKETING_VERSION = 2.4.3;
 				ONLY_ACTIVE_ARCH = NO;
-				PRODUCT_BUNDLE_IDENTIFIER = notfullin.com.macai;
-				PRODUCT_NAME = "$(TARGET_NAME)";
+				PRODUCT_BUNDLE_IDENTIFIER = xeric.com.chatmice;
+				PRODUCT_NAME = Chatmice;
+				INFOPLIST_KEY_CFBundleDisplayName = Chatmice;
+				INFOPLIST_KEY_CFBundleName = Chatmice;
 				SDKROOT = auto;
 				SUPPORTED_PLATFORMS = macosx;
 				SUPPORTS_MACCATALYST = NO;
@@ -1075,12 +1107,12 @@
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = ZRB8WDV435;
+				DEVELOPMENT_TEAM = KJ5KHP7B96;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 16.2;
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = notfullin.com.macaiTests;
+				PRODUCT_BUNDLE_IDENTIFIER = com.chatmice.appTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = auto;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
@@ -1098,12 +1130,12 @@
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = ZRB8WDV435;
+				DEVELOPMENT_TEAM = KJ5KHP7B96;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 16.2;
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = notfullin.com.macaiTests;
+				PRODUCT_BUNDLE_IDENTIFIER = com.chatmice.appTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = auto;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
@@ -1120,12 +1152,12 @@
 				ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES = YES;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = ZRB8WDV435;
+				DEVELOPMENT_TEAM = KJ5KHP7B96;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 16.2;
 				MACOSX_DEPLOYMENT_TARGET = 13.1;
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = notfullin.com.macaiUITests;
+				PRODUCT_BUNDLE_IDENTIFIER = com.chatmice.appUITests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = auto;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
@@ -1142,12 +1174,12 @@
 				ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES = YES;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = ZRB8WDV435;
+				DEVELOPMENT_TEAM = KJ5KHP7B96;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 16.2;
 				MACOSX_DEPLOYMENT_TARGET = 13.1;
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = notfullin.com.macaiUITests;
+				PRODUCT_BUNDLE_IDENTIFIER = com.chatmice.appUITests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = auto;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";

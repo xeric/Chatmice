@@ -44,19 +44,64 @@ struct ContentView: View {
     @State private var lastChatCount: Int? = nil
     @State private var searchText = ""
     @State private var isSearchPresented = false
+    @State private var isShowingModelPickerPopover = false
 
     var body: some View {
         NavigationSplitView(columnVisibility: Binding(
             get: { isSidebarVisible ? .all : .detailOnly },
             set: { isSidebarVisible = $0 != .detailOnly }
         )) {
-            ChatListView(selectedChat: $selectedChat, searchText: $searchText)
-                .environmentObject(attentionStore)
-                .navigationSplitViewColumnWidth(
-                    min: 180,
-                    ideal: 220,
-                    max: 400
-                )
+            VStack(spacing: 0) {
+                ChatListView(selectedChat: $selectedChat, searchText: $searchText)
+                    .environmentObject(attentionStore)
+
+                Divider()
+
+                // Sidebar bottom footer bar: Settings ⚙️ on left, New Chat 📝 on right
+                HStack(spacing: 12) {
+                    if #available(macOS 14.0, *) {
+                        SettingsLink {
+                            settingsGearIcon
+                        }
+                        .buttonStyle(.plain)
+                        .help("Settings (⌘,)")
+                    } else {
+                        Button(action: openPreferencesView) {
+                            settingsGearIcon
+                        }
+                        .buttonStyle(.plain)
+                        .help("Settings (⌘,)")
+                    }
+
+                    Spacer()
+
+                    Button(action: newChat) {
+                        HStack(spacing: 4) {
+                            Image(systemName: "square.and.pencil")
+                                .font(.system(size: 13, weight: .medium))
+                            Text("New Chat")
+                                .font(.system(size: 12, weight: .medium))
+                        }
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(
+                            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                .fill(Color.accentColor.opacity(0.15))
+                        )
+                        .foregroundStyle(Color.accentColor)
+                    }
+                    .buttonStyle(.plain)
+                    .help("New Chat (⌘N)")
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+                .background(Color(NSColor.controlBackgroundColor).opacity(0.4))
+            }
+            .navigationSplitViewColumnWidth(
+                min: 180,
+                ideal: 220,
+                max: 400
+            )
         } detail: {
             HSplitView {
                 if selectedChat != nil {
@@ -182,59 +227,48 @@ struct ContentView: View {
                 }
             }
         }
-        .navigationTitle("Chats")
+        .navigationTitle("")
+        .toolbarBackground(.visible, for: .windowToolbar)
         .toolbar {
-            ToolbarItemGroup(placement: .primaryAction) {
-                if let selectedChatType = selectedChat?.apiService?.type {
-                    Image("logo_\(selectedChatType)")
-                        .resizable()
-                        .renderingMode(.template)
-                        .interpolation(.high)
-                        .frame(width: 16, height: 16)
-                        .padding(.horizontal, 12)
-                }
-
+            ToolbarItem(placement: .principal) {
                 if let selectedChat = selectedChat {
-                    Menu {
-                        ForEach(apiServices, id: \.objectID) { apiService in
-                            Button(action: {
-                                selectedChat.apiService = apiService
-                                handleServiceChange(selectedChat, apiService)
-                            }) {
-                                HStack {
-                                    Text(apiService.name ?? "Unnamed API Service")
-                                    if selectedChat.apiService == apiService {
-                                        Image(systemName: "checkmark")
-                                    }
+                    Button(action: { isShowingModelPickerPopover.toggle() }) {
+                        HStack(spacing: 6) {
+                            providerBrandIcon(
+                                name: selectedChat.apiService?.name ?? "",
+                                type: selectedChat.apiService?.type ?? ""
+                            )
+                            .frame(width: 14, height: 14)
+
+                            VStack(alignment: .leading, spacing: 0) {
+                                HStack(spacing: 3) {
+                                    Text(selectedChat.gptModel.isEmpty ? (selectedChat.apiService?.model ?? "Select Model") : selectedChat.gptModel)
+                                        .font(.system(size: 11, weight: .semibold))
+                                        .lineLimit(1)
+                                    Image(systemName: "chevron.right")
+                                        .font(.system(size: 7, weight: .bold))
+                                        .foregroundStyle(.secondary)
                                 }
+                                Text(selectedChat.apiService?.name ?? "Select Provider")
+                                    .font(.system(size: 9))
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
                             }
                         }
-
-                        Divider()
-
-                        Text("Current Model: \(selectedChat.gptModel)")
-                            .foregroundColor(.secondary)
-                    } label: {
-                        Text(selectedChat.apiService?.name ?? "Select API Service")
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 2)
                     }
-                }
-                
-                Button(action: {
-                    newChat()
-                }) {
-                    Image(systemName: "square.and.pencil")
-                }
-
-                if #available(macOS 14.0, *) {
-                    SettingsLink {
-                        settingsGearIcon
-                    }
-                }
-                else {
-                    Button(action: {
-                        openPreferencesView()
-                    }) {
-                        settingsGearIcon
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .popover(isPresented: $isShowingModelPickerPopover, arrowEdge: .bottom) {
+                        ModelPickerPopoverView(
+                            apiServices: Array(apiServices),
+                            selectedChat: selectedChat,
+                            onSelect: { service, model in
+                                handleServiceChange(selectedChat, service, selectedModel: model)
+                                isShowingModelPickerPopover = false
+                            }
+                        )
                     }
                 }
             }
@@ -303,6 +337,36 @@ struct ContentView: View {
                 SettingsIndicatorDot()
                     .offset(x: 1, y: -1)
             }
+        }
+    }
+
+    @ViewBuilder
+    private func providerBrandIcon(name: String, type: String) -> some View {
+        let lower = (name + " " + type).lowercased()
+        if lower.contains("cpa") || lower.contains("hai") || lower.contains("sap") || lower.contains("proxy") || lower.contains("server") {
+            Image(systemName: "server.rack")
+                .font(.system(size: 11))
+                .foregroundStyle(Color.accentColor)
+        } else if lower.contains("anthropic") || lower.contains("claude") {
+            Text("A\\")
+                .font(.system(size: 11, weight: .black, design: .serif))
+                .foregroundStyle(Color(red: 0.85, green: 0.45, blue: 0.35))
+        } else if lower.contains("google") || lower.contains("gemini") {
+            Text("G")
+                .font(.system(size: 11, weight: .heavy, design: .rounded))
+                .foregroundStyle(Color(red: 0.3, green: 0.5, blue: 0.9))
+        } else if lower.contains("deepseek") {
+            Image(systemName: "sparkles")
+                .font(.system(size: 11))
+                .foregroundStyle(Color.cyan)
+        } else if lower.contains("ollama") {
+            Image(systemName: "desktopcomputer")
+                .font(.system(size: 11))
+                .foregroundStyle(Color.white.opacity(0.8))
+        } else {
+            Image(systemName: "circle.hexagonpath.fill")
+                .font(.system(size: 11))
+                .foregroundStyle(Color.green)
         }
     }
 
@@ -423,7 +487,7 @@ struct ContentView: View {
         }
     }
 
-    private func handleServiceChange(_ chat: ChatEntity, _ newService: APIServiceEntity) {
+    private func handleServiceChange(_ chat: ChatEntity, _ newService: APIServiceEntity, selectedModel: String? = nil) {
         if chat.messagesArray.isEmpty {
             if let newDefaultPersona = newService.defaultPersona {
                 chat.persona = newDefaultPersona
@@ -436,7 +500,11 @@ struct ContentView: View {
         }
         
         chat.apiService = newService
-        chat.gptModel = newService.model ?? AppConstants.defaultModel(for: newService.type)
+        if let model = selectedModel, !model.isEmpty {
+            chat.gptModel = model
+        } else if chat.gptModel.isEmpty {
+            chat.gptModel = newService.model ?? AppConstants.defaultModel(for: newService.type)
+        }
         chat.objectWillChange.send()
         try? viewContext.save()
 

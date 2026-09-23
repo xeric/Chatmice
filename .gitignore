@@ -39,3 +39,7 @@ DerivedData/
 *.Trash
 *.xcworkspace/xcuserdata/*/UserInterfaceState.xcuserstate
 macai.xcodeproj/project.xcworkspace/xcuserdata/*/UserInterfaceState.xcuserstate
+
+# Local agent/tool configs
+.omp/
+.cmux/

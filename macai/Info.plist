@@ -2,14 +2,18 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>CFBundleDisplayName</key>
+	<string>Chatmice</string>
+	<key>CFBundleName</key>
+	<string>Chatmice</string>
 	<key>ATSApplicationFontsPath</key>
 	<string>fonts</string>
 	<key>CloudKitContainerIdentifier</key>
-	<string>iCloud.notfullin.com.macai</string>
+	<string>iCloud.xeric.com.chatmice</string>
 	<key>NSPhotoLibraryUsageDescription</key>
-	<string>macai lets you attach photos from your library to chats.</string>
+	<string>Chatmice lets you attach photos from your library to chats.</string>
 	<key>NSUserNotificationUsageDescription</key>
-	<string>macai uses notifications to inform you about new features, important updates, and new messages from chats</string>
+	<string>Chatmice uses notifications to inform you about new features, important updates, and new messages from chats</string>
 	<key>SUAllowsAutomaticUpdates</key>
 	<true/>
 	<key>SUEnableInstallerLauncherService</key>
