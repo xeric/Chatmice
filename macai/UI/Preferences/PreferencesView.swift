@@ -58,7 +58,8 @@ struct PreferencesView: View {
     @State private var selectedPage: SettingsPage? = .providers
 
     var body: some View {
-        NavigationSplitView {
+        HStack(spacing: 0) {
+            // Left Sidebar
             List(selection: $selectedPage) {
                 ForEach(SettingsGroup.allCases, id: \.self) { group in
                     Section(group.rawValue) {
@@ -70,10 +71,15 @@ struct PreferencesView: View {
                 }
             }
             .listStyle(.sidebar)
-            .navigationSplitViewColumnWidth(min: 180, ideal: 190, max: 220)
-        } detail: {
+            .frame(width: 190)
+            .background(Color(NSColor.controlBackgroundColor))
+
+            Divider()
+
+            // Detail View
             detailView
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .background(Color(NSColor.windowBackgroundColor))
         }
         .frame(minWidth: 760, idealWidth: 840, maxWidth: 1100, minHeight: 540, idealHeight: 620, maxHeight: 850)
         .onAppear {
