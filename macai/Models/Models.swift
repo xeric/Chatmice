@@ -9,6 +9,18 @@ import CoreData
 import Foundation
 import SwiftUI
 
+public struct ServiceModelRow: Identifiable, Codable, Equatable, Sendable {
+    public var id: String
+    public var nickname: String
+    public var modelID: String
+
+    public init(id: String = UUID().uuidString, nickname: String = "", modelID: String) {
+        self.id = id
+        self.nickname = nickname
+        self.modelID = modelID
+    }
+}
+
 public class ChatEntity: NSManagedObject, Identifiable {
     @NSManaged public var id: UUID
     @NSManaged public var messages: NSSet?

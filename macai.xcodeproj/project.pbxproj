@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		A997E261F772F00CE3A311EB /* ModelPickerPopoverView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FC48E933415526988C090899 /* ModelPickerPopoverView.swift */; };
 		3B581D462F9C9596252A850F /* TabMCPServersView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2FBDC4DA445AA921C10781FA /* TabMCPServersView.swift */; };
+		F1A2B3C4D5E6F7A8B9C0D1E3 /* TabSkillsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E1A2B3C4D5E6F7A8B9C0D1E2 /* TabSkillsView.swift */; };
 		55779915970806766322948B /* ChatmiceEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 14537C1CE42F2DC7966EBF04 /* ChatmiceEngine.swift */; };
 		56C4EDD2BD47159AAB2FE06A /* ComputerUseTool.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C64AA5DC1942A285D46D9A8 /* ComputerUseTool.swift */; };
 		F4301AF6864AC23C85794FB3 /* MCPService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F21BC6502437775046CA296A /* MCPService.swift */; };
@@ -156,6 +157,7 @@
 /* Begin PBXFileReference section */
 		FC48E933415526988C090899 /* ModelPickerPopoverView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelPickerPopoverView.swift; sourceTree = "<group>"; };
 		2FBDC4DA445AA921C10781FA /* TabMCPServersView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabMCPServersView.swift; sourceTree = "<group>"; };
+		E1A2B3C4D5E6F7A8B9C0D1E2 /* TabSkillsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabSkillsView.swift; sourceTree = "<group>"; };
 		14537C1CE42F2DC7966EBF04 /* ChatmiceEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatmiceEngine.swift; sourceTree = "<group>"; };
 		2C64AA5DC1942A285D46D9A8 /* ComputerUseTool.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComputerUseTool.swift; sourceTree = "<group>"; };
 		F21BC6502437775046CA296A /* MCPService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MCPService.swift; sourceTree = "<group>"; };
@@ -383,6 +385,7 @@
 			isa = PBXGroup;
 			children = (
 				2FBDC4DA445AA921C10781FA /* TabMCPServersView.swift */,
+				E1A2B3C4D5E6F7A8B9C0D1E2 /* TabSkillsView.swift */,
 				4AFAC2012EF496C3004B125E /* SettingsIndicators.swift */,
 				A31F00002F20000100C0D3E5 /* V3UpgradeNotice.swift */,
 				4A8A78C72D4C41980057A6CC /* TabGeneralSettingsView.swift */,
@@ -761,6 +764,7 @@
 			files = (
 				A997E261F772F00CE3A311EB /* ModelPickerPopoverView.swift in Sources */,
 				3B581D462F9C9596252A850F /* TabMCPServersView.swift in Sources */,
+				F1A2B3C4D5E6F7A8B9C0D1E3 /* TabSkillsView.swift in Sources */,
 				55779915970806766322948B /* ChatmiceEngine.swift in Sources */,
 				56C4EDD2BD47159AAB2FE06A /* ComputerUseTool.swift in Sources */,
 				F4301AF6864AC23C85794FB3 /* MCPService.swift in Sources */,
