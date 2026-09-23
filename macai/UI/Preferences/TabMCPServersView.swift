@@ -7,18 +7,27 @@
 
 import SwiftUI
 
+enum MCPFormMode: String, CaseIterable, Identifiable {
+    case form = "Visual Form"
+    case json = "Raw JSON"
+
+    var id: String { rawValue }
+}
+
 struct TabMCPServersView: View {
     @AppStorage("mcpServersJSON") private var mcpServersJSON: String = "[]"
     @State private var servers: [MCPServerConfig] = []
     @State private var showingEditSheet = false
     @State private var editingServer: MCPServerConfig? = nil
 
+    @State private var formMode: MCPFormMode = .form
     @State private var formKind: MCPServerConfig.Kind = .stdio
     @State private var formName = ""
     @State private var formCommand = "npx"
-    @State private var formArgs = ""
     @State private var formURL = "http://localhost:8000/sse"
     @State private var formEnv = ""
+    @State private var rawJSON = ""
+    @State private var jsonError: String? = nil
     @State private var statuses: [MCPStatus] = []
 
     var body: some View {
@@ -41,7 +50,7 @@ struct TabMCPServersView: View {
                     Text("No MCP servers configured")
                         .font(.headline)
                         .foregroundStyle(.secondary)
-                    Text("Add an MCP server (Local stdio via npx/node/uvx, or Remote HTTP/SSE) to give your assistant tool capabilities.")
+                    Text("Add an MCP server (Local stdio command or Remote HTTP/SSE endpoint) to give your assistant tool capabilities.")
                         .font(.subheadline)
                         .foregroundStyle(.tertiary)
                         .multilineTextAlignment(.center)
@@ -83,6 +92,15 @@ struct TabMCPServersView: View {
         let toolCount = status?.toolCount ?? 0
         let lastError = status?.lastError
 
+        let commandDisplay: String = {
+            if server.kind == .stdio {
+                let full = ([server.command ?? ""] + server.args).filter { !$0.isEmpty }.joined(separator: " ")
+                return full
+            } else {
+                return server.url ?? ""
+            }
+        }()
+
         return HStack(spacing: 12) {
             Circle()
                 .fill(isConnected ? Color.green : (server.enabled ? Color.orange : Color.gray))
@@ -110,17 +128,10 @@ struct TabMCPServersView: View {
                     }
                 }
 
-                if server.kind == .stdio {
-                    Text("\(server.command ?? "") \(server.args.joined(separator: " "))")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                } else {
-                    Text(server.url ?? "")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
+                Text(commandDisplay)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
 
                 if let err = lastError, !isConnected && server.enabled {
                     Text(err)
@@ -193,6 +204,9 @@ struct TabMCPServersView: View {
     }
 
     private var isSaveDisabled: Bool {
+        if formMode == .json {
+            return rawJSON.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || jsonError != nil
+        }
         if formName.trimmingCharacters(in: .whitespaces).isEmpty { return true }
         if formKind == .stdio {
             return formCommand.trimmingCharacters(in: .whitespaces).isEmpty
@@ -203,27 +217,37 @@ struct TabMCPServersView: View {
 
     private var serverFormSheet: some View {
         VStack(spacing: 16) {
-            Text(editingServer == nil ? "Add MCP Server" : "Edit MCP Server")
-                .font(.headline)
-
-            Picker("Transport Type", selection: $formKind) {
-                Text("Local (stdio)").tag(MCPServerConfig.Kind.stdio)
-                Text("Remote (HTTP / SSE)").tag(MCPServerConfig.Kind.http)
-            }
-            .pickerStyle(.segmented)
-            .padding(.bottom, 4)
-
-            Form {
-                TextField("Server Name:", text: $formName, prompt: Text(formKind == .stdio ? "e.g. filesystem" : "e.g. jira"))
-
-                if formKind == .stdio {
-                    TextField("Command:", text: $formCommand, prompt: Text("e.g. npx, node, uvx, python3"))
-                    TextField("Arguments (space-separated):", text: $formArgs, prompt: Text("-y @modelcontextprotocol/server-..."))
-                    TextField("Environment (KEY=VAL;...):", text: $formEnv, prompt: Text("API_KEY=xyz;DEBUG=1"))
-                } else {
-                    TextField("Server URL (SSE or HTTP):", text: $formURL, prompt: Text("http://127.0.0.1:7766/mcp/jira or http://.../sse"))
-                    TextField("Headers / Auth (KEY=VAL;...):", text: $formEnv, prompt: Text("Authorization=Bearer xyz;X-Custom=abc"))
+            HStack {
+                Text(editingServer == nil ? "Add MCP Server" : "Edit MCP Server")
+                    .font(.headline)
+                Spacer()
+                Picker("", selection: $formMode) {
+                    ForEach(MCPFormMode.allCases) { mode in
+                        Text(mode.rawValue).tag(mode)
+                    }
                 }
+                .pickerStyle(.segmented)
+                .frame(width: 200)
+                .onChange(of: formMode) { newMode in
+                    if newMode == .json {
+                        syncFormToJSON()
+                    } else {
+                        syncJSONToForm()
+                    }
+                }
+            }
+
+            if formMode == .form {
+                visualFormView
+            } else {
+                rawJSONView
+            }
+
+            if let err = jsonError {
+                Text(err)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
 
             HStack {
@@ -235,8 +259,9 @@ struct TabMCPServersView: View {
                 Spacer()
 
                 Button("Save") {
-                    saveServerForm()
-                    showingEditSheet = false
+                    if saveServerForm() {
+                        showingEditSheet = false
+                    }
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(isSaveDisabled)
@@ -244,28 +269,204 @@ struct TabMCPServersView: View {
             }
         }
         .padding()
-        .frame(width: 480)
+        .frame(width: 520)
+    }
+
+    private var visualFormView: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Picker("Transport Type", selection: $formKind) {
+                Text("Local (stdio)").tag(MCPServerConfig.Kind.stdio)
+                Text("Remote (HTTP / SSE)").tag(MCPServerConfig.Kind.http)
+            }
+            .pickerStyle(.segmented)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Server Name:")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                TextField("Server Name", text: $formName, prompt: Text(formKind == .stdio ? "e.g. filesystem" : "e.g. jira"))
+                    .textFieldStyle(.roundedBorder)
+            }
+
+            if formKind == .stdio {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Command (executable + arguments):")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    TextField("Full Command", text: $formCommand, prompt: Text("e.g. volta run --node 20 npx -y aha-mcp@latest"))
+                        .textFieldStyle(.roundedBorder)
+                    Text("Enter the complete command line as you would run it in the terminal.")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Environment Variables (KEY=VALUE per line):")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    TextEditor(text: $formEnv)
+                        .font(.system(.body, design: .monospaced))
+                        .frame(height: 80)
+                        .padding(4)
+                        .background(Color(NSColor.controlBackgroundColor))
+                        .cornerRadius(6)
+                        .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.2), lineWidth: 1))
+                    Text("One variable per line: e.g. AHA_API_TOKEN=xyz\\nAHA_DOMAIN=company.aha.io")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+            } else {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Server URL (SSE or HTTP):")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    TextField("Server URL", text: $formURL, prompt: Text("http://127.0.0.1:7766/mcp/jira or http://.../sse"))
+                        .textFieldStyle(.roundedBorder)
+                }
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Custom Headers / Auth (KEY=VALUE per line):")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    TextEditor(text: $formEnv)
+                        .font(.system(.body, design: .monospaced))
+                        .frame(height: 80)
+                        .padding(4)
+                        .background(Color(NSColor.controlBackgroundColor))
+                        .cornerRadius(6)
+                        .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.2), lineWidth: 1))
+                    Text("One header per line: e.g. Authorization=Bearer token\\nX-Custom=value")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+            }
+        }
+    }
+
+    private var rawJSONView: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Paste MCP configuration JSON (supports Claude Desktop format):")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            TextEditor(text: $rawJSON)
+                .font(.system(.body, design: .monospaced))
+                .frame(height: 220)
+                .padding(4)
+                .background(Color(NSColor.controlBackgroundColor))
+                .cornerRadius(6)
+                .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.2), lineWidth: 1))
+                .onChange(of: rawJSON) { _ in
+                    validateJSON()
+                }
+
+            Text("Example: {\"name\": \"aha\", \"command\": \"volta run ...\", \"env\": {\"AHA_API_TOKEN\": \"...\"}}")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+        }
+    }
+
+    private func syncFormToJSON() {
+        var envObj: [String: String] = [:]
+        for line in formEnv.components(separatedBy: CharacterSet.newlines.union(CharacterSet(charactersIn: ";"))) {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed.isEmpty || trimmed.hasPrefix("#") { continue }
+            let kv = trimmed.split(separator: "=", maxSplits: 1).map(String.init)
+            if kv.count == 2 {
+                envObj[kv[0].trimmingCharacters(in: .whitespaces)] = kv[1].trimmingCharacters(in: .whitespaces)
+            }
+        }
+
+        var dict: [String: Any] = [
+            "name": formName
+        ]
+        if formKind == .stdio {
+            dict["command"] = formCommand
+            if !envObj.isEmpty { dict["env"] = envObj }
+        } else {
+            dict["url"] = formURL
+            if !envObj.isEmpty { dict["headers"] = envObj }
+        }
+
+        if let data = try? JSONSerialization.data(withJSONObject: dict, options: [.prettyPrinted, .sortedKeys]),
+           let str = String(data: data, encoding: .utf8) {
+            rawJSON = str
+        }
+        jsonError = nil
+    }
+
+    private func syncJSONToForm() {
+        guard let data = rawJSON.data(using: .utf8),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return
+        }
+
+        // Check if wrapped in mcpServers dictionary
+        var targetObj = obj
+        if let mcpServers = obj["mcpServers"] as? [String: Any], let first = mcpServers.first {
+            formName = first.key
+            targetObj = (first.value as? [String: Any]) ?? [:]
+        } else if let name = obj["name"] as? String, !name.isEmpty {
+            formName = name
+        }
+
+        if let url = targetObj["url"] as? String, !url.isEmpty {
+            formKind = .http
+            formURL = url
+            if let headers = (targetObj["headers"] as? [String: String]) ?? (targetObj["env"] as? [String: String]) {
+                formEnv = headers.map { "\($0.key)=\($0.value)" }.joined(separator: "\n")
+            }
+        } else {
+            formKind = .stdio
+            var cmd = targetObj["command"] as? String ?? ""
+            if let args = targetObj["args"] as? [String], !args.isEmpty {
+                cmd = ([cmd] + args).joined(separator: " ")
+            }
+            formCommand = cmd
+            if let env = targetObj["env"] as? [String: String] {
+                formEnv = env.map { "\($0.key)=\($0.value)" }.joined(separator: "\n")
+            }
+        }
+        jsonError = nil
+    }
+
+    private func validateJSON() {
+        let trimmed = rawJSON.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty {
+            jsonError = nil
+            return
+        }
+        do {
+            _ = try JSONSerialization.jsonObject(with: Data(trimmed.utf8))
+            jsonError = nil
+        } catch {
+            jsonError = "JSON Syntax Error: \(error.localizedDescription)"
+        }
     }
 
     private func openAddServer() {
         editingServer = nil
+        formMode = .form
         formKind = .stdio
         formName = ""
-        formCommand = "npx"
-        formArgs = ""
-        formURL = "http://127.0.0.1:7766/mcp/"
+        formCommand = ""
+        formURL = "http://localhost:8000/sse"
         formEnv = ""
+        rawJSON = ""
+        jsonError = nil
         showingEditSheet = true
     }
 
     private func openEditServer(_ server: MCPServerConfig) {
         editingServer = server
+        formMode = .form
         formKind = server.kind
         formName = server.name
-        formCommand = server.command ?? "npx"
-        formArgs = server.args.joined(separator: " ")
+        formCommand = ([server.command ?? ""] + server.args).filter { !$0.isEmpty }.joined(separator: " ")
         formURL = server.url ?? ""
-        formEnv = server.env.map { "\($0.key)=\($0.value)" }.joined(separator: ";")
+        formEnv = server.env.map { "\($0.key)=\($0.value)" }.sorted().joined(separator: "\n")
+        rawJSON = ""
+        jsonError = nil
         showingEditSheet = true
     }
 
@@ -288,10 +489,16 @@ struct TabMCPServersView: View {
         }
     }
 
-    private func saveServerForm() {
+    private func saveServerForm() -> Bool {
+        if formMode == .json {
+            return saveFromRawJSON()
+        }
+
         var envMap: [String: String] = [:]
-        for pair in formEnv.split(separator: ";") {
-            let kv = pair.split(separator: "=", maxSplits: 1).map(String.init)
+        for line in formEnv.components(separatedBy: CharacterSet.newlines.union(CharacterSet(charactersIn: ";"))) {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed.isEmpty || trimmed.hasPrefix("#") { continue }
+            let kv = trimmed.split(separator: "=", maxSplits: 1).map(String.init)
             if kv.count == 2 {
                 envMap[kv[0].trimmingCharacters(in: .whitespaces)] = kv[1].trimmingCharacters(in: .whitespaces)
             }
@@ -300,12 +507,11 @@ struct TabMCPServersView: View {
         let name = formName.trimmingCharacters(in: .whitespaces)
         let config: MCPServerConfig
         if formKind == .stdio {
-            let args = formArgs.split(separator: " ").map(String.init)
             config = MCPServerConfig(
                 name: name,
                 kind: .stdio,
                 command: formCommand.trimmingCharacters(in: .whitespaces),
-                args: args,
+                args: [],
                 env: envMap,
                 enabled: editingServer?.enabled ?? true
             )
@@ -330,6 +536,62 @@ struct TabMCPServersView: View {
         }
         updated.append(config)
         saveServers(updated)
+        return true
+    }
+
+    private func saveFromRawJSON() -> Bool {
+        guard let data = rawJSON.data(using: .utf8),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            jsonError = "Invalid JSON"
+            return false
+        }
+
+        var newConfigs: [MCPServerConfig] = []
+
+        // Format 1: {"mcpServers": { "name": { "command": "...", "args": [...], "env": {...} } }}
+        if let mcpServers = obj["mcpServers"] as? [String: Any] {
+            for (name, val) in mcpServers {
+                if let serverDict = val as? [String: Any] {
+                    if let cfg = parseServerDict(name: name, dict: serverDict) {
+                        newConfigs.append(cfg)
+                    }
+                }
+            }
+        }
+        // Format 2: Single server dict: {"name": "...", "command": "...", "env": {...}}
+        else if let name = obj["name"] as? String, !name.isEmpty {
+            if let cfg = parseServerDict(name: name, dict: obj) {
+                newConfigs.append(cfg)
+            }
+        } else {
+            jsonError = "Missing server name or 'mcpServers' object"
+            return false
+        }
+
+        guard !newConfigs.isEmpty else {
+            jsonError = "No valid server configuration found"
+            return false
+        }
+
+        var updated = servers
+        for cfg in newConfigs {
+            updated.removeAll { $0.name == cfg.name }
+            updated.append(cfg)
+        }
+        saveServers(updated)
+        return true
+    }
+
+    private func parseServerDict(name: String, dict: [String: Any]) -> MCPServerConfig? {
+        if let url = dict["url"] as? String, !url.isEmpty {
+            let env = (dict["headers"] as? [String: String]) ?? (dict["env"] as? [String: String]) ?? [:]
+            return MCPServerConfig(name: name, kind: .http, env: env, url: url, enabled: true)
+        } else if let cmd = dict["command"] as? String, !cmd.isEmpty {
+            let args = dict["args"] as? [String] ?? []
+            let env = dict["env"] as? [String: String] ?? [:]
+            return MCPServerConfig(name: name, kind: .stdio, command: cmd, args: args, env: env, enabled: true)
+        }
+        return nil
     }
 
     private func toggleServer(_ server: MCPServerConfig, enabled: Bool) {

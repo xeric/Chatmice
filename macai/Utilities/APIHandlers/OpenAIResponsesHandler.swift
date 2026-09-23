@@ -193,7 +193,7 @@ class OpenAIResponsesHandler: OpenAIHandlerBase, APIService {
                     let ids = dataArr.compactMap { $0["id"] as? String }
                     if !ids.isEmpty { return ids.map { AIModel(id: $0) } }
                 }
-                throw APIError.decodingFailed("未能解析模型列表")
+                throw APIError.decodingFailed("Failed to parse models list")
             case .failure(let error):
                 throw error
             }

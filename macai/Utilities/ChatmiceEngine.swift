@@ -56,17 +56,17 @@ class ChatmiceEngine: APIService {
         _ requestMessages: [[String: String]],
         temperature: Float
     ) async throws -> AsyncThrowingStream<String, Error> {
-        let toolsEnabled = UserDefaults.standard.bool(forKey: Self.toolsEnabledKey)
+        let toolsEnabled = (UserDefaults.standard.object(forKey: Self.toolsEnabledKey) as? Bool) ?? true
         
-        // 检查服务是否属于 OpenAI 兼容协议 (chatgpt / openai)
+        // Check if service uses OpenAI-compatible protocol (chatgpt / openai / deepseek / openrouter / ollama)
         let serviceType: String = {
             if let c = config as? APIServiceConfig { return c.type.lowercased() }
             if let e = config as? APIServiceEntity { return (e.type ?? "").lowercased() }
             return ""
         }()
-        let isOpenAICompatible = serviceType == "chatgpt" || serviceType == "openai" || serviceType == "openai-responses"
+        let isOpenAICompatible = serviceType == "chatgpt" || serviceType == "openai" || serviceType == "openai-responses" || serviceType == "deepseek" || serviceType == "openrouter" || serviceType == "ollama" || serviceType.isEmpty
 
-        // 如果未开启工具增强，或服务不是 OpenAI 协议（如 Google Gemini 原生协议），直接走底层专有通道
+        // If tools disabled or service uses native protocol (e.g. Google Gemini, Anthropic), route directly
         guard toolsEnabled && isOpenAICompatible else {
             return try await baseService.sendMessageStream(requestMessages, temperature: temperature)
         }
@@ -101,8 +101,7 @@ class ChatmiceEngine: APIService {
         baseService.cancelCurrentRequest()
     }
 
-    // MARK: - 工具循环引擎
-
+    // MARK: - Agent Tool Loop Engine
     private func runToolLoop(
         requestMessages: [[String: String]],
         temperature: Float,
@@ -130,7 +129,7 @@ class ChatmiceEngine: APIService {
 
         let defs = await box.definitions()
         guard !defs.isEmpty else {
-            // 无可用工具，直接回退
+            // No tools available, fallback to direct stream
             let stream = try await baseService.sendMessageStream(requestMessages, temperature: temperature)
             for try await chunk in stream {
                 continuation.yield(chunk)
@@ -138,23 +137,31 @@ class ChatmiceEngine: APIService {
             return
         }
 
-        // 构建带工具定义的请求，或通过原生支持的 API 端点
+        // Construct request with tool definitions
         var conversationHistory = requestMessages
 
-        // 追加 Skills 提示词
+        // Append Agent instructions
+        var agentInstructions: [String] = []
+        if bashEnabled {
+            agentInstructions.append("You have access to a local bash execution tool named `bash`. You CAN and SHOULD use it to run terminal commands, inspect the file system, list directories, read files, and execute shell scripts on the user's macOS computer whenever requested by the user. Never say you cannot access the local system.")
+        }
         if skillsEnabled {
             let section = await skillStore.systemPromptSection()
             if !section.isEmpty {
-                if let idx = conversationHistory.firstIndex(where: { $0["role"] == "system" }) {
-                    var sys = conversationHistory[idx]
-                    sys["content"] = (sys["content"] ?? "") + "\n\n" + section
-                    conversationHistory[idx] = sys
-                } else {
-                    conversationHistory.insert(["role": "system", "content": section], at: 0)
-                }
+                agentInstructions.append(section)
             }
         }
 
+        if !agentInstructions.isEmpty {
+            let combined = agentInstructions.joined(separator: "\n\n")
+            if let idx = conversationHistory.firstIndex(where: { $0["role"] == "system" }) {
+                var sys = conversationHistory[idx]
+                sys["content"] = (sys["content"] ?? "") + "\n\n" + combined
+                conversationHistory[idx] = sys
+            } else {
+                conversationHistory.insert(["role": "system", "content": combined], at: 0)
+            }
+        }
         let context = ToolContext(
             depth: 0,
             cwd: FileManager.default.temporaryDirectory,
@@ -163,10 +170,10 @@ class ChatmiceEngine: APIService {
                 return await withCheckedContinuation { cont in
                     DispatchQueue.main.async {
                         let alert = NSAlert()
-                        alert.messageText = "Chatmice 工具执行确认"
+                        alert.messageText = "Chatmice Tool Execution Confirmation"
                         alert.informativeText = prompt
-                        alert.addButton(withTitle: "允许执行")
-                        alert.addButton(withTitle: "拒绝")
+                        alert.addButton(withTitle: "Allow")
+                        alert.addButton(withTitle: "Deny")
                         alert.alertStyle = .warning
                         let res = alert.runModal()
                         cont.resume(returning: res == .alertFirstButtonReturn)
@@ -182,7 +189,7 @@ class ChatmiceEngine: APIService {
             rounds += 1
             if Task.isCancelled { break }
 
-            // 构造请求
+            // Execute turn
             let rawResult = try await self.executeTurn(
                 messages: conversationHistory,
                 tools: defs,
@@ -190,14 +197,14 @@ class ChatmiceEngine: APIService {
             )
 
             if rawResult.toolCalls.isEmpty {
-                // 没有工具调用，模型直接给出了回答
+                // No tool calls, model gave final answer
                 if !rawResult.text.isEmpty {
                     continuation.yield(rawResult.text)
                 }
                 break
             }
 
-            // 执行工具调用
+            // Execute tool calls
             var assistantMsg: [String: String] = ["role": "assistant", "content": rawResult.text]
             conversationHistory.append(assistantMsg)
 
@@ -215,7 +222,7 @@ class ChatmiceEngine: APIService {
                     continuation.yield("> ⚠️ *Error: \(error.localizedDescription)*\n\n")
                 }
 
-                // 将工具结果追加进会话上下文中供下一轮消费
+                // Append tool result into conversation history for next round
                 let toolMsg: [String: String] = [
                     "role": "user",
                     "content": "[Tool Result of \(call.name)]:\n\(outputText)"
@@ -235,15 +242,25 @@ class ChatmiceEngine: APIService {
         tools: [ToolDefinition],
         temperature: Float
     ) async throws -> TurnResult {
-        // 确保 URL 带有 /chat/completions
+        // Ensure URL has /chat/completions endpoint
         var targetURL = baseURL
         if !targetURL.absoluteString.hasSuffix("/chat/completions") {
             targetURL = targetURL.appendingPathComponent("chat/completions")
         }
         var req = URLRequest(url: targetURL)
         req.httpMethod = "POST"
-        let effectiveKey = config.apiKey.isEmpty ? (ProcessInfo.processInfo.environment["LOCAL_SAP_AI_CORE_PROXY_KEY"] ?? "") : config.apiKey
-        req.setValue("Bearer \(effectiveKey)", forHTTPHeaderField: "Authorization")
+        let effectiveKey: String = {
+            if !config.apiKey.isEmpty { return config.apiKey }
+            if let entity = config as? APIServiceEntity,
+               let id = entity.tokenIdentifier ?? entity.id?.uuidString,
+               let token = try? TokenManager.getToken(for: id), !token.isEmpty {
+                return token
+            }
+            return ProcessInfo.processInfo.environment["LOCAL_SAP_AI_CORE_PROXY_KEY"] ?? ""
+        }()
+        if !effectiveKey.isEmpty {
+            req.setValue("Bearer \(effectiveKey)", forHTTPHeaderField: "Authorization")
+        }
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         let toolsPayload = tools.map { t -> [String: Any] in
             [
@@ -275,7 +292,7 @@ class ChatmiceEngine: APIService {
               let choices = obj["choices"] as? [[String: Any]],
               let first = choices.first,
               let msg = first["message"] as? [String: Any] else {
-            throw APIError.decodingFailed("无法解析响应")
+            throw APIError.decodingFailed("Failed to parse response")
         }
 
         var text = msg["content"] as? String ?? ""

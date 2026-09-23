@@ -87,16 +87,16 @@ public actor SkillStore: SkillCatalog {
         if let path, !path.isEmpty {
             let target = dir.appendingPathComponent(path)
             guard target.standardized.path.hasPrefix(dir.standardized.path) else {
-                throw ToolError.invalidArguments("path 必须在 skill 目录内")
+                throw ToolError.invalidArguments("path must be inside skill directory")
             }
             guard let content = try? String(contentsOf: target, encoding: .utf8) else {
-                throw ToolError.unknownTool("文件：\(path)")
+                throw ToolError.unknownTool("file: \(path)")
             }
             return content
         }
         let skillFile = dir.appendingPathComponent("SKILL.md")
         guard let raw = try? String(contentsOf: skillFile, encoding: .utf8) else {
-            throw ToolError.unknownTool("skill：\(name)")
+            throw ToolError.unknownTool("skill: \(name)")
         }
         return Self.parseFrontmatter(raw).body
     }
@@ -105,11 +105,11 @@ public actor SkillStore: SkillCatalog {
         let list = await skills()
         guard !list.isEmpty else { return "" }
         var lines = [
-            "可用技能（skills）。需要某技能时调用 skill.read 工具（参数 name，可选 path）读取完整说明：",
+            "Available skills. Call skill.read (parameter 'name', optional 'path') to inspect full documentation:",
             ""
         ]
         for s in list {
-            lines.append("- \(s.name)：\(s.description)（目录 \(s.directory.lastPathComponent)）")
+            lines.append("- \(s.name): \(s.description) (directory: \(s.directory.lastPathComponent))")
         }
         return lines.joined(separator: "\n")
     }
@@ -151,9 +151,9 @@ public struct SkillTool: AgentTool {
     public let definition = ToolDefinition(
         name: "skill.read",
         description: """
-        读取一个 skill 的完整说明。参数：name（必填，skill 名或目录名）；
-        path（可选，skill 目录内的引用文件相对路径，如 references/api.md）。
-        不传 path 返回 SKILL.md 正文（不含 frontmatter）。
+        Read the complete documentation of a skill. Parameters: name (required, skill name or folder name);
+        path (optional, relative path to file in skill folder, e.g. references/api.md).
+        Omit path to read SKILL.md body.
         """,
         parameters: .object(properties: [
             "name": .string,
@@ -165,7 +165,7 @@ public struct SkillTool: AgentTool {
         guard let data = arguments.data(using: .utf8),
               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let name = obj["name"] as? String, !name.isEmpty else {
-            throw ToolError.invalidArguments("skill.read 参数必须包含 name: string")
+            throw ToolError.invalidArguments("skill.read requires name: string")
         }
         let path = obj["path"] as? String
         return try await catalog.read(name: name, path: path)

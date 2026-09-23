@@ -102,7 +102,7 @@ public actor MCPService {
     public func disconnect(name: String) {
         guard let s = servers[name] else { return }
         switch s.transport {
-        case .stdio(let p, _, _):
+        case .stdio(let p, _, _, _):
             p.terminate()
         case .http(let httpTransport):
             httpTransport.disconnect()
@@ -132,7 +132,7 @@ public actor MCPService {
 
     func callTool(server: String, tool: String, arguments: [String: Any]) async throws -> String {
         guard let s = servers[server], s.connected, let transport = s.transport else {
-            throw ToolError.executionFailed("MCP 服务器 \(server) 未连接")
+            throw ToolError.executionFailed("MCP server \(server) is not connected")
         }
         let req: [String: Any] = [
             "jsonrpc": "2.0",
@@ -154,7 +154,7 @@ public actor MCPService {
             if let err = resp["error"] as? [String: Any], let msg = err["message"] as? String {
                 throw ToolError.executionFailed(msg)
             }
-            throw ToolError.executionFailed("MCP 返回格式错误")
+            throw ToolError.executionFailed("MCP invalid response format")
         }
         if let content = result["content"] as? [[String: Any]] {
             let texts = content.compactMap { $0["text"] as? String }
@@ -172,7 +172,7 @@ public actor MCPService {
         }
     }
 
-    // MARK: - Stdio 连接
+    // MARK: - Stdio Connection
     private func connectStdio(_ cfg: MCPServerConfig) async {
         guard let cmd = cfg.command, !cmd.isEmpty else {
             let s = ConnectedServer(config: cfg, transport: nil)
@@ -296,18 +296,17 @@ public actor MCPService {
                         }
                     }
                 }
-                throw ToolError.executionFailed("MCP 连接断开")
+                throw ToolError.executionFailed("MCP connection closed")
             }
             group.addTask {
                 try await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
-                throw ToolError.executionFailed("MCP RPC 超时")
+                throw ToolError.executionFailed("MCP RPC timed out")
             }
             defer { group.cancelAll() }
             return try await group.next()!
         }
     }
-
-    // MARK: - HTTP / SSE 连接
+    // MARK: - HTTP / SSE Connection
     private func connectHTTP(_ cfg: MCPServerConfig) async {
         guard let urlString = cfg.url?.trimmingCharacters(in: .whitespacesAndNewlines),
               !urlString.isEmpty,
@@ -373,7 +372,7 @@ public actor MCPService {
     }
 }
 
-// MARK: - HTTP / SSE 传输实现
+// MARK: - HTTP / SSE Transport Implementation
 private final class HTTPMCPTransport: @unchecked Sendable {
     let initialURL: URL
     let headers: [String: String]
@@ -515,7 +514,7 @@ private final class HTTPMCPTransport: @unchecked Sendable {
 
     func rpc(_ req: [String: Any], timeout: Double = 30) async throws -> [String: Any] {
         guard let targetURL = postURL else {
-            throw ToolError.executionFailed("MCP HTTP 端点未就绪")
+            throw ToolError.executionFailed("MCP HTTP endpoint not ready")
         }
         let id = req["id"] as? Int ?? Int.random(in: 1000...9999)
         var postReq = URLRequest(url: targetURL)
@@ -574,7 +573,7 @@ private final class HTTPMCPTransport: @unchecked Sendable {
                 self.lock.lock()
                 let removed = self.pendingContinuations.removeValue(forKey: id)
                 self.lock.unlock()
-                removed?.resume(throwing: ToolError.executionFailed("MCP RPC 超时"))
+                removed?.resume(throwing: ToolError.executionFailed("MCP RPC timed out"))
             }
         }
     }
@@ -597,7 +596,7 @@ private final class HTTPMCPTransport: @unchecked Sendable {
         sseTask = nil
         lock.lock()
         for (_, cont) in pendingContinuations {
-            cont.resume(throwing: ToolError.executionFailed("连接已关闭"))
+            cont.resume(throwing: ToolError.executionFailed("Connection closed"))
         }
         pendingContinuations.removeAll()
         lock.unlock()

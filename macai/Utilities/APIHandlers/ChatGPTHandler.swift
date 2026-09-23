@@ -171,7 +171,7 @@ class ChatGPTHandler: OpenAIHandlerBase, APIService {
                         if !ids.isEmpty { return ids.map { AIModel(id: $0) } }
                     }
                 }
-                throw APIError.decodingFailed("未能解析模型列表")
+                throw APIError.decodingFailed("Failed to parse models list")
             case .failure(let error):
                 throw error
             }

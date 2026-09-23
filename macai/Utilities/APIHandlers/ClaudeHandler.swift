@@ -63,7 +63,7 @@ class ClaudeHandler: APIService {
                     let ids = dataArr.compactMap { $0["id"] as? String }
                     if !ids.isEmpty { return ids.map { AIModel(id: $0) } }
                 }
-                throw APIError.decodingFailed("未能解析 Claude 模型列表")
+                throw APIError.decodingFailed("Failed to parse Claude models list")
             case .failure(let error):
                 throw error
             }

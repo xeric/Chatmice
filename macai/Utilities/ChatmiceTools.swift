@@ -240,10 +240,10 @@ public enum ToolError: Error, LocalizedError, Sendable {
 
     public var errorDescription: String? {
         switch self {
-        case .unknownTool(let s): return "未知工具：\(s)"
-        case .invalidArguments(let s): return "参数无效：\(s)"
-        case .confirmationDenied(let s): return "用户取消执行：\(s)"
-        case .executionFailed(let s): return "执行失败：\(s)"
+        case .unknownTool(let s): return "Unknown tool: \(s)"
+        case .invalidArguments(let s): return "Invalid arguments: \(s)"
+        case .confirmationDenied(let s): return "Execution denied by user: \(s)"
+        case .executionFailed(let s): return "Execution failed: \(s)"
         }
     }
 }

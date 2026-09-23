@@ -119,9 +119,9 @@ public struct BashTool: AgentTool {
     public let definition = ToolDefinition(
         name: "bash",
         description: """
-        在本地执行 bash 命令（/bin/bash -lc）。返回 stdout/stderr/退出码。
-        参数：command（必填，完整命令字符串）；workdir（可选，工作目录绝对路径）；
-        timeout_seconds（可选，默认 120）。
+        Execute a bash command locally (/bin/zsh -lc). Returns stdout, stderr, and exit code.
+        Parameters: command (required, full command string); workdir (optional, working directory path);
+        timeout_seconds (optional, default 120).
         """,
         parameters: .object(properties: [
             "command": .string,
@@ -134,14 +134,14 @@ public struct BashTool: AgentTool {
         guard let data = arguments.data(using: .utf8),
               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let command = obj["command"] as? String, !command.isEmpty else {
-            throw ToolError.invalidArguments("bash 参数必须包含 command: string")
+            throw ToolError.invalidArguments("bash arguments must contain command: string")
         }
         let workdir = (obj["workdir"] as? String).flatMap { URL(fileURLWithPath: $0) }
         let timeout = TimeInterval((obj["timeout_seconds"] as? NSNumber)?.intValue ?? 120)
 
-        let allow = await context.ask("执行命令：\n\(command.prefix(300))")
+        let allow = await context.ask("Execute command:\n\(command.prefix(300))")
         guard allow else {
-            throw ToolError.confirmationDenied("用户取消执行命令")
+            throw ToolError.confirmationDenied("User denied command execution")
         }
 
         let output = await executor.run(command: command, cwd: workdir ?? context.cwd, timeout: timeout)
