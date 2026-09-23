@@ -69,6 +69,7 @@ struct TabAPIServicesView: View {
             .padding(24)
         }
         .onAppear {
+            sanitizeDefaults()
             if apiServices.isEmpty {
                 populateRoster()
             } else if selectedServiceID == nil, let first = apiServices.first {
@@ -83,9 +84,13 @@ struct TabAPIServicesView: View {
     // MARK: - Section 1: Configured Providers Card
 
     private var providersListSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 6) {
             Text("Configured Providers")
                 .font(.headline)
+                .foregroundStyle(Color.primary)
+
+            Text("Select a provider to edit its credentials and model list below.")
+                .font(.caption)
                 .foregroundStyle(Color.secondary)
 
             VStack(spacing: 0) {
@@ -170,11 +175,7 @@ struct TabAPIServicesView: View {
 
                 Spacer()
 
-                if isSelected {
-                    Image(systemName: "checkmark")
-                        .font(.system(size: 12, weight: .bold))
-                        .foregroundStyle(Color.accentColor)
-                }
+                // No checkmark — selection is clearly communicated via the row highlight
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 10)
@@ -269,13 +270,19 @@ struct TabAPIServicesView: View {
 
                 Divider()
 
-                // Set Default Toggle
+                // Default for new chats toggle
                 if let service = selectedService {
-                    Toggle("Set as Default Provider", isOn: Binding(
-                        get: { service.isDefault },
-                        set: { if $0 { setDefaultService(service) } }
-                    ))
-                    .toggleStyle(.switch)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Toggle("Default for New Chats", isOn: Binding(
+                            get: { service.isDefault },
+                            set: { if $0 { setDefaultService(service) } }
+                        ))
+                        .toggleStyle(.switch)
+
+                        Text("Used automatically when starting a new conversation if no specific assistant is chosen.")
+                            .font(.caption2)
+                            .foregroundStyle(Color.secondary)
+                    }
                 }
             }
             .padding(16)
@@ -476,6 +483,17 @@ struct TabAPIServicesView: View {
         }
         try? viewContext.save()
     }
+    private func sanitizeDefaults() {
+        let defaults = apiServices.filter { $0.isDefault }
+        if defaults.count > 1 {
+            // Keep only the first entity as default, unmark the rest
+            for extra in defaults.dropFirst() {
+                extra.isDefault = false
+            }
+            try? viewContext.save()
+        }
+    }
+
 
     private func addNewService(name: String, type: String, url: String, model: String) {
         let manager = APIServiceManager(viewContext: viewContext)
