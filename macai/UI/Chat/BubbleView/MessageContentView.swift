@@ -653,22 +653,79 @@ struct MessageContentView: View {
     }
 }
 
-private struct ToolActivityView: View {
+enum ToolActivityPresentationState: Equatable {
+    case awaitingApproval
+    case running
+    case completed
+    case failed
+
+    var accentColor: Color {
+        switch self {
+        case .awaitingApproval: return .orange
+        case .running: return .purple
+        case .completed: return .green
+        case .failed: return .red
+        }
+    }
+
+    var badge: String {
+        switch self {
+        case .awaitingApproval: return "Approval"
+        case .running: return "Running"
+        case .completed: return "Completed"
+        case .failed: return "Failed"
+        }
+    }
+
+    var symbolName: String {
+        switch self {
+        case .awaitingApproval: return "hand.raised.fill"
+        case .running, .completed: return "terminal.fill"
+        case .failed: return "exclamationmark.triangle.fill"
+        }
+    }
+
+    var canExpand: Bool {
+        switch self {
+        case .completed, .failed: return true
+        case .awaitingApproval, .running: return false
+        }
+    }
+
+    var showsProgress: Bool { self == .running }
+
+    func title(for toolName: String) -> String {
+        switch self {
+        case .awaitingApproval: return "Waiting to run \(toolName)"
+        case .running: return "Running \(toolName)"
+        case .completed: return "Ran \(toolName)"
+        case .failed: return "Failed \(toolName)"
+        }
+    }
+}
+
+struct ToolActivityView: View {
     let activity: ToolActivityRecord
+    let state: ToolActivityPresentationState
     @Binding var isExpanded: Bool
     @State private var copied = false
 
-    private var accentColor: Color {
-        activity.isError ? .red : .green
+    init(activity: ToolActivityRecord, isExpanded: Binding<Bool>) {
+        self.activity = activity
+        self.state = activity.isError ? .failed : .completed
+        self._isExpanded = isExpanded
     }
 
-    private var title: String {
-        activity.isError ? "Failed \(activity.name)" : "Ran \(activity.name)"
+    init(name: String, input: String, state: ToolActivityPresentationState) {
+        self.activity = ToolActivityRecord(name: name, input: input, output: "", isError: false)
+        self.state = state
+        self._isExpanded = .constant(false)
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             Button {
+                guard state.canExpand else { return }
                 withAnimation(.easeInOut(duration: 0.18)) {
                     isExpanded.toggle()
                 }
@@ -676,15 +733,21 @@ private struct ToolActivityView: View {
                 HStack(spacing: 10) {
                     ZStack {
                         RoundedRectangle(cornerRadius: 7, style: .continuous)
-                            .fill(accentColor.opacity(0.14))
-                        Image(systemName: activity.isError ? "exclamationmark.triangle.fill" : "terminal.fill")
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundStyle(accentColor)
+                            .fill(state.accentColor.opacity(0.14))
+                        if state.showsProgress {
+                            ProgressView()
+                                .controlSize(.small)
+                                .tint(state.accentColor)
+                        } else {
+                            Image(systemName: state.symbolName)
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(state.accentColor)
+                        }
                     }
                     .frame(width: 28, height: 28)
 
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(title)
+                        Text(state.title(for: activity.name))
                             .font(.system(size: 12, weight: .semibold))
                             .foregroundStyle(.primary)
                         Text(activity.input)
@@ -696,25 +759,28 @@ private struct ToolActivityView: View {
 
                     Spacer(minLength: 8)
 
-                    Text(activity.isError ? "Failed" : "Completed")
+                    Text(state.badge)
                         .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(accentColor)
+                        .foregroundStyle(state.accentColor)
                         .padding(.horizontal, 7)
                         .padding(.vertical, 3)
-                        .background(accentColor.opacity(0.12), in: Capsule())
+                        .background(state.accentColor.opacity(0.12), in: Capsule())
 
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(.secondary)
-                        .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                    if state.canExpand {
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                            .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                    }
                 }
                 .padding(.horizontal, 10)
                 .padding(.vertical, 8)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .allowsHitTesting(state.canExpand)
 
-            if isExpanded {
+            if isExpanded && state.canExpand {
                 Divider()
                     .opacity(0.6)
 
@@ -760,7 +826,7 @@ private struct ToolActivityView: View {
         )
         .overlay(
             RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .stroke(accentColor.opacity(0.24), lineWidth: 1)
+                .stroke(state.accentColor.opacity(0.24), lineWidth: 1)
         )
         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
     }

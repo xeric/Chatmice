@@ -25,11 +25,18 @@ struct ChatMessagesView: View {
     @State private var isInitialLoad = true
     @ObservedObject private var activityStore = ChatActivityStore.shared
     
-    var backgroundColor = Color(NSColor.controlBackgroundColor)
+
+    private var activitySnapshot: ChatActivitySnapshot? {
+        activityStore.activeSnapshot(for: chat.id)
+    }
 
     private var activeActivity: ChatActivitySnapshot? {
-        guard let snapshot = activityStore.activeSnapshot(for: chat.id),
-              snapshot.phase.showsInlineIndicator else { return nil }
+        guard let snapshot = activitySnapshot, snapshot.phase.showsInlineIndicator else { return nil }
+        return snapshot
+    }
+
+    private var activeToolActivity: ChatActivitySnapshot? {
+        guard let snapshot = activitySnapshot, snapshot.phase.showsStandaloneToolCard else { return nil }
         return snapshot
     }
 
@@ -69,7 +76,11 @@ struct ChatMessagesView: View {
                         }
                     }
 
-                    if let activeActivity {
+                    if let activeToolActivity {
+                        ActiveToolActivityView(snapshot: activeToolActivity)
+                            .id(activityAnchorID)
+                    }
+                    else if let activeActivity {
                         ChatActivityIndicatorView(snapshot: activeActivity)
                             .id(activityAnchorID)
                     }
@@ -116,7 +127,7 @@ struct ChatMessagesView: View {
 
                         let workItem = DispatchWorkItem {
                             withAnimation(.easeOut(duration: 0.22)) {
-                                if activeActivity != nil {
+                                if activitySnapshot != nil {
                                     scrollView.scrollTo(activityAnchorID, anchor: .bottom)
                                 } else if let lastMessage = chatViewModel.sortedMessages.last {
                                     scrollView.scrollTo(lastMessage.objectID, anchor: .bottom)
@@ -128,14 +139,14 @@ struct ChatMessagesView: View {
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1, execute: workItem)
                     }
                 }
-                .onChange(of: activeActivity?.phase) { phase in
+                .onChange(of: activitySnapshot?.phase) { phase in
                     guard phase != nil, !userIsScrolling else { return }
                     withAnimation(.easeOut(duration: 0.22)) {
                         scrollView.scrollTo(activityAnchorID, anchor: .bottom)
                     }
                 }
                 .onChange(of: chatViewModel.sortedMessages.count) { _ in
-                    if activeActivity != nil {
+                    if activitySnapshot != nil {
                         withAnimation {
                             scrollView.scrollTo(activityAnchorID, anchor: .bottom)
                         }
@@ -190,32 +201,36 @@ struct ChatMessagesView: View {
         }
         .defaultScrollAnchor(.bottom)
         .padding(.bottom, 6)
-        .overlay(alignment: .bottom) {
-            LinearGradient(
-                colors: [
-                    .clear,
-                    backgroundColor.opacity(0.25),
-                    backgroundColor.opacity(0.5),
-                    backgroundColor.opacity(0.9),
-                    backgroundColor,
-                ],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-            .frame(height: 40)
-            .padding(.trailing, 16)
-            .allowsHitTesting(false)
-        }
     }
 }
 
 private extension ChatActivityPhase {
     var showsInlineIndicator: Bool {
+        !showsStandaloneToolCard
+    }
+
+    var showsStandaloneToolCard: Bool {
         switch self {
         case .awaitingApproval, .runningTool:
-            return false
-        default:
             return true
+        default:
+            return false
+        }
+    }
+}
+
+private struct ActiveToolActivityView: View {
+    let snapshot: ChatActivitySnapshot
+
+    @ViewBuilder
+    var body: some View {
+        switch snapshot.phase {
+        case .awaitingApproval(let tool, let detail):
+            ToolActivityView(name: tool, input: detail, state: .awaitingApproval)
+        case .runningTool(let tool, let detail):
+            ToolActivityView(name: tool, input: detail, state: .running)
+        default:
+            EmptyView()
         }
     }
 }
