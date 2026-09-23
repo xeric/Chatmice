@@ -263,5 +263,28 @@ class MessageParserTests: XCTestCase {
         }
         
     }
+    func testParseToolActivityBetweenTextBlocks() {
+        let activity = ToolActivityRecord(
+            name: "bash",
+            input: "ls -la /",
+            output: "Applications\nLibrary\n[exit code: 0]",
+            isError: false
+        )
+        let input = "Before\n\(activity.marker)\nAfter"
+
+        let result = parser.parseMessageFromString(input: input)
+
+        XCTAssertEqual(result.count, 3)
+        guard case .toolActivity(let parsed) = result[1] else {
+            return XCTFail("Expected .toolActivity element")
+        }
+        XCTAssertEqual(parsed, activity)
+
+        let modelContent = ToolActivityRecord.replacingMarkersForModel(in: input)
+        XCTAssertFalse(modelContent.contains(ToolActivityRecord.openingTag))
+        XCTAssertTrue(modelContent.contains("Tool bash completed"))
+        XCTAssertTrue(modelContent.contains("Applications"))
+    }
+
 }
 

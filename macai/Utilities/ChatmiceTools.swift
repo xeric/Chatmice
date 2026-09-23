@@ -13,13 +13,22 @@ public struct ToolCall: Identifiable, Codable, Hashable, Sendable {
     public let id: String
     public let name: String
     public let arguments: String
+    public let thoughtSignature: String?
     public var result: String?
     public var isError: Bool
 
-    public init(id: String, name: String, arguments: String, result: String? = nil, isError: Bool = false) {
+    public init(
+        id: String,
+        name: String,
+        arguments: String,
+        thoughtSignature: String? = nil,
+        result: String? = nil,
+        isError: Bool = false
+    ) {
         self.id = id
         self.name = name
         self.arguments = arguments
+        self.thoughtSignature = thoughtSignature
         self.result = result
         self.isError = isError
     }
@@ -30,6 +39,43 @@ public struct ToolCall: Identifiable, Codable, Hashable, Sendable {
             return nil
         }
         return obj
+    }
+}
+
+struct ToolActivityRecord: Codable, Hashable {
+    static let openingTag = "<tool-activity>"
+    static let closingTag = "</tool-activity>"
+
+    let name: String
+    let input: String
+    let output: String
+    let isError: Bool
+
+    var marker: String {
+        guard let data = try? JSONEncoder().encode(self) else { return "" }
+        return Self.openingTag + data.base64EncodedString() + Self.closingTag
+    }
+
+    static func decode(markerLine: String) -> ToolActivityRecord? {
+        let trimmed = markerLine.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.hasPrefix(openingTag), trimmed.hasSuffix(closingTag) else { return nil }
+        let payload = trimmed
+            .dropFirst(openingTag.count)
+            .dropLast(closingTag.count)
+        guard let data = Data(base64Encoded: String(payload)) else { return nil }
+        return try? JSONDecoder().decode(Self.self, from: data)
+    }
+
+    static func replacingMarkersForModel(in content: String) -> String {
+        content
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .map { line in
+                guard let activity = decode(markerLine: String(line)) else { return String(line) }
+                let status = activity.isError ? "failed" : "completed"
+                let output = String(activity.output.prefix(2_000))
+                return "[Tool \(activity.name) \(status): \(activity.input)]\n\(output)"
+            }
+            .joined(separator: "\n")
     }
 }
 
@@ -135,13 +181,41 @@ public indirect enum JSONSchema: Codable, Hashable, Sendable {
         }
     }
 
-    public var openAIWireDict: [String: Any] {
-        let any = AnyCodable(self)
-        guard let data = try? JSONEncoder().encode(any),
-              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            return ["type": "object"]
+    private var wireValue: Any {
+        switch self {
+        case .object(let properties, let required, let additionalProperties):
+            var value: [String: Any] = ["type": "object"]
+            if !properties.isEmpty {
+                value["properties"] = properties.mapValues { $0.wireValue }
+            }
+            if !required.isEmpty {
+                value["required"] = required
+            }
+            if let additionalProperties {
+                value["additionalProperties"] = additionalProperties.wireValue
+            }
+            return value
+        case .array(let items):
+            var value: [String: Any] = ["type": "array"]
+            if let items {
+                value["items"] = items.wireValue
+            }
+            return value
+        case .string:
+            return ["type": "string"]
+        case .integer:
+            return ["type": "integer"]
+        case .number:
+            return ["type": "number"]
+        case .boolean:
+            return ["type": "boolean"]
+        case .raw(let raw):
+            return raw.value.value
         }
-        return obj
+    }
+
+    public var openAIWireDict: [String: Any] {
+        wireValue as? [String: Any] ?? ["type": "object"]
     }
 }
 

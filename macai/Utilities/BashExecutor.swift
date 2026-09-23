@@ -6,6 +6,32 @@
 //
 
 import Foundation
+enum BashApprovalMode: String, CaseIterable, Identifiable {
+    case alwaysAsk
+    case currentSession = "currentChat"
+    case alwaysAllow
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .alwaysAsk: return "Always Ask"
+        case .currentSession: return "This Session"
+        case .alwaysAllow: return "Always Allow"
+        }
+    }
+
+    var description: String {
+        switch self {
+        case .alwaysAsk:
+            return "Require approval before every Bash command."
+        case .currentSession:
+            return "Approve the first Bash command, then allow commands until Chatmice quits."
+        case .alwaysAllow:
+            return "Allow Bash commands automatically throughout Chatmice."
+        }
+    }
+}
 
 public struct BashOutput: Sendable {
     public let exitCode: Int32

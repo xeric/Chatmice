@@ -27,6 +27,7 @@ struct MessageContentView: View {
     @State private var showFullMessage = false
     @State private var isParsingFullMessage = false
     @State private var expandedReasoningElements: Set<String> = []
+    @State private var expandedToolElements: Set<String> = []
 
     private let largeMessageSymbolsThreshold = AppConstants.largeMessageSymbolsThreshold
 
@@ -43,7 +44,7 @@ struct MessageContentView: View {
     }
 
     private func containsImageData(_ message: String) -> Bool {
-        if message.contains("<image-uuid>") || message.contains("<file-uuid>") {
+        if message.contains("<image-uuid>") || message.contains("<file-uuid>") || message.contains(ToolActivityRecord.openingTag) {
             return true
         }
         return false
@@ -155,6 +156,27 @@ struct MessageContentView: View {
             }
         )
     }
+    private func toolElementKey(for elementIndex: Int) -> String {
+        guard let messageID = message?.objectID else {
+            return "tool_\(elementIndex)"
+        }
+        return "\(messageID.uriRepresentation().absoluteString)_tool_\(elementIndex)"
+    }
+
+    private func toolExpansionBinding(for elementIndex: Int) -> Binding<Bool> {
+        let key = toolElementKey(for: elementIndex)
+        return Binding(
+            get: { expandedToolElements.contains(key) },
+            set: { isExpanded in
+                if isExpanded {
+                    expandedToolElements.insert(key)
+                } else {
+                    expandedToolElements.remove(key)
+                }
+            }
+        )
+    }
+
 
     @ViewBuilder
     private func renderElement(
@@ -172,6 +194,13 @@ struct MessageContentView: View {
                 isExpanded: reasoningExpansionBinding(for: elementIndex)
             )
                 .padding(.vertical, 4)
+
+        case .toolActivity(let activity):
+            ToolActivityView(
+                activity: activity,
+                isExpanded: toolExpansionBinding(for: elementIndex)
+            )
+            .padding(.vertical, 3)
 
         case .text(let text):
             renderText(text, elementIndex: elementIndex)
@@ -584,5 +613,118 @@ struct MessageContentView: View {
         }
 
         return result
+    }
+}
+
+private struct ToolActivityView: View {
+    let activity: ToolActivityRecord
+    @Binding var isExpanded: Bool
+    @State private var copied = false
+
+    private var accentColor: Color {
+        activity.isError ? .red : .green
+    }
+
+    private var title: String {
+        activity.isError ? "Failed \(activity.name)" : "Ran \(activity.name)"
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.18)) {
+                    isExpanded.toggle()
+                }
+            } label: {
+                HStack(spacing: 10) {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 7, style: .continuous)
+                            .fill(accentColor.opacity(0.14))
+                        Image(systemName: activity.isError ? "exclamationmark.triangle.fill" : "terminal.fill")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(accentColor)
+                    }
+                    .frame(width: 28, height: 28)
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(title)
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(.primary)
+                        Text(activity.input)
+                            .font(.system(size: 11, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+
+                    Spacer(minLength: 8)
+
+                    Text(activity.isError ? "Failed" : "Completed")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(accentColor)
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 3)
+                        .background(accentColor.opacity(0.12), in: Capsule())
+
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            if isExpanded {
+                Divider()
+                    .opacity(0.6)
+
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Text("OUTPUT")
+                            .font(.system(size: 9, weight: .bold))
+                            .tracking(0.8)
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Button {
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(activity.output, forType: .string)
+                            copied = true
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                                copied = false
+                            }
+                        } label: {
+                            Label(copied ? "Copied" : "Copy", systemImage: copied ? "checkmark" : "doc.on.doc")
+                                .font(.system(size: 10, weight: .medium))
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.secondary)
+                    }
+
+                    ScrollView(.vertical) {
+                        Text(activity.output)
+                            .font(.system(size: 11, design: .monospaced))
+                            .foregroundStyle(.primary.opacity(0.88))
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .frame(maxHeight: 220)
+                }
+                .padding(10)
+                .background(Color.black.opacity(0.08))
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+        }
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Color(NSColor.controlBackgroundColor).opacity(0.78))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(accentColor.opacity(0.24), lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
 }

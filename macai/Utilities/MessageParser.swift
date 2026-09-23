@@ -19,6 +19,7 @@ struct MessageParser {
         case formulaBlock
         case formulaLine
         case thinking
+        case toolActivity
         case imageUUID
         case fileUUID
     }
@@ -26,7 +27,10 @@ struct MessageParser {
     func detectBlockType(line: String) -> BlockType {
         let trimmedLine = line.trimmingCharacters(in: .whitespaces)
 
-        if trimmedLine.hasPrefix("<think>") {
+        if trimmedLine.hasPrefix(ToolActivityRecord.openingTag) {
+            return .toolActivity
+        }
+        else if trimmedLine.hasPrefix("<think>") {
             return .thinking
         }
         else if trimmedLine.hasPrefix("```") {
@@ -362,6 +366,16 @@ struct MessageParser {
             }
         }
 
+        func appendToolActivity(_ line: String) {
+            combineTextLinesIfNeeded()
+            appendTableIfNeeded()
+            guard let activity = ToolActivityRecord.decode(markerLine: line) else {
+                textLines.append(line)
+                return
+            }
+            elements.append(.toolActivity(activity))
+        }
+
         func finalizeParsing() {
             combineTextLinesIfNeeded()
             appendCodeBlockIfNeeded()
@@ -374,6 +388,9 @@ struct MessageParser {
             let blockType = detectBlockType(line: line)
 
             switch blockType {
+
+            case .toolActivity:
+                appendToolActivity(line)
 
             case .codeBlock:
                 leadingSpaces = line.count - line.trimmingCharacters(in: .whitespaces).count

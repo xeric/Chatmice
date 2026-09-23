@@ -420,6 +420,8 @@ class ChatViewModel: NSObject, ObservableObject, NSFetchedResultsControllerDeleg
             return (content, "formula")
         case .thinking(let content, _):
             return (content, "thinking")
+        case .toolActivity(let activity):
+            return (activity.input + " " + activity.output, "tool")
         case .image(_, _):
             return ("", "image") // Images don't have searchable text content
         case .file(let fileInfo):

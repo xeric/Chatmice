@@ -12,7 +12,7 @@ struct TabSkillsView: View {
     @AppStorage("chatmiceToolsEnabled") private var toolsEnabled = true
     @AppStorage("chatmiceBashEnabled") private var bashEnabled = true
     @AppStorage("chatmiceSkillsEnabled") private var skillsEnabled = true
-    @AppStorage("chatmiceBashAutoConfirm") private var bashAutoConfirm = false
+    @AppStorage("chatmiceBashApprovalMode") private var bashApprovalMode = BashApprovalMode.alwaysAsk
     @State private var detectedSkills: [SkillInfo] = []
 
     var body: some View {
@@ -28,9 +28,23 @@ struct TabSkillsView: View {
                         Toggle("Enable Local Bash Execution", isOn: $bashEnabled)
                             .toggleStyle(.switch)
 
-                        Toggle("Auto-approve Bash Commands (Skip Confirmation)", isOn: $bashAutoConfirm)
-                            .toggleStyle(.switch)
-                            .disabled(!bashEnabled)
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Bash Approval")
+                                .font(.subheadline.weight(.medium))
+
+                            Picker("Bash Approval", selection: $bashApprovalMode) {
+                                ForEach(BashApprovalMode.allCases) { mode in
+                                    Text(mode.title).tag(mode)
+                                }
+                            }
+                            .labelsHidden()
+                            .pickerStyle(.segmented)
+
+                            Text(bashApprovalMode.description)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        .disabled(!bashEnabled)
 
                         Toggle("Enable Skills Discovery (SKILL.md)", isOn: $skillsEnabled)
                             .toggleStyle(.switch)

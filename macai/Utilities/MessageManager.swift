@@ -369,7 +369,7 @@ class MessageManager: ObservableObject {
         for message in sortedMessages {
             var payload: [String: String] = [
                 "role": message.own ? "user" : "assistant",
-                "content": message.body,
+                "content": ToolActivityRecord.replacingMarkersForModel(in: message.body),
             ]
 
             if let envelope = message.messageParts,

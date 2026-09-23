@@ -8,6 +8,14 @@
 
 import AppKit
 import Foundation
+private actor BashApprovalSession {
+    static let shared = BashApprovalSession()
+    private var approved = false
+
+    func isApproved() -> Bool { approved }
+    func approve() { approved = true }
+}
+
 
 class ChatmiceEngine: APIService {
     let name: String
@@ -20,7 +28,8 @@ class ChatmiceEngine: APIService {
     static let bashEnabledKey = "chatmiceBashEnabled"
     static let skillsEnabledKey = "chatmiceSkillsEnabled"
     static let computerEnabledKey = "chatmiceComputerEnabled"
-    static let bashAutoConfirmKey = "chatmiceBashAutoConfirm"
+    static let bashApprovalModeKey = "chatmiceBashApprovalMode"
+    static let legacyBashAutoConfirmKey = "chatmiceBashAutoConfirm"
 
     init(baseService: APIService, config: APIServiceConfiguration) {
         self.baseService = baseService
@@ -92,6 +101,16 @@ class ChatmiceEngine: APIService {
         activeTask = nil
         baseService.cancelCurrentRequest()
     }
+    @MainActor
+    private static func requestBashApproval(prompt: String, allowTitle: String) -> Bool {
+        let alert = NSAlert()
+        alert.messageText = "Run Bash Command?"
+        alert.informativeText = prompt
+        alert.addButton(withTitle: allowTitle)
+        alert.addButton(withTitle: "Deny")
+        alert.alertStyle = .warning
+        return alert.runModal() == .alertFirstButtonReturn
+    }
 
     // MARK: - Agent Tool Loop Engine
     private func runToolLoop(
@@ -103,7 +122,10 @@ class ChatmiceEngine: APIService {
         let bashEnabled = UserDefaults.standard.object(forKey: Self.bashEnabledKey) as? Bool ?? true
         let skillsEnabled = UserDefaults.standard.object(forKey: Self.skillsEnabledKey) as? Bool ?? true
         let computerEnabled = UserDefaults.standard.object(forKey: Self.computerEnabledKey) as? Bool ?? false
-        let autoConfirm = UserDefaults.standard.bool(forKey: Self.bashAutoConfirmKey)
+        let defaults = UserDefaults.standard
+        let approvalMode = BashApprovalMode(rawValue: defaults.string(forKey: Self.bashApprovalModeKey) ?? "")
+            ?? (defaults.bool(forKey: Self.legacyBashAutoConfirmKey) ? .alwaysAllow : .alwaysAsk)
+        let approvalSession = BashApprovalSession.shared
 
         if bashEnabled {
             await box.register(BashTool())
@@ -119,20 +141,31 @@ class ChatmiceEngine: APIService {
             await box.register(tool)
         }
 
-        let defs = await box.definitions()
-        guard !defs.isEmpty else {
-            // No tools available, fallback to direct stream
+        let registeredDefs = await box.definitions()
+        guard !registeredDefs.isEmpty else {
             let stream = try await baseService.sendMessageStream(requestMessages, temperature: temperature)
             for try await chunk in stream {
                 continuation.yield(chunk)
             }
             return
         }
+        var usedWireNames = Set<String>()
+        var registeredNameByWireName: [String: String] = [:]
+        let defs = registeredDefs.map { definition in
+            let wireName = makeWireToolName(definition.name, used: &usedWireNames)
+            registeredNameByWireName[wireName] = definition.name
+            return ToolDefinition(
+                name: wireName,
+                description: definition.description,
+                parameters: definition.parameters
+            )
+        }
 
-        // Construct request with tool definitions
-        var conversationHistory = requestMessages
 
-        // Append Agent instructions
+        var conversationHistory = requestMessages.map {
+            AgentMessage.text(role: $0["role"] ?? "user", content: $0["content"] ?? "")
+        }
+
         var agentInstructions: [String] = []
         if bashEnabled {
             agentInstructions.append("You have access to a local bash execution tool named `bash`. You CAN and SHOULD use it to run terminal commands, inspect the file system, list directories, read files, and execute shell scripts on the user's macOS computer whenever requested by the user. Never say you cannot access the local system.")
@@ -146,30 +179,37 @@ class ChatmiceEngine: APIService {
 
         if !agentInstructions.isEmpty {
             let combined = agentInstructions.joined(separator: "\n\n")
-            if let idx = conversationHistory.firstIndex(where: { $0["role"] == "system" }) {
-                var sys = conversationHistory[idx]
-                sys["content"] = (sys["content"] ?? "") + "\n\n" + combined
-                conversationHistory[idx] = sys
+            if let idx = conversationHistory.firstIndex(where: { $0.isSystemText }) {
+                conversationHistory[idx].appendText("\n\n" + combined)
             } else {
-                conversationHistory.insert(["role": "system", "content": combined], at: 0)
+                conversationHistory.insert(.text(role: "system", content: combined), at: 0)
             }
         }
+
         let context = ToolContext(
             depth: 0,
             cwd: FileManager.default.temporaryDirectory,
             ask: { prompt in
-                if autoConfirm { return true }
-                return await withCheckedContinuation { cont in
-                    DispatchQueue.main.async {
-                        let alert = NSAlert()
-                        alert.messageText = "Chatmice Tool Execution Confirmation"
-                        alert.informativeText = prompt
-                        alert.addButton(withTitle: "Allow")
-                        alert.addButton(withTitle: "Deny")
-                        alert.alertStyle = .warning
-                        let res = alert.runModal()
-                        cont.resume(returning: res == .alertFirstButtonReturn)
+                switch approvalMode {
+                case .alwaysAllow:
+                    return true
+                case .currentSession:
+                    if await approvalSession.isApproved() {
+                        return true
                     }
+                    let approved = await Self.requestBashApproval(
+                        prompt: prompt,
+                        allowTitle: "Allow for This Session"
+                    )
+                    if approved {
+                        await approvalSession.approve()
+                    }
+                    return approved
+                case .alwaysAsk:
+                    return await Self.requestBashApproval(
+                        prompt: prompt,
+                        allowTitle: "Allow Once"
+                    )
                 }
             }
         )
@@ -181,47 +221,112 @@ class ChatmiceEngine: APIService {
             rounds += 1
             if Task.isCancelled { break }
 
-            // Execute turn
-            let rawResult = try await self.executeTurn(
+            let rawResult = try await executeTurn(
                 messages: conversationHistory,
                 tools: defs,
                 temperature: temperature
             )
 
             if rawResult.toolCalls.isEmpty {
-                // No tool calls, model gave final answer
                 if !rawResult.text.isEmpty {
                     continuation.yield(rawResult.text)
                 }
                 break
             }
 
-            // Execute tool calls
-            var assistantMsg: [String: String] = ["role": "assistant", "content": rawResult.text]
-            conversationHistory.append(assistantMsg)
+            conversationHistory.append(.assistant(text: rawResult.text, toolCalls: rawResult.toolCalls))
+            var results: [ToolExecutionResult] = []
 
             for call in rawResult.toolCalls {
                 if Task.isCancelled { break }
-                continuation.yield("\n\n> ⚙️ *Running `\(call.name)`...*\n")
+                let registeredName = registeredNameByWireName[call.name] ?? call.name
 
-                var outputText = ""
+                let result: ToolExecutionResult
                 do {
-                    outputText = try await box.execute(name: call.name, arguments: call.arguments, context: context)
-                    let preview = outputText.trimmingCharacters(in: .whitespacesAndNewlines).prefix(180)
-                    continuation.yield("> 💡 *Result: `\(preview)\(outputText.count > 180 ? "..." : "")`*\n\n")
+                    let output = try await box.execute(name: registeredName, arguments: call.arguments, context: context)
+                    result = ToolExecutionResult(call: call, output: output, isError: false)
                 } catch {
-                    outputText = "Error: \(error.localizedDescription)"
-                    continuation.yield("> ⚠️ *Error: \(error.localizedDescription)*\n\n")
+                    result = ToolExecutionResult(
+                        call: call,
+                        output: "Error: \(error.localizedDescription)",
+                        isError: true
+                    )
                 }
 
-                // Append tool result into conversation history for next round
-                let toolMsg: [String: String] = [
-                    "role": "user",
-                    "content": "[Tool Result of \(call.name)]:\n\(outputText)"
-                ]
-                conversationHistory.append(toolMsg)
+                results.append(result)
+                let input = call.argumentsJSON?["command"] as? String ?? call.arguments
+                let activity = ToolActivityRecord(
+                    name: registeredName,
+                    input: input,
+                    output: result.output,
+                    isError: result.isError
+                )
+                continuation.yield("\n\(activity.marker)\n")
+            }
+
+            if !results.isEmpty {
+                conversationHistory.append(.toolResults(results))
             }
         }
+    }
+
+    private struct ToolExecutionResult {
+        let call: ToolCall
+        let output: String
+        let isError: Bool
+    }
+
+    private enum AgentMessage {
+        case text(role: String, content: String)
+        case assistant(text: String, toolCalls: [ToolCall])
+        case toolResults([ToolExecutionResult])
+
+        var isSystemText: Bool {
+            if case .text(let role, _) = self {
+                return role == "system"
+            }
+            return false
+        }
+
+        mutating func appendText(_ suffix: String) {
+            guard case .text(let role, let content) = self else { return }
+            self = .text(role: role, content: content + suffix)
+        }
+    }
+    private func makeWireToolName(_ original: String, used: inout Set<String>) -> String {
+        let allowed = CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-")
+        let validInitial = CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz_")
+        var normalized = String(original.unicodeScalars.map { scalar in
+            allowed.contains(scalar) ? Character(String(scalar)) : "_"
+        })
+
+        if normalized.isEmpty {
+            normalized = "_tool"
+        } else if let first = normalized.unicodeScalars.first, !validInitial.contains(first) {
+            normalized = "_" + normalized
+        }
+
+        var hash: UInt32 = 2_166_136_261
+        for byte in original.utf8 {
+            hash = (hash ^ UInt32(byte)) &* 16_777_619
+        }
+
+        let needsSuffix = normalized != original || normalized.count > 64 || used.contains(normalized)
+        var candidate = normalized
+        if needsSuffix {
+            let suffix = String(format: "_%08x", hash)
+            candidate = String(normalized.prefix(64 - suffix.count)) + suffix
+        }
+
+        var collisionIndex = 2
+        while used.contains(candidate) {
+            let suffix = "_\(collisionIndex)"
+            candidate = String(normalized.prefix(64 - suffix.count)) + suffix
+            collisionIndex += 1
+        }
+
+        used.insert(candidate)
+        return candidate
     }
 
     private struct TurnResult {
@@ -246,7 +351,7 @@ class ChatmiceEngine: APIService {
     }
 
     private func executeTurn(
-        messages: [[String: String]],
+        messages: [AgentMessage],
         tools: [ToolDefinition],
         temperature: Float
     ) async throws -> TurnResult {
@@ -262,7 +367,7 @@ class ChatmiceEngine: APIService {
 
     // MARK: - OpenAI / ChatGPT Execution
     private func executeTurnOpenAI(
-        messages: [[String: String]],
+        messages: [AgentMessage],
         tools: [ToolDefinition],
         temperature: Float
     ) async throws -> TurnResult {
@@ -288,9 +393,36 @@ class ChatmiceEngine: APIService {
             ]
         }
 
+        let wireMessages = messages.flatMap { message -> [[String: Any]] in
+            switch message {
+            case .text(let role, let content):
+                return [["role": role, "content": content]]
+            case .assistant(let text, let calls):
+                return [[
+                    "role": "assistant",
+                    "content": text.isEmpty ? NSNull() : text,
+                    "tool_calls": calls.map { call in
+                        [
+                            "id": call.id,
+                            "type": "function",
+                            "function": ["name": call.name, "arguments": call.arguments]
+                        ] as [String: Any]
+                    }
+                ]]
+            case .toolResults(let results):
+                return results.map { result in
+                    [
+                        "role": "tool",
+                        "tool_call_id": result.call.id,
+                        "content": result.output
+                    ]
+                }
+            }
+        }
+
         let body: [String: Any] = [
             "model": config.model,
-            "messages": messages,
+            "messages": wireMessages,
             "tools": toolsPayload,
             "temperature": temperature
         ]
@@ -328,7 +460,7 @@ class ChatmiceEngine: APIService {
 
     // MARK: - Gemini Execution
     private func executeTurnGemini(
-        messages: [[String: String]],
+        messages: [AgentMessage],
         tools: [ToolDefinition],
         temperature: Float
     ) async throws -> TurnResult {
@@ -350,14 +482,50 @@ class ChatmiceEngine: APIService {
             req.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
         }
 
-        let systemText = messages.filter { $0["role"] == "system" }.compactMap { $0["content"] }.joined(separator: "\n\n")
-        let nonSystemMsgs = messages.filter { $0["role"] != "system" }
-        let contents = nonSystemMsgs.map { m -> [String: Any] in
-            let role = m["role"] == "user" ? "user" : "model"
-            return [
-                "role": role,
-                "parts": [["text": m["content"] ?? ""]]
-            ]
+        let systemText = messages.compactMap { message -> String? in
+            guard case .text(let role, let content) = message, role == "system" else { return nil }
+            return content
+        }.joined(separator: "\n\n")
+        let contents = messages.compactMap { message -> [String: Any]? in
+            switch message {
+            case .text(let role, let content):
+                guard role != "system", !content.isEmpty else { return nil }
+                return [
+                    "role": role == "assistant" ? "model" : "user",
+                    "parts": [["text": content]]
+                ]
+            case .assistant(let text, let calls):
+                var parts: [[String: Any]] = []
+                if !text.isEmpty {
+                    parts.append(["text": text])
+                }
+                parts.append(contentsOf: calls.map { call -> [String: Any] in
+                    var part: [String: Any] = [
+                        "functionCall": [
+                            "name": call.name,
+                            "args": call.argumentsJSON ?? [:]
+                        ]
+                    ]
+                    if let signature = call.thoughtSignature {
+                        part["thoughtSignature"] = signature
+                    }
+                    return part
+                })
+                return parts.isEmpty ? nil : ["role": "model", "parts": parts]
+            case .toolResults(let results):
+                let parts = results.map { result -> [String: Any] in
+                    let response: [String: Any] = result.isError
+                        ? ["error": result.output]
+                        : ["result": result.output]
+                    return [
+                        "functionResponse": [
+                            "name": result.call.name,
+                            "response": response
+                        ]
+                    ]
+                }
+                return parts.isEmpty ? nil : ["role": "user", "parts": parts]
+            }
         }
 
         let geminiTools: [[String: Any]] = [
@@ -381,6 +549,7 @@ class ChatmiceEngine: APIService {
         ]
         if !systemText.isEmpty {
             body["systemInstruction"] = [
+                "role": "user",
                 "parts": [["text": systemText]]
             ]
         }
@@ -413,7 +582,12 @@ class ChatmiceEngine: APIService {
                     let argsObj = fnCall["args"] as? [String: Any] ?? [:]
                     let argsData = (try? JSONSerialization.data(withJSONObject: argsObj)) ?? Data()
                     let argsStr = String(data: argsData, encoding: .utf8) ?? "{}"
-                    calls.append(ToolCall(id: UUID().uuidString, name: fName, arguments: argsStr))
+                    calls.append(ToolCall(
+                        id: UUID().uuidString,
+                        name: fName,
+                        arguments: argsStr,
+                        thoughtSignature: part["thoughtSignature"] as? String
+                    ))
                 }
             }
         }
@@ -423,7 +597,7 @@ class ChatmiceEngine: APIService {
 
     // MARK: - Claude Execution
     private func executeTurnClaude(
-        messages: [[String: String]],
+        messages: [AgentMessage],
         tools: [ToolDefinition],
         temperature: Float
     ) async throws -> TurnResult {
@@ -441,14 +615,43 @@ class ChatmiceEngine: APIService {
             req.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
         }
 
-        let systemText = messages.filter { $0["role"] == "system" }.compactMap { $0["content"] }.joined(separator: "\n\n")
-        let nonSystemMsgs = messages.filter { $0["role"] != "system" }
-        let claudeMsgs = nonSystemMsgs.map { m -> [String: Any] in
-            let role = m["role"] == "user" ? "user" : "assistant"
-            return [
-                "role": role,
-                "content": m["content"] ?? ""
-            ]
+        let systemText = messages.compactMap { message -> String? in
+            guard case .text(let role, let content) = message, role == "system" else { return nil }
+            return content
+        }.joined(separator: "\n\n")
+        let claudeMsgs = messages.compactMap { message -> [String: Any]? in
+            switch message {
+            case .text(let role, let content):
+                guard role != "system", !content.isEmpty else { return nil }
+                return [
+                    "role": role == "assistant" ? "assistant" : "user",
+                    "content": content
+                ]
+            case .assistant(let text, let calls):
+                var blocks: [[String: Any]] = []
+                if !text.isEmpty {
+                    blocks.append(["type": "text", "text": text])
+                }
+                blocks.append(contentsOf: calls.map { call in
+                    [
+                        "type": "tool_use",
+                        "id": call.id,
+                        "name": call.name,
+                        "input": call.argumentsJSON ?? [:]
+                    ]
+                })
+                return blocks.isEmpty ? nil : ["role": "assistant", "content": blocks]
+            case .toolResults(let results):
+                let blocks = results.map { result in
+                    [
+                        "type": "tool_result",
+                        "tool_use_id": result.call.id,
+                        "content": result.output,
+                        "is_error": result.isError
+                    ] as [String: Any]
+                }
+                return blocks.isEmpty ? nil : ["role": "user", "content": blocks]
+            }
         }
 
         let claudeTools = tools.map { t -> [String: Any] in

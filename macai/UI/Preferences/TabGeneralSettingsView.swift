@@ -33,6 +33,7 @@ struct TabGeneralSettingsView: View {
     @AppStorage(SettingsIndicatorKeys.generalSeen) private var generalSettingsSeen: Bool = false
     @AppStorage("chatmiceToolsEnabled") private var chatmiceToolsEnabled: Bool = true
     @AppStorage("chatmiceBashEnabled") private var chatmiceBashEnabled: Bool = true
+    @AppStorage("chatmiceBashApprovalMode") private var bashApprovalMode = BashApprovalMode.alwaysAsk
     @AppStorage("chatmiceSkillsEnabled") private var chatmiceSkillsEnabled: Bool = true
     @Environment(\.colorScheme) private var systemColorScheme
     @StateObject private var cloudSyncManager = CloudSyncManager.shared
@@ -236,6 +237,23 @@ struct TabGeneralSettingsView: View {
                                     .toggleStyle(.switch)
                                     .labelsHidden()
                             }
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text("Bash Approval")
+                                    .font(.callout.weight(.medium))
+
+                                Picker("Bash Approval", selection: $bashApprovalMode) {
+                                    ForEach(BashApprovalMode.allCases) { mode in
+                                        Text(mode.title).tag(mode)
+                                    }
+                                }
+                                .labelsHidden()
+                                .pickerStyle(.segmented)
+
+                                Text(bashApprovalMode.description)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            .disabled(!chatmiceBashEnabled)
 
                             HStack {
                                 Text("Skills Discovery (SKILL.md)")
