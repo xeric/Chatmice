@@ -25,7 +25,7 @@ struct TabGeneralSettingsView: View {
     }
     """
     @AppStorage("autoCheckForUpdates") var autoCheckForUpdates = true
-    @AppStorage("chatFontSize") var chatFontSize: Double = 14.0
+    @AppStorage("chatFontSize") var chatFontSize: Double = 15.0
     @AppStorage("preferredColorScheme") private var preferredColorSchemeRaw: Int = 0
     @AppStorage("codeFont") private var codeFont: String = AppConstants.firaCode
     @AppStorage("showAssistantNameInSidebar") private var showAssistantNameInSidebar: Bool = true

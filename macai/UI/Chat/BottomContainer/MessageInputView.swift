@@ -45,7 +45,7 @@ struct MessageInputView: View {
     private let lineWidthOnFocus = 3.0
     private let lineColorOnBlur = Color.gray.opacity(0.5)
     private let lineColorOnFocus = Color.blue.opacity(0.8)
-    @AppStorage("chatFontSize") private var chatFontSize: Double = 14.0
+    @AppStorage("chatFontSize") private var chatFontSize: Double = 15.0
 
     private var effectiveFontSize: Double {
         chatFontSize

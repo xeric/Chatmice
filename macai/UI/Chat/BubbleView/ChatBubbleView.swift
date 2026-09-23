@@ -64,7 +64,7 @@ struct ChatBubbleView: View, Equatable {
     @State private var isHovered = false
     @State private var showingDeleteConfirmation = false
     @State private var isCopied = false
-    @AppStorage("chatFontSize") private var chatFontSize: Double = 14.0
+    @AppStorage("chatFontSize") private var chatFontSize: Double = 15.0
 
     private var effectiveFontSize: Double {
         chatFontSize
@@ -95,6 +95,7 @@ struct ChatBubbleView: View, Equatable {
                     }
 
                     bubbleContent(prefetchedElements: prefetchedElements)
+                        .frame(maxWidth: content.own ? nil : 760, alignment: content.own ? .trailing : .leading)
                 }
 
                 if !content.own {

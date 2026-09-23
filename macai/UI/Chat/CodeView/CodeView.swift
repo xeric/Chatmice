@@ -22,7 +22,7 @@ struct CodeView: View {
     @EnvironmentObject private var previewStateManager: PreviewStateManager
     @State private var highlightedCode: NSAttributedString?
     @State private var isRendered = false
-    @AppStorage("chatFontSize") private var chatFontSize: Double = 14.0
+    @AppStorage("chatFontSize") private var chatFontSize: Double = 15.0
     @AppStorage("codeFont") private var codeFont: String = AppConstants.firaCode
     
     let elementIndex: Int

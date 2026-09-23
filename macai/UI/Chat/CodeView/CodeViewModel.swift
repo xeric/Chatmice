@@ -10,7 +10,7 @@ import SwiftUI
 class CodeViewModel: ObservableObject {
     @Published var highlightedCode: NSAttributedString?
     @Published var isCopied = false
-    @AppStorage("chatFontSize") private var chatFontSize: Double = 14.0
+    @AppStorage("chatFontSize") private var chatFontSize: Double = 15.0
     
     public var code: String
     private let language: String

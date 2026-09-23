@@ -32,7 +32,7 @@ struct MessageContentView: View {
     private let largeMessageSymbolsThreshold = AppConstants.largeMessageSymbolsThreshold
 
     var body: some View {
-        VStack(alignment: .leading) {
+        VStack(alignment: .leading, spacing: 10) {
             // Check if message contains image data or JSON with image_url before applying truncation
             if content.count > largeMessageSymbolsThreshold && !showFullMessage && !containsImageData(content) {
                 renderPartialContent()
@@ -268,6 +268,13 @@ struct MessageContentView: View {
                 range: fullRange
             )
 
+            let paragraphStyle = NSMutableParagraphStyle()
+            paragraphStyle.lineHeightMultiple = own ? 1.14 : 1.22
+            paragraphStyle.lineSpacing = own ? 0.5 : 1
+            paragraphStyle.paragraphSpacing = own ? 3 : 5
+            paragraphStyle.lineBreakMode = .byWordWrapping
+            mutableAttributedString.addAttribute(.paragraphStyle, value: paragraphStyle, range: fullRange)
+
             // Handle headers
             guard let headerRegex = try? NSRegularExpression(pattern: "^(#{1,6})\\s+(.*)", options: .anchorsMatchLines) else { return mutableAttributedString }
             let headerMatches = headerRegex.matches(in: mutableAttributedString.string, options: [], range: NSRange(location: 0, length: mutableAttributedString.string.utf16.count))
@@ -282,6 +289,12 @@ struct MessageContentView: View {
                 let font = NSFont.boldSystemFont(ofSize: fontSize)
 
                 mutableAttributedString.addAttribute(.font, value: font, range: contentTextRange)
+                let headingStyle = paragraphStyle.mutableCopy() as? NSMutableParagraphStyle
+                headingStyle?.paragraphSpacingBefore = level <= 2 ? 8 : 5
+                headingStyle?.paragraphSpacing = 6
+                if let headingStyle {
+                    mutableAttributedString.addAttribute(.paragraphStyle, value: headingStyle, range: fullMatchRange)
+                }
                 
                 let prefixToDeleteRange = NSRange(location: fullMatchRange.location, length: contentTextRange.location - fullMatchRange.location)
                 mutableAttributedString.deleteCharacters(in: prefixToDeleteRange)
@@ -305,6 +318,30 @@ struct MessageContentView: View {
                 
                 let prefixToDeleteRange = NSRange(location: fullMatchRange.location, length: contentTextRange.location - fullMatchRange.location)
                 mutableAttributedString.deleteCharacters(in: prefixToDeleteRange)
+            }
+
+            // Keep wrapped list lines aligned with their content instead of the marker.
+            if let listRegex = try? NSRegularExpression(
+                pattern: "^\\s*(?:[-*+] |\\d+[.)] )",
+                options: .anchorsMatchLines
+            ) {
+                let listMatches = listRegex.matches(
+                    in: mutableAttributedString.string,
+                    range: NSRange(location: 0, length: mutableAttributedString.length)
+                )
+                let source = mutableAttributedString.string as NSString
+                for match in listMatches {
+                    let listStyle = paragraphStyle.mutableCopy() as? NSMutableParagraphStyle
+                    listStyle?.firstLineHeadIndent = 0
+                    listStyle?.headIndent = CGFloat(effectiveFontSize * 1.8)
+                    if let listStyle {
+                        mutableAttributedString.addAttribute(
+                            .paragraphStyle,
+                            value: listStyle,
+                            range: source.paragraphRange(for: match.range)
+                        )
+                    }
+                }
             }
 
             // Apply search highlighting if searchText is not empty
