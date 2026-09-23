@@ -2,7 +2,9 @@
 //  TabAPIServicesView.swift
 //  Chatmice / macai
 //
-//  Native macOS System Settings detail view for AI Providers.
+//  Native macOS 3-column settings view for AI Providers (matching Xcode Accounts pattern).
+//  - Middle Column: List of configured providers with search, brand icons, and +/- toolbar
+//  - Right Column: Detailed provider settings (URL, Wire API, Key, Models table)
 //
 
 import AppKit
@@ -19,6 +21,7 @@ struct TabAPIServicesView: View {
     private var apiServices: FetchedResults<APIServiceEntity>
 
     @State private var selectedServiceID: NSManagedObjectID?
+    @State private var searchText = ""
     @State private var isShowingAPIKey = false
 
     // Form fields for currently selected provider
@@ -37,36 +40,35 @@ struct TabAPIServicesView: View {
     @State private var selectedModelIDsForImport: Set<String> = []
     @State private var modelSearchQuery = ""
 
+    private var filteredServices: [APIServiceEntity] {
+        if searchText.trimmingCharacters(in: .whitespaces).isEmpty {
+            return Array(apiServices)
+        } else {
+            return apiServices.filter {
+                ($0.name ?? "").localizedCaseInsensitiveContains(searchText) ||
+                ($0.type ?? "").localizedCaseInsensitiveContains(searchText)
+            }
+        }
+    }
+
     private var selectedService: APIServiceEntity? {
         guard let id = selectedServiceID else { return nil }
         return apiServices.first(where: { $0.objectID == id })
     }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                // Header
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("AI Providers")
-                        .font(.title2.bold())
-                        .foregroundStyle(Color.primary)
+        HStack(spacing: 0) {
+            // Column 2: Provider List (width: 230)
+            providersListColumn
+                .frame(width: 230)
+                .background(Color(NSColor.controlBackgroundColor))
 
-                    Text("Configure OpenAI, Anthropic, Gemini, Ollama, DeepSeek, and custom API endpoints.")
-                        .font(.subheadline)
-                        .foregroundStyle(Color.secondary)
-                }
-                .padding(.bottom, 4)
+            Divider()
 
-                // Section 1: Configured Providers List Card
-                providersListSection
-
-                // Section 2: Selected Provider Details (Settings + Models)
-                if selectedService != nil {
-                    providerSettingsSection
-                    modelsSection
-                }
-            }
-            .padding(24)
+            // Column 3: Provider Detail Editor
+            providerDetailColumn
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(Color(NSColor.windowBackgroundColor))
         }
         .onAppear {
             sanitizeDefaults()
@@ -81,35 +83,50 @@ struct TabAPIServicesView: View {
         }
     }
 
-    // MARK: - Section 1: Configured Providers Card
+    // MARK: - Column 2: Provider List
 
-    private var providersListSection: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("Configured Providers")
-                .font(.headline)
-                .foregroundStyle(Color.primary)
+    private var providersListColumn: some View {
+        VStack(spacing: 0) {
+            // Search field at top
+            HStack(spacing: 6) {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 11))
+                    .foregroundStyle(Color.secondary)
 
-            Text("Select a provider to edit its credentials and model list below.")
-                .font(.caption)
-                .foregroundStyle(Color.secondary)
+                TextField("Search providers", text: $searchText)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 12))
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .background(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(Color(NSColor.textBackgroundColor))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .strokeBorder(Color(NSColor.separatorColor), lineWidth: 0.8)
+                    )
+            )
+            .padding(10)
 
-            VStack(spacing: 0) {
-                ForEach(apiServices, id: \.objectID) { service in
-                    providerRow(service)
-                    if service.objectID != apiServices.last?.objectID {
-                        Divider().padding(.leading, 40)
+            Divider()
+
+            // Scrollable list of providers
+            ScrollView {
+                LazyVStack(spacing: 2) {
+                    ForEach(filteredServices, id: \.objectID) { service in
+                        providerListRow(service)
                     }
                 }
+                .padding(.vertical, 6)
+                .padding(.horizontal, 6)
             }
-            .background(Color(NSColor.controlBackgroundColor))
-            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .strokeBorder(Color(NSColor.separatorColor).opacity(0.6), lineWidth: 0.8)
-            )
+            .frame(maxHeight: .infinity)
 
-            // Toolbar under list: Add / Delete
-            HStack(spacing: 12) {
+            Divider()
+
+            // Bottom Toolbar: + / -
+            HStack(spacing: 8) {
                 Menu {
                     Button("CPA OpenAI") { addNewService(name: "CPA OpenAI", type: "chatgpt", url: "http://127.0.0.1:8899/v1", model: "gpt-5.6-terra") }
                     Button("CPA Anthropic") { addNewService(name: "CPA Anthropic", type: "claude", url: "http://127.0.0.1:8899/v1", model: "anthropic--claude-4.8-opus") }
@@ -126,255 +143,268 @@ struct TabAPIServicesView: View {
                     Divider()
                     Button("Custom Provider...") { addNewService(name: "New Provider", type: "chatgpt", url: "http://127.0.0.1:8899/v1", model: "custom-model") }
                 } label: {
-                    Label("Add Provider", systemImage: "plus")
+                    Image(systemName: "plus")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(Color.primary)
                 }
                 .menuStyle(.borderlessButton)
+                .frame(width: 22)
+
+                Button(action: deleteSelectedService) {
+                    Image(systemName: "minus")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(selectedService == nil ? Color.secondary.opacity(0.4) : Color.primary)
+                }
+                .buttonStyle(.plain)
+                .disabled(selectedService == nil)
 
                 Spacer()
-
-                if let selected = selectedService {
-                    Button(role: .destructive, action: deleteSelectedService) {
-                        Label("Delete '\(selected.name ?? "")'", systemImage: "trash")
-                            .foregroundStyle(Color.red)
-                    }
-                    .buttonStyle(.borderless)
-                }
             }
-            .padding(.horizontal, 4)
-            .padding(.top, 2)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
         }
     }
 
-    private func providerRow(_ service: APIServiceEntity) -> some View {
+    private func providerListRow(_ service: APIServiceEntity) -> some View {
         let isSelected = selectedServiceID == service.objectID
         return Button(action: { selectService(service) }) {
-            HStack(spacing: 12) {
+            HStack(spacing: 10) {
                 providerBrandIcon(name: service.name ?? "", type: service.type ?? "")
-                    .frame(width: 20, height: 20)
+                    .frame(width: 18, height: 18)
 
                 VStack(alignment: .leading, spacing: 2) {
-                    HStack(spacing: 6) {
-                        Text(service.name ?? "Provider")
-                            .font(.system(size: 13, weight: isSelected ? .semibold : .regular))
-                            .foregroundStyle(Color.primary)
+                    Text(service.name ?? "Provider")
+                        .font(.system(size: 13, weight: isSelected ? .semibold : .regular))
+                        .foregroundStyle(Color.primary)
+                        .lineLimit(1)
 
-                        if service.isDefault {
-                            Text("Default")
-                                .font(.system(size: 10, weight: .medium))
-                                .padding(.horizontal, 5)
-                                .padding(.vertical, 1)
-                                .background(Capsule().fill(Color.accentColor.opacity(0.15)))
-                                .foregroundStyle(Color.accentColor)
-                        }
-                    }
-
-                    Text("\(service.type ?? "chatgpt") • \(service.model ?? "No model")")
+                    Text(service.type ?? "chatgpt")
                         .font(.caption)
                         .foregroundStyle(Color.secondary)
+                        .lineLimit(1)
                 }
 
                 Spacer()
-
-                // No checkmark — selection is clearly communicated via the row highlight
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
-            .background(isSelected ? Color.accentColor.opacity(0.08) : Color.clear)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .background(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(isSelected ? Color.accentColor.opacity(0.18) : Color.clear)
+            )
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
     }
 
-    // MARK: - Section 2: Selected Provider Settings Card
+    // MARK: - Column 3: Provider Detail Editor
 
-    private var providerSettingsSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Provider Settings")
-                .font(.headline)
-                .foregroundStyle(Color.secondary)
-
-            VStack(alignment: .leading, spacing: 14) {
-                // Name
-                LabeledContent("Provider Name") {
-                    TextField("Name", text: $nameText)
-                        .textFieldStyle(.roundedBorder)
-                        .onChange(of: nameText) { _ in autoSave() }
-                }
-
-                Divider()
-
-                // API Base URL
-                LabeledContent {
-                    VStack(alignment: .leading, spacing: 3) {
-                        TextField("http://127.0.0.1:8899/v1", text: $urlText)
-                            .textFieldStyle(.roundedBorder)
-                            .onChange(of: urlText) { _ in autoSave() }
-
-                        Text("Do NOT include /chat/completions in the URL")
-                            .font(.caption2)
-                            .foregroundStyle(Color.secondary)
-                    }
-                } label: {
-                    Text("API Base URL")
-                }
-
-                Divider()
-
-                // Wire API
-                LabeledContent {
-                    VStack(alignment: .leading, spacing: 3) {
-                        Picker("", selection: $typeText) {
-                            Text("Chat Completions").tag("chatgpt")
-                            Text("Responses").tag("openai-responses")
-                            Text("Anthropic Messages").tag("claude")
-                            Text("Google Gemini").tag("gemini")
-                            Text("Ollama").tag("ollama")
-                            Text("OpenRouter").tag("openrouter")
-                            Text("DeepSeek").tag("deepseek")
-                        }
-                        .labelsHidden()
-                        .pickerStyle(.menu)
-                        .frame(maxWidth: 220, alignment: .leading)
-                        .onChange(of: typeText) { _ in autoSave() }
-
-                        Text("Select protocol format used by this endpoint")
-                            .font(.caption2)
-                            .foregroundStyle(Color.secondary)
-                    }
-                } label: {
-                    Text("Wire API")
-                }
-
-                Divider()
-
-                // API Key
-                LabeledContent("API Key") {
-                    HStack(spacing: 8) {
-                        if isShowingAPIKey {
-                            TextField("Enter API key", text: $apiKeyText)
-                                .textFieldStyle(.roundedBorder)
-                        } else {
-                            SecureField("••••••••••••••••••••••••••••••••", text: $apiKeyText)
-                                .textFieldStyle(.roundedBorder)
-                        }
-
-                        Button(action: { isShowingAPIKey.toggle() }) {
-                            Image(systemName: isShowingAPIKey ? "eye.slash" : "eye")
-                                .font(.system(size: 12))
-                                .foregroundStyle(Color.secondary)
-                        }
-                        .buttonStyle(.plain)
-                    }
-                    .onChange(of: apiKeyText) { _ in autoSave() }
-                }
-
-                Divider()
-
-                // Default for new chats toggle
-                if let service = selectedService {
+    @ViewBuilder
+    private var providerDetailColumn: some View {
+        if selectedService != nil {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    // Header
                     VStack(alignment: .leading, spacing: 4) {
-                        Toggle("Default for New Chats", isOn: Binding(
-                            get: { service.isDefault },
-                            set: { if $0 { setDefaultService(service) } }
-                        ))
-                        .toggleStyle(.switch)
+                        HStack(spacing: 10) {
+                            providerBrandIcon(name: nameText, type: typeText)
+                                .frame(width: 22, height: 22)
 
-                        Text("Used automatically when starting a new conversation if no specific assistant is chosen.")
-                            .font(.caption2)
+                            Text(nameText.isEmpty ? "Provider" : nameText)
+                                .font(.title2.bold())
+                                .foregroundStyle(Color.primary)
+                        }
+
+                        Text(providerSubtitle(name: nameText, type: typeText))
+                            .font(.subheadline)
                             .foregroundStyle(Color.secondary)
                     }
-                }
-            }
-            .padding(16)
-            .background(Color(NSColor.controlBackgroundColor))
-            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .strokeBorder(Color(NSColor.separatorColor).opacity(0.6), lineWidth: 0.8)
-            )
-        }
-    }
+                    .padding(.bottom, 2)
 
-    // MARK: - Section 3: Models Card
+                    // Connection Settings GroupBox
+                    GroupBox("Connection Settings") {
+                        VStack(alignment: .leading, spacing: 14) {
+                            LabeledContent("Provider Name") {
+                                TextField("Name", text: $nameText)
+                                    .textFieldStyle(.roundedBorder)
+                                    .onChange(of: nameText) { _ in autoSave() }
+                            }
 
-    private var modelsSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text("Models (\(modelsList.count))")
-                    .font(.headline)
-                    .foregroundStyle(Color.secondary)
+                            Divider()
 
-                Spacer()
+                            LabeledContent {
+                                VStack(alignment: .leading, spacing: 3) {
+                                    TextField("http://127.0.0.1:8899/v1", text: $urlText)
+                                        .textFieldStyle(.roundedBorder)
+                                        .onChange(of: urlText) { _ in autoSave() }
 
-                Button(action: addNewModelRow) {
-                    Label("New", systemImage: "plus")
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
+                                    Text("Do NOT include /chat/completions in the URL")
+                                        .font(.caption2)
+                                        .foregroundStyle(Color.secondary)
+                                }
+                            } label: {
+                                Text("API Base URL")
+                            }
 
-                Button(action: fetchModelsFromAPI) {
-                    HStack(spacing: 4) {
-                        if isFetchingModels {
-                            ProgressView().controlSize(.mini)
-                        } else {
-                            Image(systemName: "arrow.clockwise")
+                            Divider()
+
+                            LabeledContent {
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Picker("", selection: $typeText) {
+                                        Text("Chat Completions").tag("chatgpt")
+                                        Text("Responses").tag("openai-responses")
+                                        Text("Anthropic Messages").tag("claude")
+                                        Text("Google Gemini").tag("gemini")
+                                        Text("Ollama").tag("ollama")
+                                        Text("OpenRouter").tag("openrouter")
+                                        Text("DeepSeek").tag("deepseek")
+                                    }
+                                    .labelsHidden()
+                                    .pickerStyle(.menu)
+                                    .frame(maxWidth: 220, alignment: .leading)
+                                    .onChange(of: typeText) { _ in autoSave() }
+
+                                    Text("Select protocol format used by this endpoint")
+                                        .font(.caption2)
+                                        .foregroundStyle(Color.secondary)
+                                }
+                            } label: {
+                                Text("Wire API")
+                            }
+
+                            Divider()
+
+                            LabeledContent("API Key") {
+                                HStack(spacing: 8) {
+                                    if isShowingAPIKey {
+                                        TextField("Enter API key", text: $apiKeyText)
+                                            .textFieldStyle(.roundedBorder)
+                                    } else {
+                                        SecureField("••••••••••••••••••••••••••••••••", text: $apiKeyText)
+                                            .textFieldStyle(.roundedBorder)
+                                    }
+
+                                    Button(action: { isShowingAPIKey.toggle() }) {
+                                        Image(systemName: isShowingAPIKey ? "eye.slash" : "eye")
+                                            .font(.system(size: 12))
+                                            .foregroundStyle(Color.secondary)
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+                                .onChange(of: apiKeyText) { _ in autoSave() }
+                            }
+
+                            Divider()
+
+                            if let service = selectedService {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Toggle("Default for New Chats", isOn: Binding(
+                                        get: { service.isDefault },
+                                        set: { if $0 { setDefaultService(service) } }
+                                    ))
+                                    .toggleStyle(.switch)
+
+                                    Text("Used automatically when starting a new conversation if no specific assistant is chosen.")
+                                        .font(.caption2)
+                                        .foregroundStyle(Color.secondary)
+                                }
+                            }
                         }
-                        Text("Fetch Models")
-                    }
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-            }
-
-            if let err = fetchError {
-                Text(err)
-                    .font(.caption)
-                    .foregroundStyle(Color.red)
-            }
-
-            VStack(alignment: .leading, spacing: 10) {
-                // Table Columns Header
-                HStack {
-                    Text("Nickname")
-                        .font(.caption.weight(.medium))
-                        .foregroundStyle(Color.secondary)
-                        .frame(width: 140, alignment: .leading)
-
-                    Text("Model ID")
-                        .font(.caption.weight(.medium))
-                        .foregroundStyle(Color.secondary)
+                        .padding(10)
                         .frame(maxWidth: .infinity, alignment: .leading)
+                    }
 
-                    Spacer().frame(width: 50)
-                }
-                .padding(.horizontal, 8)
+                    // Models GroupBox
+                    GroupBox {
+                        VStack(alignment: .leading, spacing: 12) {
+                            HStack {
+                                Text("Configured Models (\(modelsList.count))")
+                                    .font(.headline)
 
-                if modelsList.isEmpty {
-                    Text("No models added. Click '+ New' or 'Fetch Models'.")
-                        .font(.subheadline)
-                        .foregroundStyle(Color.secondary)
-                        .padding(.vertical, 12)
-                        .frame(maxWidth: .infinity, alignment: .center)
-                } else {
-                    VStack(spacing: 6) {
-                        ForEach($modelsList) { $row in
-                            modelTableRow($row)
+                                Spacer()
+
+                                Button(action: addNewModelRow) {
+                                    Label("New", systemImage: "plus")
+                                }
+                                .buttonStyle(.bordered)
+                                .controlSize(.small)
+
+                                Button(action: fetchModelsFromAPI) {
+                                    HStack(spacing: 4) {
+                                        if isFetchingModels {
+                                            ProgressView().controlSize(.mini)
+                                        } else {
+                                            Image(systemName: "arrow.clockwise")
+                                        }
+                                        Text("Fetch Models")
+                                    }
+                                }
+                                .buttonStyle(.bordered)
+                                .controlSize(.small)
+                            }
+
+                            if let err = fetchError {
+                                Text(err)
+                                    .font(.caption)
+                                    .foregroundStyle(Color.red)
+                            }
+
+                            // Table of models
+                            VStack(spacing: 6) {
+                                HStack {
+                                    Text("Nickname")
+                                        .font(.caption.weight(.medium))
+                                        .foregroundStyle(Color.secondary)
+                                        .frame(width: 140, alignment: .leading)
+
+                                    Text("Model ID")
+                                        .font(.caption.weight(.medium))
+                                        .foregroundStyle(Color.secondary)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                                    Spacer().frame(width: 50)
+                                }
+                                .padding(.horizontal, 4)
+
+                                if modelsList.isEmpty {
+                                    Text("No models configured. Click '+ New' or 'Fetch Models'.")
+                                        .font(.subheadline)
+                                        .foregroundStyle(Color.secondary)
+                                        .padding(.vertical, 16)
+                                        .frame(maxWidth: .infinity, alignment: .center)
+                                } else {
+                                    ForEach($modelsList) { $row in
+                                        modelTableRow($row)
+                                    }
+                                }
+                            }
+
+                            Divider()
+
+                            quickAddChipsView
                         }
+                        .padding(10)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    } label: {
+                        Text("Models")
+                            .font(.headline)
                     }
                 }
-
-                Divider()
-
-                // Quick Add Presets
-                quickAddChipsView
+                .padding(24)
             }
-            .padding(16)
-            .background(Color(NSColor.controlBackgroundColor))
-            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .strokeBorder(Color(NSColor.separatorColor).opacity(0.6), lineWidth: 0.8)
-            )
+        } else {
+            VStack(spacing: 12) {
+                Image(systemName: "server.rack")
+                    .font(.system(size: 40))
+                    .foregroundStyle(Color.secondary.opacity(0.4))
+                Text("Select a Provider")
+                    .font(.title3.weight(.medium))
+                    .foregroundStyle(Color.secondary)
+                Text("Select an AI provider from the list on the left or click '+' to configure a new one.")
+                    .font(.caption)
+                    .foregroundStyle(Color.secondary.opacity(0.8))
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
 
@@ -434,7 +464,7 @@ struct TabAPIServicesView: View {
                         .font(.system(size: 11, design: .monospaced))
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
-                        .background(Capsule().fill(Color(NSColor.windowBackgroundColor)))
+                        .background(Capsule().fill(Color(NSColor.controlBackgroundColor)))
                         .foregroundStyle(Color.secondary)
                 }
                 .buttonStyle(.plain)
@@ -483,17 +513,16 @@ struct TabAPIServicesView: View {
         }
         try? viewContext.save()
     }
+
     private func sanitizeDefaults() {
         let defaults = apiServices.filter { $0.isDefault }
         if defaults.count > 1 {
-            // Keep only the first entity as default, unmark the rest
             for extra in defaults.dropFirst() {
                 extra.isDefault = false
             }
             try? viewContext.save()
         }
     }
-
 
     private func addNewService(name: String, type: String, url: String, model: String) {
         let manager = APIServiceManager(viewContext: viewContext)
@@ -550,7 +579,6 @@ struct TabAPIServicesView: View {
             }
             return
         }
-        // Fallback to default models for provider type
         let defaults = recommendedModels(for: typeText)
         self.modelsList = defaults.map { ServiceModelRow(nickname: "optional", modelID: $0) }
         if activeModelID.isEmpty, let first = modelsList.first {
@@ -833,6 +861,27 @@ struct TabAPIServicesView: View {
             return ["llama3.1", "qwen2.5:7b", "mistral"]
         default:
             return ["gpt-4o", "claude-3-5-sonnet-latest"]
+        }
+    }
+
+    private func providerSubtitle(name: String, type: String) -> String {
+        switch type {
+        case "chatgpt":
+            return "OpenAI-compatible Chat Completions endpoint"
+        case "openai-responses":
+            return "OpenAI-compatible Responses endpoint"
+        case "claude":
+            return "Anthropic Messages protocol endpoint"
+        case "gemini":
+            return "Google Gemini generative API endpoint"
+        case "ollama":
+            return "Local Ollama server API endpoint"
+        case "openrouter":
+            return "OpenRouter multi-model gateway"
+        case "deepseek":
+            return "DeepSeek direct API endpoint"
+        default:
+            return "AI service provider endpoint"
         }
     }
 
