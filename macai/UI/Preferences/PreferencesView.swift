@@ -60,18 +60,21 @@ struct PreferencesView: View {
     var body: some View {
         HStack(spacing: 0) {
             // Left Sidebar
-            List(selection: $selectedPage) {
-                ForEach(SettingsGroup.allCases, id: \.self) { group in
-                    Section(group.rawValue) {
-                        ForEach(group.pages) { page in
-                            Label(page.title, systemImage: page.symbol)
-                                .tag(page)
+            VStack(spacing: 0) {
+                List(selection: $selectedPage) {
+                    ForEach(SettingsGroup.allCases, id: \.self) { group in
+                        Section(group.rawValue) {
+                            ForEach(group.pages) { page in
+                                Label(page.title, systemImage: page.symbol)
+                                    .tag(page)
+                            }
                         }
                     }
                 }
+                .listStyle(.sidebar)
             }
-            .listStyle(.sidebar)
-            .frame(width: 190)
+            .frame(width: 200)
+            .padding(.top, 38)
             .background(Color(NSColor.controlBackgroundColor))
 
             Divider()
@@ -79,15 +82,19 @@ struct PreferencesView: View {
             // Detail View
             detailView
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .padding(.top, 24)
                 .background(Color(NSColor.windowBackgroundColor))
         }
-        .frame(minWidth: 760, idealWidth: 840, maxWidth: 1100, minHeight: 540, idealHeight: 620, maxHeight: 850)
+        .ignoresSafeArea(.container, edges: .top)
+        .background(SettingsWindowConfigurator { window in
+            window.titlebarAppearsTransparent = true
+            window.titleVisibility = .hidden
+            window.styleMask.insert(.fullSizeContentView)
+            window.isMovableByWindowBackground = true
+        })
+        .frame(minWidth: 780, idealWidth: 860, maxWidth: 1100, minHeight: 560, idealHeight: 640, maxHeight: 850)
         .onAppear {
             store.saveInCoreData()
-            if let window = NSApp.mainWindow {
-                window.title = "Settings"
-                window.standardWindowButton(.zoomButton)?.isEnabled = true
-            }
         }
     }
 
@@ -153,6 +160,30 @@ struct PreferencesView: View {
                     DangerZoneView(store: store)
                 }
                 .padding(20)
+            }
+        }
+    }
+}
+
+// MARK: - Window Accessor for Seamless Unified Titlebar
+
+private struct SettingsWindowConfigurator: NSViewRepresentable {
+    let configure: (NSWindow) -> Void
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        DispatchQueue.main.async {
+            if let window = view.window {
+                configure(window)
+            }
+        }
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        DispatchQueue.main.async {
+            if let window = nsView.window {
+                configure(window)
             }
         }
     }
