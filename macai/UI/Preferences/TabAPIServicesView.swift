@@ -2,7 +2,7 @@
 //  TabAPIServicesView.swift
 //  Chatmice / macai
 //
-//  Native macOS System Settings grouped Form for AI Providers (matching Apple HIG).
+//  Plan A: Clean native macOS Provider List + Dedicated Edit Sheet (matching Internet Accounts / Printers pattern).
 //
 
 import AppKit
@@ -18,16 +18,353 @@ struct TabAPIServicesView: View {
     )
     private var apiServices: FetchedResults<APIServiceEntity>
 
-    @State private var selectedServiceID: NSManagedObjectID?
-    @State private var isShowingAPIKey = false
+    @State private var editingService: APIServiceEntity?
+    @State private var isShowingAddSheet = false
+    @State private var initialAddPreset: ProviderPresetItem?
 
-    // Form fields for currently selected provider
+    var body: some View {
+        Form {
+            Section {
+                if apiServices.isEmpty {
+                    Text("No AI providers configured. Click '+ Add Provider' below to configure your first endpoint.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .padding(.vertical, 8)
+                } else {
+                    ForEach(apiServices, id: \.objectID) { service in
+                        providerRow(service)
+                    }
+                }
+
+                // Toolbar at bottom of card
+                HStack {
+                    Menu {
+                        Button("CPA OpenAI") {
+                            presentAddSheet(preset: ProviderPresetItem(
+                                name: "CPA OpenAI", type: "chatgpt", defaultURL: "http://127.0.0.1:8899/v1", defaultModel: "gpt-5.6-terra",
+                                subtitle: "OpenAI-compatible local endpoint",
+                                models: [
+                                    ServiceModelRow(nickname: "optional", modelID: "gpt-5.6-terra"),
+                                    ServiceModelRow(nickname: "optional", modelID: "gpt-5.6-luna"),
+                                    ServiceModelRow(nickname: "optional", modelID: "gpt-4o"),
+                                    ServiceModelRow(nickname: "optional", modelID: "gpt-4o-mini")
+                                ]
+                            ))
+                        }
+                        Button("CPA Anthropic") {
+                            presentAddSheet(preset: ProviderPresetItem(
+                                name: "CPA Anthropic", type: "claude", defaultURL: "http://127.0.0.1:8899/v1", defaultModel: "anthropic--claude-4.8-opus",
+                                subtitle: "Claude local endpoint",
+                                models: [ServiceModelRow(nickname: "optional", modelID: "anthropic--claude-4.8-opus")]
+                            ))
+                        }
+                        Divider()
+                        Button("OpenAI") {
+                            presentAddSheet(preset: ProviderPresetItem(
+                                name: "OpenAI", type: "openai-responses", defaultURL: "https://api.openai.com/v1", defaultModel: "gpt-4o",
+                                subtitle: "Official OpenAI API",
+                                models: [ServiceModelRow(nickname: "optional", modelID: "gpt-4o"), ServiceModelRow(nickname: "optional", modelID: "gpt-4o-mini")]
+                            ))
+                        }
+                        Button("Anthropic") {
+                            presentAddSheet(preset: ProviderPresetItem(
+                                name: "Anthropic", type: "claude", defaultURL: "https://api.anthropic.com/v1", defaultModel: "claude-3-5-sonnet-latest",
+                                subtitle: "Official Anthropic API",
+                                models: [ServiceModelRow(nickname: "optional", modelID: "claude-3-5-sonnet-latest")]
+                            ))
+                        }
+                        Button("Google AI") {
+                            presentAddSheet(preset: ProviderPresetItem(
+                                name: "Google AI", type: "gemini", defaultURL: "https://generativelanguage.googleapis.com/v1beta", defaultModel: "gemini-2.5-flash",
+                                subtitle: "Google Gemini API",
+                                models: [ServiceModelRow(nickname: "optional", modelID: "gemini-2.5-flash")]
+                            ))
+                        }
+                        Button("DeepSeek") {
+                            presentAddSheet(preset: ProviderPresetItem(
+                                name: "DeepSeek", type: "deepseek", defaultURL: "https://api.deepseek.com/v1", defaultModel: "deepseek-chat",
+                                subtitle: "DeepSeek Official API",
+                                models: [ServiceModelRow(nickname: "optional", modelID: "deepseek-chat")]
+                            ))
+                        }
+                        Button("Ollama") {
+                            presentAddSheet(preset: ProviderPresetItem(
+                                name: "Ollama", type: "ollama", defaultURL: "http://localhost:11434/api/chat", defaultModel: "llama3.1",
+                                subtitle: "Local Ollama server",
+                                models: [ServiceModelRow(nickname: "optional", modelID: "llama3.1")]
+                            ))
+                        }
+                        Divider()
+                        Button("Custom Provider...") {
+                            presentAddSheet(preset: nil)
+                        }
+                    } label: {
+                        Label("Add Provider...", systemImage: "plus")
+                    }
+                    .menuStyle(.borderlessButton)
+
+                    Spacer()
+                }
+                .padding(.vertical, 4)
+            } header: {
+                Text("AI Providers")
+            } footer: {
+                Text("Click any provider to view and edit its connection settings and models.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .formStyle(.grouped)
+        .onAppear {
+            sanitizeDefaults()
+            if apiServices.isEmpty {
+                populateRoster()
+            }
+        }
+        .sheet(item: $editingService) { (service: APIServiceEntity) in
+            ProviderEditorSheet(
+                service: service,
+                initialPreset: nil,
+                onSave: {
+                    try? viewContext.save()
+                    sanitizeDefaults()
+                },
+                onDelete: {
+                    deleteService(service)
+                }
+            )
+        }
+        .sheet(isPresented: $isShowingAddSheet) {
+            ProviderEditorSheet(
+                service: nil,
+                initialPreset: initialAddPreset,
+                onSave: {
+                    try? viewContext.save()
+                    sanitizeDefaults()
+                },
+                onDelete: {}
+            )
+        }
+    }
+
+    // MARK: - Row View
+
+    private func providerRow(_ service: APIServiceEntity) -> some View {
+        Button(action: {
+            editingService = service
+        }) {
+            HStack(spacing: 12) {
+                providerBrandIcon(name: service.name ?? "", type: service.type ?? "")
+                    .frame(width: 22, height: 22)
+
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 8) {
+                        Text(service.name ?? "Provider")
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(Color.primary)
+
+                        if service.isDefault {
+                            Text("Default")
+                                .font(.system(size: 10, weight: .medium))
+                                .padding(.horizontal, 5)
+                                .padding(.vertical, 1)
+                                .background(Capsule().fill(Color.accentColor.opacity(0.15)))
+                                .foregroundStyle(Color.accentColor)
+                        }
+                    }
+
+                    let urlString = service.url?.absoluteString ?? "No URL"
+                    let modelsCount = countModels(for: service)
+                    Text("\(service.type ?? "chatgpt") • \(urlString) • \(modelsCount) \(modelsCount == 1 ? "model" : "models")")
+                        .font(.caption)
+                        .foregroundStyle(Color.secondary)
+                        .lineLimit(1)
+                }
+
+                Spacer()
+
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(Color.secondary.opacity(0.5))
+            }
+            .padding(.vertical, 6)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .contextMenu {
+            Button("Edit...") {
+                editingService = service
+            }
+            Button("Duplicate") {
+                duplicateService(service)
+            }
+            Divider()
+            Button("Delete", role: .destructive) {
+                deleteService(service)
+            }
+        }
+    }
+
+    // MARK: - Helpers
+
+    private func countModels(for service: APIServiceEntity) -> Int {
+        guard let id = service.id else { return 0 }
+        let key = "service_models_\(id.uuidString)"
+        if let data = UserDefaults.standard.string(forKey: key)?.data(using: .utf8),
+           let list = try? JSONDecoder().decode([ServiceModelRow].self, from: data) {
+            return list.count
+        }
+        return 0
+    }
+
+    private func presentAddSheet(preset: ProviderPresetItem?) {
+        initialAddPreset = preset
+        isShowingAddSheet = true
+    }
+
+    private func duplicateService(_ service: APIServiceEntity) {
+        let manager = APIServiceManager(viewContext: viewContext)
+        let newService = manager.createAPIService(
+            name: (service.name ?? "Provider") + " Copy",
+            type: service.type ?? "chatgpt",
+            url: service.url ?? URL(fileURLWithPath: ""),
+            model: service.model ?? "",
+            contextSize: service.contextSize,
+            useStreamResponse: service.useStreamResponse,
+            generateChatNames: service.generateChatNames
+        )
+        newService.isDefault = false
+
+        if let oldID = service.id, let newID = newService.id {
+            if let token = try? TokenManager.getToken(for: oldID.uuidString) {
+                try? TokenManager.setToken(token, for: newID.uuidString)
+            }
+            let key = "service_models_\(oldID.uuidString)"
+            if let data = UserDefaults.standard.string(forKey: key) {
+                UserDefaults.standard.set(data, forKey: "service_models_\(newID.uuidString)")
+            }
+        }
+        try? viewContext.save()
+    }
+
+    private func deleteService(_ service: APIServiceEntity) {
+        if let id = service.id {
+            try? TokenManager.deleteToken(for: id.uuidString)
+            UserDefaults.standard.removeObject(forKey: "service_models_\(id.uuidString)")
+        }
+        viewContext.delete(service)
+        try? viewContext.save()
+    }
+
+    private func sanitizeDefaults() {
+        let defaults = apiServices.filter { $0.isDefault }
+        if defaults.count > 1 {
+            for extra in defaults.dropFirst() {
+                extra.isDefault = false
+            }
+            try? viewContext.save()
+        }
+    }
+
+    private func populateRoster() {
+        let proxyKey = ProcessInfo.processInfo.environment["LOCAL_SAP_AI_CORE_PROXY_KEY"] ?? ""
+        let cpa = createRosterEntity(
+            name: "CPA OpenAI", type: "chatgpt", url: "http://127.0.0.1:8899/v1", model: "gpt-5.6-terra",
+            apiKey: proxyKey, isDefault: true,
+            models: [
+                ServiceModelRow(nickname: "optional", modelID: "gpt-5.6-terra"),
+                ServiceModelRow(nickname: "optional", modelID: "gpt-5.6-luna"),
+                ServiceModelRow(nickname: "optional", modelID: "gpt-4o"),
+                ServiceModelRow(nickname: "optional", modelID: "gpt-4o-mini")
+            ]
+        )
+        _ = createRosterEntity(name: "SAP Anthropic", type: "claude", url: "http://127.0.0.1:8899/v1", model: "anthropic--claude-4.8-opus")
+        _ = createRosterEntity(name: "SAP Gemini", type: "gemini", url: "https://generativelanguage.googleapis.com/v1beta", model: "gemini-2.5-flash")
+        _ = createRosterEntity(name: "SAP OpenAI", type: "chatgpt", url: "http://127.0.0.1:9988/openai/v1", model: "qwen3.8-27b-dev-preview")
+        _ = cpa
+    }
+
+    private func createRosterEntity(name: String, type: String, url: String, model: String, apiKey: String = "", isDefault: Bool = false, models: [ServiceModelRow] = []) -> APIServiceEntity {
+        let manager = APIServiceManager(viewContext: viewContext)
+        let entity = manager.createAPIService(
+            name: name,
+            type: type,
+            url: URL(string: url) ?? URL(fileURLWithPath: ""),
+            model: model,
+            contextSize: 20,
+            useStreamResponse: true,
+            generateChatNames: true
+        )
+        entity.isDefault = isDefault
+        if let id = entity.id {
+            if !apiKey.isEmpty {
+                try? TokenManager.setToken(apiKey, for: id.uuidString)
+            }
+            if !models.isEmpty {
+                if let data = try? JSONEncoder().encode(models), let str = String(data: data, encoding: .utf8) {
+                    UserDefaults.standard.set(str, forKey: "service_models_\(id.uuidString)")
+                }
+            }
+        }
+        try? viewContext.save()
+        return entity
+    }
+
+    @ViewBuilder
+    private func providerBrandIcon(name: String, type: String) -> some View {
+        let low = (name + " " + type).lowercased()
+        if low.contains("openai") || low.contains("chatgpt") || low.contains("gpt") {
+            Image(systemName: "cpu")
+                .foregroundStyle(Color.green)
+        } else if low.contains("claude") || low.contains("anthropic") {
+            Image(systemName: "brain")
+                .foregroundStyle(Color.orange)
+        } else if low.contains("gemini") || low.contains("google") {
+            Image(systemName: "sparkles")
+                .foregroundStyle(Color.blue)
+        } else if low.contains("deepseek") {
+            Image(systemName: "bolt.fill")
+                .foregroundStyle(Color.cyan)
+        } else if low.contains("ollama") {
+            Image(systemName: "terminal.fill")
+                .foregroundStyle(Color.purple)
+        } else {
+            Image(systemName: "network")
+                .foregroundStyle(Color.accentColor)
+        }
+    }
+}
+
+// Preset Provider template used for populating the add menu
+struct ProviderPresetItem: Identifiable {
+    var id: String { name }
+    let name: String
+    let type: String
+    let defaultURL: String
+    let defaultModel: String
+    let subtitle: String
+    let models: [ServiceModelRow]
+}
+
+// MARK: - Native Edit / Add Sheet (Scheme A)
+
+struct ProviderEditorSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.managedObjectContext) private var viewContext
+
+    let service: APIServiceEntity?
+    let initialPreset: ProviderPresetItem?
+    let onSave: () -> Void
+    let onDelete: () -> Void
+
     @State private var nameText = ""
     @State private var urlText = ""
     @State private var typeText = "chatgpt"
     @State private var apiKeyText = ""
+    @State private var isDefault = false
     @State private var modelsList: [ServiceModelRow] = []
     @State private var activeModelID = ""
+    @State private var isShowingAPIKey = false
 
     // Model fetching
     @State private var isFetchingModels = false
@@ -37,67 +374,47 @@ struct TabAPIServicesView: View {
     @State private var selectedModelIDsForImport: Set<String> = []
     @State private var modelSearchQuery = ""
 
-    private var selectedService: APIServiceEntity? {
-        guard let id = selectedServiceID else { return nil }
-        return apiServices.first(where: { $0.objectID == id })
-    }
+    var isEditing: Bool { service != nil }
 
     var body: some View {
-        Form {
-            // Section 1: Configured Providers Card
-            Section("Configured Providers") {
-                ForEach(apiServices, id: \.objectID) { service in
-                    providerRow(service)
+        VStack(spacing: 0) {
+            // Sheet Header
+            HStack {
+                Text(isEditing ? "Edit Provider" : "Add AI Provider")
+                    .font(.headline)
+
+                Spacer()
+
+                Button("Cancel") {
+                    dismiss()
                 }
+                .keyboardShortcut(.cancelAction)
 
-                HStack(spacing: 12) {
-                    Menu {
-                        Button("CPA OpenAI") { addNewService(name: "CPA OpenAI", type: "chatgpt", url: "http://127.0.0.1:8899/v1", model: "gpt-5.6-terra") }
-                        Button("CPA Anthropic") { addNewService(name: "CPA Anthropic", type: "claude", url: "http://127.0.0.1:8899/v1", model: "anthropic--claude-4.8-opus") }
-                        Divider()
-                        Button("OpenAI") { addNewService(name: "OpenAI", type: "openai-responses", url: "https://api.openai.com/v1", model: "gpt-4o") }
-                        Button("Anthropic") { addNewService(name: "Anthropic", type: "claude", url: "https://api.anthropic.com/v1", model: "claude-sonnet-4-5") }
-                        Button("Google AI") { addNewService(name: "Google AI", type: "gemini", url: "https://generativelanguage.googleapis.com/v1beta", model: "gemini-2.5-flash") }
-                        Button("DeepSeek") { addNewService(name: "DeepSeek", type: "deepseek", url: "https://api.deepseek.com/v1", model: "deepseek-chat") }
-                        Button("Ollama") { addNewService(name: "Ollama", type: "ollama", url: "http://localhost:11434/api/chat", model: "llama3.1") }
-                        Button("Azure OpenAI") { addNewService(name: "Azure OpenAI", type: "chatgpt", url: "https://your-resource.openai.azure.com", model: "gpt-4o") }
-                        Button("Groq") { addNewService(name: "Groq", type: "chatgpt", url: "https://api.groq.com/openai/v1", model: "llama-3.3-70b-versatile") }
-                        Button("OpenRouter") { addNewService(name: "OpenRouter", type: "openrouter", url: "https://openrouter.ai/api/v1", model: "anthropic/claude-sonnet-4.5") }
-                        Button("Perplexity") { addNewService(name: "Perplexity", type: "perplexity", url: "https://api.perplexity.ai", model: "sonar") }
-                        Divider()
-                        Button("Custom Provider...") { addNewService(name: "New Provider", type: "chatgpt", url: "http://127.0.0.1:8899/v1", model: "custom-model") }
-                    } label: {
-                        Label("Add Provider", systemImage: "plus")
-                    }
-                    .menuStyle(.borderlessButton)
-
-                    Spacer()
-
-                    if let selected = selectedService {
-                        Button(role: .destructive, action: deleteSelectedService) {
-                            Label("Delete '\(selected.name ?? "")'", systemImage: "trash")
-                                .foregroundStyle(Color.red)
-                        }
-                        .buttonStyle(.borderless)
-                    }
+                Button("Done") {
+                    saveChanges()
+                    dismiss()
                 }
-                .padding(.vertical, 4)
+                .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.defaultAction)
             }
+            .padding(.horizontal, 20)
+            .padding(.top, 18)
+            .padding(.bottom, 12)
 
-            // Section 2: Selected Provider Details
-            if selectedService != nil {
-                Section("Provider Settings") {
+            Divider()
+
+            // Main Form
+            Form {
+                Section("Connection Settings") {
                     LabeledContent("Provider Name") {
                         TextField("Name", text: $nameText)
                             .textFieldStyle(.roundedBorder)
-                            .onChange(of: nameText) { _ in autoSave() }
                     }
 
                     LabeledContent {
                         VStack(alignment: .leading, spacing: 3) {
                             TextField("http://127.0.0.1:8899/v1", text: $urlText)
                                 .textFieldStyle(.roundedBorder)
-                                .onChange(of: urlText) { _ in autoSave() }
 
                             Text("Do NOT include /chat/completions in the URL")
                                 .font(.caption2)
@@ -121,7 +438,6 @@ struct TabAPIServicesView: View {
                             .labelsHidden()
                             .pickerStyle(.menu)
                             .frame(maxWidth: 220, alignment: .leading)
-                            .onChange(of: typeText) { _ in autoSave() }
 
                             Text("Select protocol format used by this endpoint")
                                 .font(.caption2)
@@ -148,26 +464,19 @@ struct TabAPIServicesView: View {
                             }
                             .buttonStyle(.plain)
                         }
-                        .onChange(of: apiKeyText) { _ in autoSave() }
                     }
 
-                    if let service = selectedService {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Toggle("Default for New Chats", isOn: Binding(
-                                get: { service.isDefault },
-                                set: { if $0 { setDefaultService(service) } }
-                            ))
+                    VStack(alignment: .leading, spacing: 4) {
+                        Toggle("Default for New Chats", isOn: $isDefault)
                             .toggleStyle(.switch)
 
-                            Text("Used automatically when starting a new conversation if no specific assistant is chosen.")
-                                .font(.caption2)
-                                .foregroundStyle(Color.secondary)
-                        }
-                        .padding(.vertical, 2)
+                        Text("Used automatically when starting a new conversation if no specific assistant is chosen.")
+                            .font(.caption2)
+                            .foregroundStyle(Color.secondary)
                     }
+                    .padding(.vertical, 2)
                 }
 
-                // Section 3: Models Card
                 Section("Models") {
                     HStack {
                         Text("Configured Models (\(modelsList.count))")
@@ -212,56 +521,32 @@ struct TabAPIServicesView: View {
 
                     quickAddChipsView
                 }
+
+                if isEditing {
+                    Section {
+                        Button(role: .destructive, action: {
+                            onDelete()
+                            dismiss()
+                        }) {
+                            HStack {
+                                Spacer()
+                                Label("Delete Provider", systemImage: "trash")
+                                    .foregroundStyle(Color.red)
+                                Spacer()
+                            }
+                        }
+                    }
+                }
             }
+            .formStyle(.grouped)
         }
-        .formStyle(.grouped)
+        .frame(width: 580, height: 600)
         .onAppear {
-            sanitizeDefaults()
-            if apiServices.isEmpty {
-                populateRoster()
-            } else if selectedServiceID == nil, let first = apiServices.first {
-                selectService(first)
-            }
+            loadInitialData()
         }
         .sheet(isPresented: $showingModelSelectionSheet) {
             modelSelectionSheetView
         }
-    }
-
-    private func providerRow(_ service: APIServiceEntity) -> some View {
-        let isSelected = selectedServiceID == service.objectID
-        return Button(action: { selectService(service) }) {
-            HStack(spacing: 12) {
-                providerBrandIcon(name: service.name ?? "", type: service.type ?? "")
-                    .frame(width: 18, height: 18)
-
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack(spacing: 6) {
-                        Text(service.name ?? "Provider")
-                            .font(.system(size: 13, weight: isSelected ? .semibold : .regular))
-                            .foregroundStyle(Color.primary)
-
-                        if service.isDefault {
-                            Text("Default")
-                                .font(.system(size: 10, weight: .medium))
-                                .padding(.horizontal, 5)
-                                .padding(.vertical, 1)
-                                .background(Capsule().fill(Color.accentColor.opacity(0.15)))
-                                .foregroundStyle(Color.accentColor)
-                        }
-                    }
-
-                    Text("\(service.type ?? "chatgpt") • \(service.model ?? "No model")")
-                        .font(.caption)
-                        .foregroundStyle(Color.secondary)
-                }
-
-                Spacer()
-            }
-            .padding(.vertical, 4)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
     }
 
     private func modelTableRow(_ row: Binding<ServiceModelRow>) -> some View {
@@ -271,17 +556,14 @@ struct TabAPIServicesView: View {
                 .textFieldStyle(.roundedBorder)
                 .font(.system(size: 12))
                 .frame(width: 130)
-                .onChange(of: row.wrappedValue.nickname) { _ in autoSave() }
 
             TextField("model-id", text: row.modelID)
                 .textFieldStyle(.roundedBorder)
                 .font(.system(size: 12, design: .monospaced))
                 .foregroundStyle(isActive ? Color.accentColor : Color.primary)
-                .onChange(of: row.wrappedValue.modelID) { _ in autoSave() }
 
             Button(action: {
                 activeModelID = row.wrappedValue.modelID
-                autoSave()
             }) {
                 Image(systemName: isActive ? "checkmark.circle.fill" : "gearshape")
                     .font(.system(size: 13))
@@ -313,7 +595,6 @@ struct TabAPIServicesView: View {
                 Button(action: {
                     if !modelsList.contains(where: { $0.modelID == mid }) {
                         modelsList.append(ServiceModelRow(nickname: "optional", modelID: mid))
-                        autoSave()
                     }
                 }) {
                     Text("+ \(mid)")
@@ -330,91 +611,84 @@ struct TabAPIServicesView: View {
         .padding(.top, 2)
     }
 
-    // MARK: - Auto-Save & Actions
+    // MARK: - Save / Load
 
-    private func autoSave() {
-        guard let service = selectedService else { return }
-        service.name = nameText
-        service.type = typeText
-        service.url = URL(string: urlText)
-        service.model = activeModelID.isEmpty ? (modelsList.first?.modelID ?? "") : activeModelID
+    private func loadInitialData() {
+        if let service = service {
+            nameText = service.name ?? ""
+            urlText = service.url?.absoluteString ?? ""
+            typeText = service.type ?? "chatgpt"
+            activeModelID = service.model ?? ""
+            isDefault = service.isDefault
 
-        if let id = service.id {
+            if let id = service.id {
+                apiKeyText = (try? TokenManager.getToken(for: id.uuidString)) ?? ""
+                let key = "service_models_\(id.uuidString)"
+                if let data = UserDefaults.standard.string(forKey: key)?.data(using: .utf8),
+                   let list = try? JSONDecoder().decode([ServiceModelRow].self, from: data) {
+                    modelsList = list
+                }
+            }
+        } else if let preset = initialPreset {
+            nameText = preset.name
+            urlText = preset.defaultURL
+            typeText = preset.type
+            activeModelID = preset.defaultModel
+            modelsList = preset.models
+            apiKeyText = ProcessInfo.processInfo.environment["LOCAL_SAP_AI_CORE_PROXY_KEY"] ?? ""
+        }
+    }
+
+    private func saveChanges() {
+        let targetService: APIServiceEntity
+        if let existing = service {
+            targetService = existing
+        } else {
+            let manager = APIServiceManager(viewContext: viewContext)
+            targetService = manager.createAPIService(
+                name: nameText,
+                type: typeText,
+                url: URL(string: urlText) ?? URL(fileURLWithPath: ""),
+                model: activeModelID,
+                contextSize: 20,
+                useStreamResponse: true,
+                generateChatNames: true
+            )
+        }
+
+        targetService.name = nameText
+        targetService.url = URL(string: urlText)
+        targetService.type = typeText
+        targetService.model = activeModelID.isEmpty ? (modelsList.first?.modelID ?? "") : activeModelID
+
+        if isDefault {
+            let fetchReq: NSFetchRequest<APIServiceEntity> = APIServiceEntity.fetchRequest()
+            if let all = try? viewContext.fetch(fetchReq) {
+                for s in all {
+                    s.isDefault = (s.objectID == targetService.objectID)
+                }
+            }
+            targetService.isDefault = true
+        } else {
+            targetService.isDefault = false
+        }
+
+        if let id = targetService.id {
             try? TokenManager.setToken(apiKeyText, for: id.uuidString)
-            saveModels(for: id)
-        }
-        try? viewContext.save()
-    }
-
-    private func selectService(_ service: APIServiceEntity) {
-        selectedServiceID = service.objectID
-        nameText = service.name ?? ""
-        urlText = service.url?.absoluteString ?? ""
-        typeText = service.type ?? "chatgpt"
-        activeModelID = service.model ?? ""
-        fetchError = nil
-
-        if let serviceID = service.id {
-            apiKeyText = (try? TokenManager.getToken(for: serviceID.uuidString)) ?? ""
-            if apiKeyText.isEmpty {
-                apiKeyText = ProcessInfo.processInfo.environment["LOCAL_SAP_AI_CORE_PROXY_KEY"] ?? ""
+            let key = "service_models_\(id.uuidString)"
+            if let data = try? JSONEncoder().encode(modelsList),
+               let str = String(data: data, encoding: .utf8) {
+                UserDefaults.standard.set(str, forKey: key)
             }
-            loadModels(for: serviceID)
         }
-    }
 
-    private func setDefaultService(_ service: APIServiceEntity) {
-        apiServices.forEach { s in
-            s.isDefault = (s.objectID == service.objectID)
-        }
-        try? viewContext.save()
-    }
-
-    private func sanitizeDefaults() {
-        let defaults = apiServices.filter { $0.isDefault }
-        if defaults.count > 1 {
-            for extra in defaults.dropFirst() {
-                extra.isDefault = false
-            }
-            try? viewContext.save()
-        }
-    }
-
-    private func addNewService(name: String, type: String, url: String, model: String) {
-        let manager = APIServiceManager(viewContext: viewContext)
-        let entity = manager.createAPIService(
-            name: name,
-            type: type,
-            url: URL(string: url) ?? URL(fileURLWithPath: ""),
-            model: model,
-            contextSize: 20,
-            useStreamResponse: true,
-            generateChatNames: true
-        )
-        entity.isDefault = apiServices.isEmpty
-        try? viewContext.save()
-        selectService(entity)
-    }
-
-    private func deleteSelectedService() {
-        guard let service = selectedService else { return }
-        if let id = service.id {
-            try? TokenManager.deleteToken(for: id.uuidString)
-            UserDefaults.standard.removeObject(forKey: "service_models_\(id.uuidString)")
-        }
-        viewContext.delete(service)
-        try? viewContext.save()
-        selectedServiceID = apiServices.first?.objectID
-        if let first = apiServices.first {
-            selectService(first)
-        }
+        onSave()
     }
 
     private func addNewModelRow() {
         let row = ServiceModelRow(nickname: "optional", modelID: "new-model")
         modelsList.append(row)
         if activeModelID.isEmpty { activeModelID = row.modelID }
-        autoSave()
     }
 
     private func deleteModelRow(id: String) {
@@ -422,39 +696,11 @@ struct TabAPIServicesView: View {
         if !modelsList.contains(where: { $0.modelID == activeModelID }), let next = modelsList.first {
             activeModelID = next.modelID
         }
-        autoSave()
     }
 
-    private func loadModels(for serviceID: UUID) {
-        let key = "service_models_\(serviceID.uuidString)"
-        if let data = UserDefaults.standard.string(forKey: key)?.data(using: .utf8),
-           let list = try? JSONDecoder().decode([ServiceModelRow].self, from: data) {
-            self.modelsList = list
-            if activeModelID.isEmpty, let first = list.first {
-                activeModelID = first.modelID
-            }
-            return
-        }
-        let defaults = recommendedModels(for: typeText)
-        self.modelsList = defaults.map { ServiceModelRow(nickname: "optional", modelID: $0) }
-        if activeModelID.isEmpty, let first = modelsList.first {
-            activeModelID = first.modelID
-        }
-        saveModels(for: serviceID)
-    }
-
-    private func saveModels(for serviceID: UUID) {
-        let key = "service_models_\(serviceID.uuidString)"
-        if let data = try? JSONEncoder().encode(modelsList),
-           let str = String(data: data, encoding: .utf8) {
-            UserDefaults.standard.set(str, forKey: key)
-        }
-    }
-
-    // MARK: - Model Fetching & Selection Sheet
+    // MARK: - Fetch Models from API
 
     private func fetchModelsFromAPI() {
-        guard let service = selectedService, let id = service.id else { return }
         let config = APIServiceConfig(
             name: nameText,
             apiUrl: URL(string: urlText) ?? URL(fileURLWithPath: ""),
@@ -652,53 +898,6 @@ struct TabAPIServicesView: View {
         if activeModelID.isEmpty, let first = modelsList.first {
             activeModelID = first.modelID
         }
-        autoSave()
-    }
-
-    // MARK: - Initial Roster & Brand Icons
-
-    private func populateRoster() {
-        let proxyKey = ProcessInfo.processInfo.environment["LOCAL_SAP_AI_CORE_PROXY_KEY"] ?? ""
-        let cpa = createRosterEntity(
-            name: "CPA OpenAI", type: "chatgpt", url: "http://127.0.0.1:8899/v1", model: "gpt-5.6-terra",
-            apiKey: proxyKey, isDefault: true,
-            models: [
-                ServiceModelRow(nickname: "optional", modelID: "gpt-5.6-terra"),
-                ServiceModelRow(nickname: "optional", modelID: "gpt-5.6-luna"),
-                ServiceModelRow(nickname: "optional", modelID: "gpt-4o"),
-                ServiceModelRow(nickname: "optional", modelID: "gpt-4o-mini")
-            ]
-        )
-        _ = createRosterEntity(name: "SAP Anthropic", type: "claude", url: "http://127.0.0.1:8899/v1", model: "anthropic--claude-4.8-opus")
-        _ = createRosterEntity(name: "SAP Gemini", type: "gemini", url: "https://generativelanguage.googleapis.com/v1beta", model: "gemini-2.5-flash")
-        _ = createRosterEntity(name: "SAP OpenAI", type: "chatgpt", url: "http://127.0.0.1:9988/openai/v1", model: "qwen3.8-27b-dev-preview")
-        selectService(cpa)
-    }
-
-    private func createRosterEntity(name: String, type: String, url: String, model: String, apiKey: String = "", isDefault: Bool = false, models: [ServiceModelRow] = []) -> APIServiceEntity {
-        let manager = APIServiceManager(viewContext: viewContext)
-        let entity = manager.createAPIService(
-            name: name,
-            type: type,
-            url: URL(string: url) ?? URL(fileURLWithPath: ""),
-            model: model,
-            contextSize: 20,
-            useStreamResponse: true,
-            generateChatNames: true
-        )
-        entity.isDefault = isDefault
-        if let id = entity.id {
-            if !apiKey.isEmpty {
-                try? TokenManager.setToken(apiKey, for: id.uuidString)
-            }
-            if !models.isEmpty {
-                if let data = try? JSONEncoder().encode(models), let str = String(data: data, encoding: .utf8) {
-                    UserDefaults.standard.set(str, forKey: "service_models_\(id.uuidString)")
-                }
-            }
-        }
-        try? viewContext.save()
-        return entity
     }
 
     private func recommendedModels(for type: String) -> [String] {
@@ -717,30 +916,6 @@ struct TabAPIServicesView: View {
             return ["llama3.1", "qwen2.5:7b", "mistral"]
         default:
             return ["gpt-4o", "claude-3-5-sonnet-latest"]
-        }
-    }
-
-    @ViewBuilder
-    private func providerBrandIcon(name: String, type: String) -> some View {
-        let low = (name + " " + type).lowercased()
-        if low.contains("openai") || low.contains("chatgpt") || low.contains("gpt") {
-            Image(systemName: "cpu")
-                .foregroundStyle(Color.green)
-        } else if low.contains("claude") || low.contains("anthropic") {
-            Image(systemName: "brain")
-                .foregroundStyle(Color.orange)
-        } else if low.contains("gemini") || low.contains("google") {
-            Image(systemName: "sparkles")
-                .foregroundStyle(Color.blue)
-        } else if low.contains("deepseek") {
-            Image(systemName: "bolt.fill")
-                .foregroundStyle(Color.cyan)
-        } else if low.contains("ollama") {
-            Image(systemName: "terminal.fill")
-                .foregroundStyle(Color.purple)
-        } else {
-            Image(systemName: "network")
-                .foregroundStyle(Color.accentColor)
         }
     }
 }
