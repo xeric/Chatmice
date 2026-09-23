@@ -83,7 +83,7 @@ private struct PersonaScrollViewConfigurator: NSViewRepresentable {
         scrollView.autohidesScrollers = true
         scrollView.verticalScrollElasticity = .none
         scrollView.horizontalScrollElasticity = .automatic
-        scrollView.usesPredominantAxisScrolling = true
+        scrollView.usesPredominantAxisScrolling = false
     }
 }
 
