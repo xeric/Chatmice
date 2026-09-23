@@ -42,56 +42,44 @@ struct TabAPIServicesView: View {
                         Button("CPA OpenAI") {
                             presentAddSheet(preset: ProviderPresetItem(
                                 name: "CPA OpenAI", type: "chatgpt", defaultURL: "http://127.0.0.1:8899/v1", defaultModel: "gpt-5.6-terra",
-                                subtitle: "OpenAI-compatible local endpoint",
-                                models: [
-                                    ServiceModelRow(nickname: "", modelID: "gpt-5.6-terra"),
-                                    ServiceModelRow(nickname: "", modelID: "gpt-5.6-luna"),
-                                    ServiceModelRow(nickname: "", modelID: "gpt-4o"),
-                                    ServiceModelRow(nickname: "", modelID: "gpt-4o-mini")
-                                ]
+                                subtitle: "OpenAI-compatible local endpoint"
                             ))
                         }
                         Button("CPA Anthropic") {
                             presentAddSheet(preset: ProviderPresetItem(
                                 name: "CPA Anthropic", type: "claude", defaultURL: "http://127.0.0.1:8899/v1", defaultModel: "anthropic--claude-4.8-opus",
-                                subtitle: "Claude local endpoint",
-                                models: [ServiceModelRow(nickname: "", modelID: "anthropic--claude-4.8-opus")]
+                                subtitle: "Claude local endpoint"
                             ))
                         }
                         Divider()
                         Button("OpenAI") {
                             presentAddSheet(preset: ProviderPresetItem(
                                 name: "OpenAI", type: "openai-responses", defaultURL: "https://api.openai.com/v1", defaultModel: "gpt-4o",
-                                subtitle: "Official OpenAI API",
-                                models: [ServiceModelRow(nickname: "", modelID: "gpt-4o"), ServiceModelRow(nickname: "", modelID: "gpt-4o-mini")]
+                                subtitle: "Official OpenAI API"
                             ))
                         }
                         Button("Anthropic") {
                             presentAddSheet(preset: ProviderPresetItem(
                                 name: "Anthropic", type: "claude", defaultURL: "https://api.anthropic.com/v1", defaultModel: "claude-3-5-sonnet-latest",
-                                subtitle: "Official Anthropic API",
-                                models: [ServiceModelRow(nickname: "", modelID: "claude-3-5-sonnet-latest")]
+                                subtitle: "Official Anthropic API"
                             ))
                         }
                         Button("Google AI") {
                             presentAddSheet(preset: ProviderPresetItem(
                                 name: "Google AI", type: "gemini", defaultURL: "https://generativelanguage.googleapis.com/v1beta", defaultModel: "gemini-2.5-flash",
-                                subtitle: "Google Gemini API",
-                                models: [ServiceModelRow(nickname: "", modelID: "gemini-2.5-flash")]
+                                subtitle: "Google Gemini API"
                             ))
                         }
                         Button("DeepSeek") {
                             presentAddSheet(preset: ProviderPresetItem(
                                 name: "DeepSeek", type: "deepseek", defaultURL: "https://api.deepseek.com/v1", defaultModel: "deepseek-chat",
-                                subtitle: "DeepSeek Official API",
-                                models: [ServiceModelRow(nickname: "", modelID: "deepseek-chat")]
+                                subtitle: "DeepSeek Official API"
                             ))
                         }
                         Button("Ollama") {
                             presentAddSheet(preset: ProviderPresetItem(
                                 name: "Ollama", type: "ollama", defaultURL: "http://localhost:11434/api/chat", defaultModel: "llama3.1",
-                                subtitle: "Local Ollama server",
-                                models: [ServiceModelRow(nickname: "", modelID: "llama3.1")]
+                                subtitle: "Local Ollama server"
                             ))
                         }
                         Divider()
@@ -102,7 +90,6 @@ struct TabAPIServicesView: View {
                         Label("Add Provider...", systemImage: "plus")
                     }
                     .menuStyle(.borderlessButton)
-
                     Spacer()
                 }
                 .padding(.vertical, 4)
@@ -262,16 +249,11 @@ struct TabAPIServicesView: View {
         let cpa = createRosterEntity(
             name: "CPA OpenAI", type: "chatgpt", url: "http://127.0.0.1:8899/v1", model: "gpt-5.6-terra",
             apiKey: proxyKey, isDefault: true,
-            models: [
-                ServiceModelRow(nickname: "", modelID: "gpt-5.6-terra"),
-                ServiceModelRow(nickname: "", modelID: "gpt-5.6-luna"),
-                ServiceModelRow(nickname: "", modelID: "gpt-4o"),
-                ServiceModelRow(nickname: "", modelID: "gpt-4o-mini")
-            ]
+            models: []
         )
-        _ = createRosterEntity(name: "SAP Anthropic", type: "claude", url: "http://127.0.0.1:8899/v1", model: "anthropic--claude-4.8-opus")
-        _ = createRosterEntity(name: "SAP Gemini", type: "gemini", url: "https://generativelanguage.googleapis.com/v1beta", model: "gemini-2.5-flash")
-        _ = createRosterEntity(name: "SAP OpenAI", type: "chatgpt", url: "http://127.0.0.1:9988/openai/v1", model: "qwen3.8-27b-dev-preview")
+        _ = createRosterEntity(name: "SAP Anthropic", type: "claude", url: "http://127.0.0.1:8899/v1", model: "anthropic--claude-4.8-opus", models: [])
+        _ = createRosterEntity(name: "SAP Gemini", type: "gemini", url: "https://generativelanguage.googleapis.com/v1beta", model: "gemini-2.5-flash", models: [])
+        _ = createRosterEntity(name: "SAP OpenAI", type: "chatgpt", url: "http://127.0.0.1:9988/openai/v1", model: "qwen3.8-27b-dev-preview", models: [])
         _ = cpa
     }
 
@@ -334,7 +316,37 @@ struct ProviderPresetItem: Identifiable {
     let defaultURL: String
     let defaultModel: String
     let subtitle: String
-    let models: [ServiceModelRow]
+}
+
+struct ModelTrashButton: View {
+    let action: () -> Void
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: "trash")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(isHovered ? Color.red : Color.secondary)
+                .padding(4)
+                .background(
+                    Circle()
+                        .fill(isHovered ? Color.red.opacity(0.15) : Color.clear)
+                )
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering in
+            withAnimation(.easeInOut(duration: 0.12)) {
+                isHovered = hovering
+            }
+            if hovering {
+                NSCursor.pointingHand.push()
+            } else {
+                NSCursor.pop()
+            }
+        }
+        .help("Remove model")
+    }
 }
 
 // MARK: - Native Edit / Add Sheet (Scheme A - Perfectly Aligned)
@@ -494,6 +506,17 @@ struct ProviderEditorSheet: View {
 
                                 Spacer()
 
+                                Button(role: .destructive, action: {
+                                    modelsList.removeAll()
+                                }) {
+                                    HStack(spacing: 3) {
+                                        Image(systemName: "trash")
+                                        Text("Remove All")
+                                    }
+                                }
+                                .buttonStyle(.bordered)
+                                .controlSize(.small)
+                                .disabled(modelsList.isEmpty)
                                 Button(action: { showingAddModelSheet = true }) {
                                     Label("Add Model", systemImage: "plus")
                                 }
@@ -544,15 +567,9 @@ struct ProviderEditorSheet: View {
 
                                                 Spacer()
 
-                                                Button(action: {
+                                                ModelTrashButton(action: {
                                                     deleteModel(m.id)
-                                                }) {
-                                                    Image(systemName: "trash")
-                                                        .font(.system(size: 11))
-                                                        .foregroundStyle(Color.secondary.opacity(0.8))
-                                                }
-                                                .buttonStyle(.plain)
-                                                .help("Remove model")
+                                                })
                                             }
                                             .padding(.horizontal, 10)
                                             .padding(.vertical, 6)
@@ -701,8 +718,7 @@ struct ProviderEditorSheet: View {
             nameText = preset.name
             urlText = preset.defaultURL
             typeText = preset.type
-            modelsList = preset.models.map { ServiceModelRow(id: $0.id, nickname: "", modelID: $0.modelID) }
-            modelsList = preset.models.map { ServiceModelRow(id: $0.id, nickname: "", modelID: $0.modelID) }
+            modelsList = []
             apiKeyText = ProcessInfo.processInfo.environment["LOCAL_SAP_AI_CORE_PROXY_KEY"] ?? ""
         }
     }
