@@ -61,29 +61,65 @@ struct PersonaChipView: View {
     }
 }
 
-private struct PersonaScrollViewConfigurator: NSViewRepresentable {
-    func makeNSView(context: Context) -> NSView {
-        let view = NSView()
-        DispatchQueue.main.async {
-            configureScrollView(containing: view)
+private struct PersonaContentWidthKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
+    }
+}
+
+private final class PersonaWheelCaptureNSView: NSView {
+    var onScroll: (CGFloat) -> Void = { _ in }
+    private var eventMonitor: Any?
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if window == nil {
+            removeMonitor()
+        } else if eventMonitor == nil {
+            eventMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
+                guard let self, event.window === self.window else { return event }
+                let location = self.convert(event.locationInWindow, from: nil)
+                guard self.bounds.contains(location) else { return event }
+                let rawDelta = abs(event.scrollingDeltaX) > 0.1
+                    ? event.scrollingDeltaX
+                    : event.scrollingDeltaY
+                guard abs(rawDelta) > 0.01 else { return event }
+                let scale: CGFloat = event.hasPreciseScrollingDeltas ? 1 : 12
+                self.onScroll(rawDelta * scale)
+                return nil
+            }
         }
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        nil
+    }
+
+    private func removeMonitor() {
+        if let eventMonitor {
+            NSEvent.removeMonitor(eventMonitor)
+        }
+        eventMonitor = nil
+    }
+
+    deinit {
+        removeMonitor()
+    }
+}
+
+private struct PersonaWheelCaptureView: NSViewRepresentable {
+    let onScroll: (CGFloat) -> Void
+
+    func makeNSView(context: Context) -> PersonaWheelCaptureNSView {
+        let view = PersonaWheelCaptureNSView()
+        view.onScroll = onScroll
         return view
     }
 
-    func updateNSView(_ nsView: NSView, context: Context) {
-        DispatchQueue.main.async {
-            configureScrollView(containing: nsView)
-        }
-    }
-
-    private func configureScrollView(containing view: NSView) {
-        guard let scrollView = view.enclosingScrollView else { return }
-        scrollView.hasHorizontalScroller = false
-        scrollView.hasVerticalScroller = false
-        scrollView.autohidesScrollers = true
-        scrollView.verticalScrollElasticity = .none
-        scrollView.horizontalScrollElasticity = .automatic
-        scrollView.usesPredominantAxisScrolling = false
+    func updateNSView(_ nsView: PersonaWheelCaptureNSView, context: Context) {
+        nsView.onScroll = onScroll
     }
 }
 
@@ -99,6 +135,9 @@ struct PersonaSelectorView: View {
 
     @ObservedObject var chat: ChatEntity
     @Environment(\.colorScheme) var colorScheme
+    @State private var scrollOffset: CGFloat = 0
+    @State private var contentWidth: CGFloat = 0
+    @GestureState private var dragTranslation: CGFloat = 0
 
     private func updatePersonaAndSystemMessage(to persona: PersonaEntity?) {
         chat.persona = persona
@@ -111,8 +150,8 @@ struct PersonaSelectorView: View {
     }
 
     var body: some View {
-        ScrollViewReader { scrollView in
-            ScrollView(.horizontal, showsIndicators: false) {
+        GeometryReader { geometry in
+            ZStack(alignment: .leading) {
                 HStack(spacing: 8) {
                     ForEach(personas, id: \.self) { persona in
                         PersonaChipView(persona: persona, isSelected: chat.persona == persona)
@@ -121,15 +160,45 @@ struct PersonaSelectorView: View {
                                     updatePersonaAndSystemMessage(to: persona)
                                 }
                             }
-                            .id(persona)
                     }
                 }
                 .padding(.horizontal, 14)
                 .padding(.vertical, 4)
-                .background(PersonaScrollViewConfigurator())
+                .fixedSize(horizontal: true, vertical: false)
+                .background(
+                    GeometryReader { contentGeometry in
+                        Color.clear.preference(
+                            key: PersonaContentWidthKey.self,
+                            value: contentGeometry.size.width
+                        )
+                    }
+                )
+                .offset(x: clampedOffset(
+                    scrollOffset + dragTranslation,
+                    viewportWidth: geometry.size.width
+                ))
+                .contentShape(Rectangle())
+                .gesture(
+                    DragGesture(minimumDistance: 3)
+                        .updating($dragTranslation) { value, state, _ in
+                            state = value.translation.width
+                        }
+                        .onEnded { value in
+                            scrollOffset = clampedOffset(
+                                scrollOffset + value.translation.width,
+                                viewportWidth: geometry.size.width
+                            )
+                        }
+                )
+
+                PersonaWheelCaptureView { delta in
+                    scrollOffset = clampedOffset(
+                        scrollOffset + delta,
+                        viewportWidth: geometry.size.width
+                    )
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-            .scrollIndicators(.hidden)
-            .scrollBounceBehavior(.basedOnSize, axes: .horizontal)
             .overlay(alignment: .leading) {
                 LinearGradient(
                     colors: [colorScheme == .dark ? edgeDarkColor : edgeLightColor, .clear],
@@ -148,14 +217,20 @@ struct PersonaSelectorView: View {
                 .frame(width: 24)
                 .allowsHitTesting(false)
             }
-            .onAppear {
-                if let selectedPersona = chat.persona {
-                    scrollView.scrollTo(selectedPersona, anchor: .center)
-                }
+            .onChange(of: contentWidth) { _ in
+                scrollOffset = clampedOffset(scrollOffset, viewportWidth: geometry.size.width)
             }
+        }
+        .onPreferenceChange(PersonaContentWidthKey.self) { width in
+            contentWidth = width
         }
         .frame(height: 52)
         .clipped()
+    }
+
+    private func clampedOffset(_ proposedOffset: CGFloat, viewportWidth: CGFloat) -> CGFloat {
+        let minimumOffset = min(0, viewportWidth - contentWidth)
+        return min(0, max(minimumOffset, proposedOffset))
     }
 }
 
