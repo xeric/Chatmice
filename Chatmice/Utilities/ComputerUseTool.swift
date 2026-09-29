@@ -1,0 +1,144 @@
+//
+//  ComputerUseTool.swift
+//  Chatmice
+//
+//  macOS screen capture tool.
+//
+
+import AppKit
+import CoreGraphics
+import Foundation
+
+public struct ScreenshotTool: AgentTool {
+    public init() {}
+
+    public let definition = ToolDefinition(
+        name: "computer.screenshot",
+        description: "Captures a screenshot of the main display and returns a base64 PNG data URL. No parameters required.",
+        parameters: .object(properties: [:], required: [], additionalProperties: nil)
+    )
+
+    public func call(arguments: String, context: ToolContext) async throws -> String {
+        let allow = await context.ask("Take a screenshot of current display for visual analysis")
+        guard allow else {
+            throw ToolError.confirmationDenied("User denied screen capture")
+        }
+
+        guard let image = CGDisplayCreateImage(CGMainDisplayID()) else {
+            throw ToolError.executionFailed("Failed to capture screen (check Screen Recording permissions)")
+        }
+
+        let rep = NSBitmapImageRep(cgImage: image)
+        guard let pngData = rep.representation(using: .png, properties: [:]) else {
+            throw ToolError.executionFailed("Failed to convert image to PNG format")
+        }
+
+        let b64 = pngData.base64EncodedString()
+        return "data:image/png;base64,\(b64)"
+    }
+}
+
+private enum ComputerInputSupport {
+    static func requireAccessibility() throws {
+        guard AXIsProcessTrusted() else {
+            throw ToolError.executionFailed(
+                "Accessibility permission is required in System Settings > Privacy & Security > Accessibility"
+            )
+        }
+    }
+
+    static func object(_ arguments: String) throws -> [String: Any] {
+        guard let data = arguments.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw ToolError.invalidArguments("arguments must be a JSON object")
+        }
+        return object
+    }
+
+    static func keyCode(_ key: String) -> CGKeyCode? {
+        [
+            "return": 36, "tab": 48, "space": 49, "delete": 51, "escape": 53,
+            "left": 123, "right": 124, "down": 125, "up": 126,
+        ][key.lowercased()]
+    }
+}
+
+struct MouseClickTool: AgentTool {
+    let definition = ToolDefinition(
+        name: "mouse_click",
+        description: "Click an absolute screen coordinate after user approval.",
+        parameters: .object(
+            properties: ["x": .number, "y": .number, "button": .string],
+            required: ["x", "y"],
+            additionalProperties: nil
+        )
+    )
+
+    func call(arguments: String, context: ToolContext) async throws -> String {
+        let object = try ComputerInputSupport.object(arguments)
+        guard let x = (object["x"] as? NSNumber)?.doubleValue,
+              let y = (object["y"] as? NSNumber)?.doubleValue else {
+            throw ToolError.invalidArguments("mouse_click requires numeric x and y")
+        }
+        let isRight = (object["button"] as? String)?.lowercased() == "right"
+        guard await context.ask("Click \(isRight ? "right" : "left") mouse button at (\(Int(x)), \(Int(y)))") else {
+            throw ToolError.confirmationDenied("User denied mouse click")
+        }
+        try ComputerInputSupport.requireAccessibility()
+        let point = CGPoint(x: x, y: y)
+        let button: CGMouseButton = isRight ? .right : .left
+        let down: CGEventType = isRight ? .rightMouseDown : .leftMouseDown
+        let up: CGEventType = isRight ? .rightMouseUp : .leftMouseUp
+        CGEvent(mouseEventSource: nil, mouseType: down, mouseCursorPosition: point, mouseButton: button)?.post(tap: .cghidEventTap)
+        CGEvent(mouseEventSource: nil, mouseType: up, mouseCursorPosition: point, mouseButton: button)?.post(tap: .cghidEventTap)
+        return "Clicked at (\(Int(x)), \(Int(y)))"
+    }
+}
+
+struct TypeTextTool: AgentTool {
+    let definition = ToolDefinition(
+        name: "type_text",
+        description: "Type Unicode text into the focused application after user approval.",
+        parameters: .object(properties: ["text": .string], required: ["text"], additionalProperties: nil)
+    )
+
+    func call(arguments: String, context: ToolContext) async throws -> String {
+        let object = try ComputerInputSupport.object(arguments)
+        guard let text = object["text"] as? String else {
+            throw ToolError.invalidArguments("type_text requires text: string")
+        }
+        guard await context.ask("Type text into the focused application:\n\(text.prefix(300))") else {
+            throw ToolError.confirmationDenied("User denied keyboard input")
+        }
+        try ComputerInputSupport.requireAccessibility()
+        let characters = Array(text.utf16)
+        guard let event = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: true) else {
+            throw ToolError.executionFailed("Failed to create keyboard event")
+        }
+        event.keyboardSetUnicodeString(stringLength: characters.count, unicodeString: characters)
+        event.post(tap: .cghidEventTap)
+        return "Typed \(text.count) characters"
+    }
+}
+
+struct PressKeyTool: AgentTool {
+    let definition = ToolDefinition(
+        name: "press_key",
+        description: "Press a named keyboard key: return, tab, space, delete, escape, or an arrow key.",
+        parameters: .object(properties: ["key": .string], required: ["key"], additionalProperties: nil)
+    )
+
+    func call(arguments: String, context: ToolContext) async throws -> String {
+        let object = try ComputerInputSupport.object(arguments)
+        guard let key = object["key"] as? String, let code = ComputerInputSupport.keyCode(key) else {
+            throw ToolError.invalidArguments("unsupported key")
+        }
+        guard await context.ask("Press keyboard key: \(key)") else {
+            throw ToolError.confirmationDenied("User denied keyboard input")
+        }
+        try ComputerInputSupport.requireAccessibility()
+        CGEvent(keyboardEventSource: nil, virtualKey: code, keyDown: true)?.post(tap: .cghidEventTap)
+        CGEvent(keyboardEventSource: nil, virtualKey: code, keyDown: false)?.post(tap: .cghidEventTap)
+        return "Pressed \(key)"
+    }
+}

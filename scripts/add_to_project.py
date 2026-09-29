@@ -7,7 +7,7 @@ def add_file(filepath, group_name="Preferences"):
     h1 = hashlib.md5((filename + "_fileref").encode()).hexdigest()[:24].upper()
     h2 = hashlib.md5((filename + "_buildfile").encode()).hexdigest()[:24].upper()
     
-    with open("macai.xcodeproj/project.pbxproj", "r") as f:
+    with open("Chatmice.xcodeproj/project.pbxproj", "r") as f:
         content = f.read()
         
     if filename in content:
@@ -40,7 +40,7 @@ def add_file(filepath, group_name="Preferences"):
     matched_sources = m2.group(1)
     content = content.replace(matched_sources, matched_sources + f"\n\t\t\t\t{h2} /* {filename} in Sources */,")
     
-    with open("macai.xcodeproj/project.pbxproj", "w") as f:
+    with open("Chatmice.xcodeproj/project.pbxproj", "w") as f:
         f.write(content)
         
     print(f"Successfully added {filename} to {group_name} in project.pbxproj")

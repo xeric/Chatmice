@@ -20,7 +20,7 @@ Icon
 
 # Build artifacts
 ##
-dist/*
+dist/
 build/
 DerivedData/
 
@@ -38,7 +38,7 @@ DerivedData/
 *.DS_Store
 *.Trash
 *.xcworkspace/xcuserdata/*/UserInterfaceState.xcuserstate
-macai.xcodeproj/project.xcworkspace/xcuserdata/*/UserInterfaceState.xcuserstate
+Chatmice.xcodeproj/project.xcworkspace/xcuserdata/*/UserInterfaceState.xcuserstate
 
 # Local agent/tool configs
 .omp/
