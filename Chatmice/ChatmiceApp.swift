@@ -6,6 +6,7 @@
 //
 
 import AppKit
+import AppIntents
 import CloudKit
 import CoreData
 import Sparkle
@@ -167,17 +168,21 @@ class PersistenceController {
             SandboxDataMigration.runIfNeeded()
         }
         historyToken = PersistenceController.loadHistoryToken()
-        let iCloudEnabled = UserDefaults.standard.bool(forKey: PersistenceController.iCloudSyncEnabledKey)
+        var iCloudEnabled = UserDefaults.standard.bool(forKey: PersistenceController.iCloudSyncEnabledKey)
+        if iCloudEnabled && !AppConstants.isCloudKitAvailable {
+            // Recover installations signed without the configured CloudKit container.
+            // Leaving this preference enabled would make CKContainer trap at launch.
+            UserDefaults.standard.set(false, forKey: PersistenceController.iCloudSyncEnabledKey)
+            iCloudEnabled = false
+            print("iCloud sync disabled: configured container is missing from signed entitlements.")
+        }
         
-        // Ensure CloudKit is only enabled if:
-        // 1. User enabled it in settings
-        // 2. Not in memory (previews/tests)
-        // 3. Not disabled via compile-time flag
-        // 4. CloudKit container identifier is actually present in Info.plist
+        // CKContainer traps when the requested container is absent from the
+        // signed app entitlements, so validate the effective signature first.
         #if DISABLE_ICLOUD
         let canEnableCloudKit = false
         #else
-        let canEnableCloudKit = iCloudEnabled && !inMemory && AppConstants.cloudKitContainerIdentifier != nil
+        let canEnableCloudKit = iCloudEnabled && !inMemory && AppConstants.isCloudKitAvailable
         #endif
         
         self.isCloudKitEnabled = canEnableCloudKit
@@ -528,6 +533,10 @@ final class AppPresentationController: NSObject, ObservableObject {
         applyActivationPolicy()
     }
 
+    func prepareToShowMainWindow() {
+        applyActivationPolicy(hasMainWindow: true)
+    }
+
     func registerMainWindow(_ window: NSWindow) {
         window.identifier = .chatmiceMainWindow
         applyActivationPolicy(hasMainWindow: true)
@@ -585,8 +594,55 @@ private struct MainWindowTracker: NSViewRepresentable {
 
     func updateNSView(_ nsView: MainWindowTrackingView, context: Context) {}
 
+
     static func dismantleNSView(_ nsView: MainWindowTrackingView, coordinator: ()) {
         nsView.stopTracking()
+    }
+}
+@MainActor
+private final class ThinScrollerController: NSObject {
+    static let shared = ThinScrollerController()
+
+    private override init() {
+        super.init()
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(windowDidBecomeKey(_:)),
+            name: NSWindow.didBecomeKeyNotification,
+            object: nil
+        )
+    }
+
+    func applyToExistingWindows() {
+        for window in NSApp.windows {
+            if let contentView = window.contentView {
+                configure(contentView)
+            }
+        }
+    }
+
+    @objc private func windowDidBecomeKey(_ notification: Notification) {
+        guard let window = notification.object as? NSWindow else { return }
+        for delay in [0.0, 0.25, 1.0] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self, weak window] in
+                guard let self, let contentView = window?.contentView else { return }
+                self.configure(contentView)
+            }
+        }
+    }
+
+    private func configure(_ view: NSView) {
+        if let scrollView = view as? NSScrollView {
+            scrollView.scrollerStyle = .overlay
+            scrollView.autohidesScrollers = true
+            scrollView.verticalScroller?.controlSize = .mini
+            scrollView.horizontalScroller?.controlSize = .mini
+        } else if let scroller = view as? NSScroller {
+            scroller.controlSize = .mini
+        }
+        for subview in view.subviews {
+            configure(subview)
+        }
     }
 }
 
@@ -617,16 +673,22 @@ struct ChatmiceApp: App {
     }
 
     private func showMainWindow() {
-        if let window = NSApp.windows.first(where: { $0.identifier == .chatmiceMainWindow }) {
-            if window.isMiniaturized {
-                window.deminiaturize(nil)
-            }
-            window.makeKeyAndOrderFront(nil)
-        }
-        else {
-            openWindow(id: "main")
-        }
+        presentationController.prepareToShowMainWindow()
         NSApp.activate(ignoringOtherApps: true)
+
+        DispatchQueue.main.async {
+            if let window = NSApp.windows.first(where: {
+                $0.identifier == .chatmiceMainWindow && ($0.isVisible || $0.isMiniaturized)
+            }) {
+                if window.isMiniaturized {
+                    window.deminiaturize(nil)
+                }
+                window.makeKeyAndOrderFront(nil)
+            }
+            else {
+                openWindow(id: "main")
+            }
+        }
     }
 
     private func createNewChat() {
@@ -666,6 +728,7 @@ struct ChatmiceApp: App {
     let persistenceController = PersistenceController.shared
 
     init() {
+
         ValueTransformer.setValueTransformer(
             RequestMessagesTransformer(),
             forName: RequestMessagesTransformer.name
@@ -675,6 +738,7 @@ struct ChatmiceApp: App {
         NotificationPresenter.shared.onAuthorizationGranted = {
             DatabasePatcher.deliverPendingGeminiMigrationNotificationIfNeeded()
         }
+        _ = ThinScrollerController.shared
         NotificationPresenter.shared.requestAuthorizationIfNeeded()
 
         // Enable badge for existing users who were authorized without .badge
@@ -699,10 +763,10 @@ struct ChatmiceApp: App {
                 }
         }
         .windowStyle(.hiddenTitleBar)
-        .onChange(of: preferredColorSchemeRaw) { _ in
+        .onChange(of: preferredColorSchemeRaw) {
             updateDockIcon()
         }
-        .onChange(of: scenePhase) { phase in
+        .onChange(of: scenePhase) { _, phase in
             if phase == .active {
                 if UserDefaults.standard.bool(forKey: "autoCheckForUpdates") {
                     updateCoordinator.checkForUpdatesInBackground()
@@ -740,7 +804,8 @@ struct ChatmiceApp: App {
                 Button("Retry Last Message") {
                     NotificationCenter.default.post(
                         name: NSNotification.Name("RetryMessage"),
-                        object: nil
+                        object: nil,
+                        userInfo: ["windowId": NSApp.keyWindow?.windowNumber ?? 0]
                     )
                 }
                 .keyboardShortcut("r", modifiers: .command)
@@ -761,7 +826,7 @@ struct ChatmiceApp: App {
                 .keyboardShortcut("n", modifiers: .command)
 
                 Button("New Window") {
-                    NSApplication.shared.sendAction(Selector(("newWindowForTab:")), to: nil, from: nil)
+                    NSApplication.shared.sendAction(#selector(NSWindowController.newWindowForTab(_:)), to: nil, from: nil)
                 }
                 .keyboardShortcut("n", modifiers: [.command, .option])
             }

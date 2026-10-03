@@ -10,7 +10,7 @@ import UniformTypeIdentifiers
 
 struct ChatInputView: View {
     @ObservedObject var chat: ChatEntity
-    @Binding var newMessage: String
+    @Bindable var inputBuffer: ChatInputBuffer
     @Binding var editSystemMessage: Bool
     @Binding var attachedImages: [ImageAttachment]
     @Binding var attachedFiles: [DocumentAttachment]
@@ -25,13 +25,14 @@ struct ChatInputView: View {
     let onAddFile: () -> Void
     let onStopInference: () -> Void
     let onCancelSystemMessageEdit: () -> Void
+    let onTextSettled: () -> Void
     
     @StateObject private var store = ChatStore(persistenceController: PersistenceController.shared)
     
     var body: some View {
         ChatBottomContainerView(
             chat: chat,
-            newMessage: $newMessage,
+            inputBuffer: inputBuffer,
             isExpanded: $isBottomContainerExpanded,
             attachedImages: $attachedImages,
             attachedFiles: $attachedFiles,
@@ -42,20 +43,21 @@ struct ChatInputView: View {
             imageGenerationSupported: imageGenerationSupported,
             onSendMessage: {
                 if editSystemMessage {
-                    chat.systemMessage = newMessage
-                    newMessage = ""
+                    chat.systemMessage = inputBuffer.text
+                    inputBuffer.text = ""
                     editSystemMessage = false
                     store.saveInCoreData()
                 }
                 else if !isInferenceInProgress,
-                        !newMessage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        !inputBuffer.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     onSendMessage()
                 }
             },
             onAddImage: onAddImage,
             onAddFile: onAddFile,
             onStopInference: onStopInference,
-            onCancelEdit: onCancelSystemMessageEdit
+            onCancelEdit: onCancelSystemMessageEdit,
+            onTextSettled: onTextSettled
         )
     }
 }
@@ -63,7 +65,7 @@ struct ChatInputView: View {
 #Preview {
     ChatInputView(
         chat: ChatEntity(),
-        newMessage: .constant("Test message"),
+        inputBuffer: ChatInputBuffer(text: "Test message"),
         editSystemMessage: .constant(false),
         attachedImages: .constant([]),
         attachedFiles: .constant([]),
@@ -76,6 +78,7 @@ struct ChatInputView: View {
         onAddImage: {},
         onAddFile: {},
         onStopInference: {},
-        onCancelSystemMessageEdit: {}
+        onCancelSystemMessageEdit: {},
+        onTextSettled: {}
     )
 }

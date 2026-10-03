@@ -3,7 +3,7 @@ import SwiftUI
 struct SystemMessageBubbleView: View {
     let message: String
     let color: String?
-    @Binding var newMessage: String
+    let inputBuffer: ChatInputBuffer
     @Binding var editSystemMessage: Bool
     @Binding var searchText: String
     
@@ -23,7 +23,7 @@ struct SystemMessageBubbleView: View {
             color: color,
             onEdit: {
                 editSystemMessage = true
-                newMessage = message
+                inputBuffer.text = message
             },
             searchText: $searchText
         )

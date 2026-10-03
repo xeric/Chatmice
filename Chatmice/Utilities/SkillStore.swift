@@ -24,6 +24,29 @@ public struct SkillInfo: Identifiable, Hashable, Sendable {
     }
 }
 
+public enum SkillEnablementStore {
+    private static let key = "chatmiceDisabledSkillIDs"
+    private static let lock = NSLock()
+
+    public static func isEnabled(_ identifier: String) -> Bool {
+        lock.withLock {
+            !Set(UserDefaults.standard.stringArray(forKey: key) ?? []).contains(identifier)
+        }
+    }
+
+    public static func setEnabled(_ enabled: Bool, identifier: String) {
+        lock.withLock {
+            var disabled = Set(UserDefaults.standard.stringArray(forKey: key) ?? [])
+            if enabled {
+                disabled.remove(identifier)
+            } else {
+                disabled.insert(identifier)
+            }
+            UserDefaults.standard.set(disabled.sorted(), forKey: key)
+        }
+    }
+}
+
 public protocol SkillCatalog: Sendable {
     func skills() async -> [SkillInfo]
     func read(name: String, path: String?) async throws -> String
@@ -48,6 +71,10 @@ public actor SkillStore: SkillCatalog {
     }
 
     public func skills() async -> [SkillInfo] {
+        await allSkills().filter { SkillEnablementStore.isEnabled($0.directory.lastPathComponent) }
+    }
+
+    public func allSkills() async -> [SkillInfo] {
         let fm = FileManager.default
         var result: [SkillInfo] = []
 
@@ -120,20 +147,40 @@ public actor SkillStore: SkillCatalog {
         guard lines.count > 1 else { return ([:], raw) }
         var meta: [String: String] = [:]
         var endIdx: Int?
+        var index = 1
 
-        for i in 1..<lines.count {
-            let line = lines[i]
+        while index < lines.count {
+            let line = lines[index]
             if line.trimmingCharacters(in: .whitespaces) == "---" {
-                endIdx = i
+                endIdx = index
                 break
             }
             let parts = line.split(separator: ":", maxSplits: 1).map(String.init)
-            if parts.count == 2 {
-                let k = parts[0].trimmingCharacters(in: .whitespaces)
-                let v = parts[1].trimmingCharacters(in: .whitespaces)
-                    .trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
-                meta[k] = v
+            guard parts.count == 2 else {
+                index += 1
+                continue
             }
+            let key = parts[0].trimmingCharacters(in: .whitespaces)
+            let rawValue = parts[1].trimmingCharacters(in: .whitespaces)
+            if rawValue == ">" || rawValue == "|" {
+                var continuationLines: [String] = []
+                index += 1
+                while index < lines.count {
+                    let continuation = lines[index]
+                    if continuation.trimmingCharacters(in: .whitespaces) == "---" ||
+                        (!continuation.isEmpty && !continuation.first!.isWhitespace) {
+                        break
+                    }
+                    continuationLines.append(continuation.trimmingCharacters(in: .whitespaces))
+                    index += 1
+                }
+                meta[key] = rawValue == ">"
+                    ? continuationLines.filter { !$0.isEmpty }.joined(separator: " ")
+                    : continuationLines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+                continue
+            }
+            meta[key] = rawValue.trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
+            index += 1
         }
         guard let end = endIdx else { return ([:], raw) }
         let bodyLines = lines[(end + 1)...]

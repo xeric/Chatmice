@@ -6,6 +6,8 @@
 	<string>Chatmice</string>
 	<key>CFBundleName</key>
 	<string>Chatmice</string>
+	<key>LSApplicationCategoryType</key>
+	<string>public.app-category.productivity</string>
 	<key>ATSApplicationFontsPath</key>
 	<string>fonts</string>
 	<key>CloudKitContainerIdentifier</key>

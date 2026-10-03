@@ -7,6 +7,7 @@
 
 import AppKit
 import Foundation
+import Security
 
 enum ChatFontWeightPreference: String, CaseIterable, Identifiable {
     case light
@@ -84,9 +85,8 @@ struct AppConstants {
     )
     static let chatGptGenerateChatInstruction: String =
         "Return a short chat name as summary for this chat based on the previous message content and system message if it's not default. Start chat name with one appropriate emoji. Don't answer to my message, just generate a name."
-    static let longStringCount = 1000
     static let defaultRole: String = "assistant"
-    static let streamedResponseUpdateUIInterval: TimeInterval = 0.2
+    static let longStringCount = 1000
     static let defaultPersonaName = "Default ChatGPT Assistant"
     static let defaultPersonaColor = "#007AFF"
     static let defaultPersonasFlag = "defaultPersonasAdded"
@@ -108,6 +108,7 @@ struct AppConstants {
     static let openRouterUploadsPatchCompletedKey = "OpenRouterUploadsPatchCompleted"
     static let apiServiceMigrationCompletedKey = "APIServiceMigrationCompleted"
     static let defaultApiServiceMigrationCompletedKey = "DefaultAPIServiceMigrationCompleted"
+    static let streamingDefaultsPatchCompletedKey = "StreamingDefaultsPatchCompleted"
     static let draftTransactionAuthor = "Drafts"
     static let entityIDBackfillCompletedKey = "EntityIDBackfillCompleted"
     static let messageSequenceBackfillCompletedKey = "MessageSequenceBackfillCompleted"
@@ -121,6 +122,34 @@ struct AppConstants {
         let value = Bundle.main.object(forInfoDictionaryKey: "CloudKitContainerIdentifier") as? String
         return value?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false ? value : nil
     }()
+
+    static let cloudKitEntitledContainerIdentifiers: [String] = {
+        guard let task = SecTaskCreateFromSelf(nil),
+              let value = SecTaskCopyValueForEntitlement(
+                  task,
+                  "com.apple.developer.icloud-container-identifiers" as CFString,
+                  nil
+              ) as? [String]
+        else {
+            return []
+        }
+        return value
+    }()
+
+    static var isCloudKitAvailable: Bool {
+        supportsCloudKit(
+            containerIdentifier: cloudKitContainerIdentifier,
+            entitlementIdentifiers: cloudKitEntitledContainerIdentifiers
+        )
+    }
+
+    static func supportsCloudKit(
+        containerIdentifier: String?,
+        entitlementIdentifiers: [String]
+    ) -> Bool {
+        guard let containerIdentifier else { return false }
+        return entitlementIdentifiers.contains(containerIdentifier)
+    }
 
     struct Persona {
         let name: String

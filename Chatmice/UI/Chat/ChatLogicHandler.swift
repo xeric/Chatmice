@@ -10,7 +10,8 @@ import SwiftUI
 import Foundation
 import UniformTypeIdentifiers
 
-class ChatLogicHandler: ObservableObject {
+@MainActor
+final class ChatLogicHandler: ObservableObject {
     private let viewContext: NSManagedObjectContext
     private let chat: ChatEntity
     private let chatViewModel: ChatViewModel
@@ -18,6 +19,7 @@ class ChatLogicHandler: ObservableObject {
     @Published var currentError: ErrorMessage?
     @Published var isStreaming: Bool = false
     @Published var userIsScrolling: Bool = false
+    private var activeRequestID: UUID?
     
     init(viewContext: NSManagedObjectContext, chat: ChatEntity, chatViewModel: ChatViewModel) {
         self.viewContext = viewContext
@@ -80,7 +82,7 @@ class ChatLogicHandler: ObservableObject {
         saveNewMessageInStore(with: messageBody)
         userIsScrolling = false
 
-        if chat.apiService?.useStreamResponse ?? false {
+        if chat.apiService?.useStreamResponse ?? true {
             sendStreamMessage(messageBody)
         } else {
             sendRegularMessage(messageBody)
@@ -137,29 +139,36 @@ class ChatLogicHandler: ObservableObject {
         }
     }
     
-    func handleRetryMessage(newMessage: inout String) {
-        guard !chat.waitingForResponse && !isStreaming else { return }
-
-        let messageToResend = chatViewModel.sortedMessages.last(where: { $0.own })?.body ?? newMessage
-
-        guard !messageToResend.isEmpty else { return }
-
-        removeLastAttemptMessages()
-
-        sendMessage(messageText: messageToResend, attachedImages: [], attachedFiles: [])
-    }
-
-    private func removeLastAttemptMessages() {
-        guard let lastMessage = chatViewModel.sortedMessages.last else { return }
-
-        viewContext.delete(lastMessage)
-
-        if !lastMessage.own,
-            let secondLastMessage = chatViewModel.sortedMessages.dropLast().last {
-            viewContext.delete(secondLastMessage)
+    func handleRetryMessage() {
+        guard chatViewModel.canSendMessage else {
+            currentError = ErrorMessage(
+                type: .noApiService("No API service selected. Select an API service before retrying."),
+                timestamp: Date()
+            )
+            return
         }
 
-        try? viewContext.save()
+        if chat.waitingForResponse || isStreaming {
+            chatViewModel.stopInference()
+            handleResponseFinished()
+        }
+
+        let messages = chatViewModel.sortedMessages
+        let responseToReplace = messages.last.flatMap { $0.own ? nil : $0 }
+        let userMessage = responseToReplace == nil
+            ? messages.last(where: { $0.own })
+            : messages.dropLast().last(where: { $0.own })
+
+        guard let userMessage, !userMessage.body.isEmpty else { return }
+
+        resetError()
+        userIsScrolling = false
+
+        if chat.apiService?.useStreamResponse ?? true {
+            sendStreamMessage(userMessage.body, replacing: responseToReplace)
+        } else {
+            sendRegularMessage(userMessage.body, replacing: responseToReplace)
+        }
     }
     
     func ignoreError() {
@@ -168,49 +177,56 @@ class ChatLogicHandler: ObservableObject {
     
     // MARK: - Private Methods
     
-    private func sendStreamMessage(_ messageBody: String) {
+    private func sendStreamMessage(_ messageBody: String, replacing responseToReplace: MessageEntity? = nil) {
+        let requestID = UUID()
+        activeRequestID = requestID
         isStreaming = true
-        Task { @MainActor in
-            chatViewModel.sendMessageStream(
-                messageBody,
-                contextSize: Int(chat.apiService?.contextSize ?? Int16(AppConstants.chatGptContextSize))
-            ) { result in
-                DispatchQueue.main.async {
-                    switch result {
-                    case .success:
-                        self.handleResponseFinished()
-                        self.chatViewModel.generateChatNameIfNeeded()
-                    case .failure(let error):
-                        if !self.shouldSuppressError(error) {
-                            print("Error sending message: \(error)")
-                            let apiError = error as? APIError ?? .unknown("Unknown error occurred")
-                            self.currentError = ErrorMessage(type: apiError, timestamp: Date())
-                        }
-                        self.handleResponseFinished()
-                    }
-                }
-            }
-        }
-    }
-    
-    private func sendRegularMessage(_ messageBody: String) {
         chat.waitingForResponse = true
-        chatViewModel.sendMessage(
+        chatViewModel.sendMessageStream(
             messageBody,
-            contextSize: Int(chat.apiService?.contextSize ?? Int16(AppConstants.chatGptContextSize))
-        ) { result in
-            DispatchQueue.main.async {
+            contextSize: Int(chat.apiService?.contextSize ?? Int16(AppConstants.chatGptContextSize)),
+            replacing: responseToReplace
+        ) { [weak self] result in
+            Task { @MainActor in
+                guard let self, self.activeRequestID == requestID else { return }
                 switch result {
                 case .success:
+                    self.handleResponseFinished(requestID: requestID)
                     self.chatViewModel.generateChatNameIfNeeded()
-                    self.handleResponseFinished()
                 case .failure(let error):
                     if !self.shouldSuppressError(error) {
                         print("Error sending message: \(error)")
                         let apiError = error as? APIError ?? .unknown("Unknown error occurred")
                         self.currentError = ErrorMessage(type: apiError, timestamp: Date())
                     }
-                    self.handleResponseFinished()
+                    self.handleResponseFinished(requestID: requestID)
+                }
+            }
+        }
+    }
+    
+    private func sendRegularMessage(_ messageBody: String, replacing responseToReplace: MessageEntity? = nil) {
+        let requestID = UUID()
+        activeRequestID = requestID
+        chat.waitingForResponse = true
+        chatViewModel.sendMessage(
+            messageBody,
+            contextSize: Int(chat.apiService?.contextSize ?? Int16(AppConstants.chatGptContextSize)),
+            replacing: responseToReplace
+        ) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self, self.activeRequestID == requestID else { return }
+                switch result {
+                case .success:
+                    self.chatViewModel.generateChatNameIfNeeded()
+                    self.handleResponseFinished(requestID: requestID)
+                case .failure(let error):
+                    if !self.shouldSuppressError(error) {
+                        print("Error sending message: \(error)")
+                        let apiError = error as? APIError ?? .unknown("Unknown error occurred")
+                        self.currentError = ErrorMessage(type: apiError, timestamp: Date())
+                    }
+                    self.handleResponseFinished(requestID: requestID)
                 }
             }
         }
@@ -235,14 +251,18 @@ class ChatLogicHandler: ObservableObject {
         viewContext.saveWithRetry(attempts: 1)
     }
     
-    private func handleResponseFinished() {
+    private func handleResponseFinished(requestID: UUID? = nil) {
+        if let requestID, activeRequestID != requestID { return }
+        activeRequestID = nil
         isStreaming = false
         chat.waitingForResponse = false
         userIsScrolling = false
+        viewContext.saveWithRetry(attempts: 1)
     }
 
     func stopInference() {
         guard chat.waitingForResponse || isStreaming else { return }
+        activeRequestID = nil
         chatViewModel.stopInference()
         handleResponseFinished()
     }

@@ -42,7 +42,7 @@ struct ChatBubbleContent: Equatable {
         return lhs.message == rhs.message && lhs.own == rhs.own && lhs.waitingForResponse == rhs.waitingForResponse
             && lhs.systemMessage == rhs.systemMessage && lhs.isStreaming == rhs.isStreaming
             && lhs.isLatestMessage == rhs.isLatestMessage && lhs.reasoningDuration == rhs.reasoningDuration
-            && lhs.isActiveReasoning == rhs.isActiveReasoning
+            && lhs.isActiveReasoning == rhs.isActiveReasoning && lhs.errorMessage?.timestamp == rhs.errorMessage?.timestamp
     }
 }
 
@@ -53,6 +53,7 @@ struct ChatBubbleView: View, Equatable {
     var onEdit: (() -> Void)?
     @Binding var searchText: String
     var currentSearchOccurrence: SearchOccurrence?
+    var activitySnapshot: ChatActivitySnapshot? = nil
 
     @Environment(\.colorScheme) var colorScheme
     @Environment(\.managedObjectContext) private var viewContext
@@ -67,12 +68,18 @@ struct ChatBubbleView: View, Equatable {
     @State private var isCopied = false
     @AppStorage("chatFontSize") private var chatFontSize: Double = 15.0
 
+    private var isActiveAssistantTurn: Bool {
+        guard !content.own, content.isLatestMessage else { return false }
+        return content.isStreaming || (content.waitingForResponse ?? false) || activitySnapshot?.phase.isActive == true
+    }
+
     private var effectiveFontSize: Double {
         chatFontSize
     }
 
     static func == (lhs: ChatBubbleView, rhs: ChatBubbleView) -> Bool {
         lhs.content == rhs.content && lhs.currentSearchOccurrence == rhs.currentSearchOccurrence
+            && lhs.activitySnapshot == rhs.activitySnapshot
     }
 
     var body: some View {
@@ -107,7 +114,7 @@ struct ChatBubbleView: View, Equatable {
                 }
             }
 
-            if content.errorMessage == nil && !(content.waitingForResponse ?? false) {
+            if content.errorMessage == nil && !(content.waitingForResponse ?? false) && !isActiveAssistantTurn {
                 HStack {
                     if content.own {
                         Spacer()
@@ -182,7 +189,8 @@ struct ChatBubbleView: View, Equatable {
                     onRetry: {
                         NotificationCenter.default.post(
                             name: NSNotification.Name("RetryMessage"),
-                            object: nil
+                            object: nil,
+                            userInfo: ["chatId": message?.chat?.id as Any]
                         )
                     },
                     onIgnore: {
@@ -194,20 +202,40 @@ struct ChatBubbleView: View, Equatable {
                 )
             }
             else {
-                MessageContentView(
-                    message: message,
-                    content: content.message,
-                    isStreaming: content.isStreaming,
-                    own: content.own,
-                    effectiveFontSize: effectiveFontSize,
-                    colorScheme: colorScheme,
-                    inlineAttachments: !content.own,
-                    reasoningDuration: content.reasoningDuration,
-                    isActiveReasoning: content.isActiveReasoning,
-                    prefetchedElements: prefetchedElements,
-                    searchText: $searchText,
-                    currentSearchOccurrence: currentSearchOccurrence
-                )
+                VStack(alignment: .leading, spacing: 8) {
+                    MessageContentView(
+                        message: message,
+                        content: content.message,
+                        isStreaming: content.isStreaming,
+                        own: content.own,
+                        effectiveFontSize: effectiveFontSize,
+                        colorScheme: colorScheme,
+                        inlineAttachments: !content.own,
+                        reasoningDuration: content.reasoningDuration,
+                        isActiveReasoning: content.isActiveReasoning,
+                        prefetchedElements: prefetchedElements,
+                        searchText: $searchText,
+                        currentSearchOccurrence: currentSearchOccurrence
+                    )
+
+                    if let activitySnapshot, activitySnapshot.phase.isActive, !content.own, content.isLatestMessage {
+                        AssistantTurnActivityView(snapshot: activitySnapshot)
+                    }
+
+                    if isActiveAssistantTurn {
+                        HStack(spacing: 6) {
+                            Circle()
+                                .fill(Color.accentColor)
+                                .frame(width: 5, height: 5)
+                                .modifier(PulsatingCircle())
+                            Text("More response is coming")
+                                .font(.system(size: 9.5, weight: .medium))
+                                .foregroundStyle(.tertiary)
+                        }
+                        .padding(.top, 1)
+                        .accessibilityLabel("Assistant response is still in progress")
+                    }
+                }
             }
         }
         .foregroundColor(Color(content.own ? incomingLabelColor : incomingLabelColor))
@@ -464,7 +492,8 @@ struct ChatBubbleView: View, Equatable {
                     action: {
                         NotificationCenter.default.post(
                             name: NSNotification.Name("RetryMessage"),
-                            object: nil
+                            object: nil,
+                            userInfo: ["chatId": message?.chat?.id as Any]
                         )
                     }
                 )
@@ -491,6 +520,22 @@ struct ChatBubbleView: View, Equatable {
                         showingDeleteConfirmation = true
                     }
                 )
+            }
+
+            if let timestamp = message?.timestamp {
+                Text(
+                    timestamp,
+                    format: .dateTime
+                        .year().month(.twoDigits).day(.twoDigits)
+                        .hour(.twoDigits(amPM: .omitted)).minute(.twoDigits).second(.twoDigits)
+                )
+                    .font(.system(size: 10))
+                    .foregroundStyle(.tertiary)
+                    .monospacedDigit()
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
+                    .help(timestamp.formatted(date: .long, time: .standard))
+                    .accessibilityLabel("Sent at \(timestamp.formatted(date: .long, time: .standard))")
             }
         }
     }

@@ -239,5 +239,5 @@ enum APIServiceTemplateProvider {
     }
     """
 
-    private final class BundleToken {}
+    private final class BundleToken: @unchecked Sendable {}
 }

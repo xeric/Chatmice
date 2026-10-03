@@ -466,7 +466,7 @@ public struct RawJSON: Codable, Hashable, Sendable {
     }
 }
 
-public struct AnyCodable: Codable, Hashable, Sendable {
+public struct AnyCodable: Codable, Hashable, @unchecked Sendable {
     public let value: Any
     public init(_ value: Any) { self.value = value }
     public init<T: Codable>(_ value: T) { self.value = value }

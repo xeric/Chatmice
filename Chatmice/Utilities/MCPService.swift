@@ -57,6 +57,12 @@ public struct MCPStatus: Identifiable, Hashable, Sendable {
     }
 }
 
+public struct MCPToolSummary: Identifiable, Hashable, Sendable {
+    public var id: String { name }
+    public let name: String
+    public let description: String
+}
+
 public actor MCPService {
     public static let shared = MCPService()
 
@@ -93,10 +99,21 @@ public actor MCPService {
             disconnect(name: name)
         }
         for cfg in configs where cfg.enabled {
-            if servers[cfg.name] == nil {
+            guard let existing = servers[cfg.name] else {
+                await connect(cfg)
+                continue
+            }
+            if existing.config != cfg {
+                disconnect(name: cfg.name)
                 await connect(cfg)
             }
         }
+    }
+
+    public func reconnect(_ config: MCPServerConfig) async {
+        disconnect(name: config.name)
+        guard config.enabled else { return }
+        await connect(config)
     }
 
     public func disconnect(name: String) {
@@ -116,6 +133,13 @@ public actor MCPService {
         servers.values.map {
             MCPStatus(name: $0.config.name, connected: $0.connected, toolCount: $0.tools.count, lastError: $0.lastError)
         }.sorted { $0.name < $1.name }
+    }
+
+    public func tools(forServer name: String) -> [MCPToolSummary] {
+        guard let server = servers[name], server.connected else { return [] }
+        return server.tools
+            .map { MCPToolSummary(name: $0.name, description: $0.description) }
+            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
 
     public func allTools(excludingServers: Set<String> = []) -> [any AgentTool] {
@@ -253,7 +277,7 @@ public actor MCPService {
                     guard let tName = rt["name"] as? String else { continue }
                     let desc = rt["description"] as? String ?? ""
                     let rawSchema = rt["inputSchema"] as? [String: Any] ?? [:]
-                    let schema = (try? JSONSchema(anyCodable: AnyCodable(rawSchema))) ?? .object(properties: [:], required: [], additionalProperties: nil)
+                    let schema = JSONSchema(anyCodable: AnyCodable(rawSchema)) ?? .object(properties: [:], required: [], additionalProperties: nil)
                     s.tools.append(MCPToolInfo(name: tName, description: desc, schema: schema))
                 }
             }
@@ -358,7 +382,7 @@ public actor MCPService {
                     guard let tName = rt["name"] as? String else { continue }
                     let desc = rt["description"] as? String ?? ""
                     let rawSchema = rt["inputSchema"] as? [String: Any] ?? [:]
-                    let schema = (try? JSONSchema(anyCodable: AnyCodable(rawSchema))) ?? .object(properties: [:], required: [], additionalProperties: nil)
+                    let schema = JSONSchema(anyCodable: AnyCodable(rawSchema)) ?? .object(properties: [:], required: [], additionalProperties: nil)
                     s.tools.append(MCPToolInfo(name: tName, description: desc, schema: schema))
                 }
             }
@@ -381,6 +405,12 @@ private final class HTTPMCPTransport: @unchecked Sendable {
     private let lock = NSLock()
     private var pendingContinuations: [Int: CheckedContinuation<[String: Any], Error>] = [:]
     private let session: URLSession
+
+    private func withStateLock<T>(_ body: () throws -> T) rethrows -> T {
+        lock.lock()
+        defer { lock.unlock() }
+        return try body()
+    }
 
     init(url: URL, headers: [String: String] = [:]) {
         self.initialURL = url
@@ -462,58 +492,54 @@ private final class HTTPMCPTransport: @unchecked Sendable {
                     }
                 }
             } catch {
-                self.lock.lock()
-                for (_, cont) in self.pendingContinuations {
-                    cont.resume(throwing: error)
+                let continuations = self.withStateLock {
+                    let values = Array(self.pendingContinuations.values)
+                    self.pendingContinuations.removeAll()
+                    return values
                 }
-                self.pendingContinuations.removeAll()
-                self.lock.unlock()
+                for continuation in continuations {
+                    continuation.resume(throwing: error)
+                }
             }
         }
 
         // Wait for postURL from SSE endpoint event
         let start = Date()
         while Date().timeIntervalSince(start) < timeout {
-            lock.lock()
-            let url = self.postURL
-            lock.unlock()
+            let url = withStateLock { postURL }
             if url != nil {
                 return
             }
             try await Task.sleep(nanoseconds: 50_000_000)
         }
         // If no endpoint event, fall back to sseURL
-        lock.lock()
-        self.postURL = sseURL
-        lock.unlock()
+        withStateLock { postURL = sseURL }
     }
 
     private func handleSSEEvent(event: String, data: String, sseURL: URL) {
         let trimmed = data.trimmingCharacters(in: .whitespacesAndNewlines)
         if event == "endpoint" {
-            lock.lock()
-            if let rel = URL(string: trimmed, relativeTo: sseURL) {
-                self.postURL = rel.absoluteURL
-            } else {
-                self.postURL = URL(string: trimmed)
+            withStateLock {
+                if let rel = URL(string: trimmed, relativeTo: sseURL) {
+                    postURL = rel.absoluteURL
+                } else {
+                    postURL = URL(string: trimmed)
+                }
             }
-            lock.unlock()
         } else if event == "message" || event == "message_delta" || event.isEmpty {
             guard let jsonData = trimmed.data(using: .utf8),
                   let json = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any] else {
                 return
             }
             if let id = json["id"] as? Int {
-                lock.lock()
-                let cont = pendingContinuations.removeValue(forKey: id)
-                lock.unlock()
+                let cont = withStateLock { pendingContinuations.removeValue(forKey: id) }
                 cont?.resume(returning: json)
             }
         }
     }
 
     func rpc(_ req: [String: Any], timeout: Double = 30) async throws -> [String: Any] {
-        guard let targetURL = postURL else {
+        guard let targetURL = withStateLock({ postURL }) else {
             throw ToolError.executionFailed("MCP HTTP endpoint not ready")
         }
         let id = req["id"] as? Int ?? Int.random(in: 1000...9999)
@@ -527,9 +553,7 @@ private final class HTTPMCPTransport: @unchecked Sendable {
         postReq.httpBody = try JSONSerialization.data(withJSONObject: req)
 
         return try await withCheckedThrowingContinuation { continuation in
-            lock.lock()
-            pendingContinuations[id] = continuation
-            lock.unlock()
+            withStateLock { pendingContinuations[id] = continuation }
 
             Task {
                 do {
@@ -541,9 +565,7 @@ private final class HTTPMCPTransport: @unchecked Sendable {
                     if (200...299).contains(status), !data.isEmpty,
                        let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                        (json["result"] != nil || json["error"] != nil) {
-                        self.lock.lock()
-                        let removed = self.pendingContinuations.removeValue(forKey: id)
-                        self.lock.unlock()
+                        let removed = self.withStateLock { self.pendingContinuations.removeValue(forKey: id) }
                         removed?.resume(returning: json)
                         return
                     }
@@ -551,18 +573,14 @@ private final class HTTPMCPTransport: @unchecked Sendable {
                     // 2. HTTP error response
                     if status >= 400 {
                         let errStr = String(data: data, encoding: .utf8) ?? "HTTP \(status)"
-                        self.lock.lock()
-                        let removed = self.pendingContinuations.removeValue(forKey: id)
-                        self.lock.unlock()
+                        let removed = self.withStateLock { self.pendingContinuations.removeValue(forKey: id) }
                         removed?.resume(throwing: ToolError.executionFailed("MCP HTTP \(status): \(errStr)"))
                         return
                     }
 
                     // 3. For 202 Accepted (standard SSE), the response will be pushed asynchronously over the SSE stream!
                 } catch {
-                    self.lock.lock()
-                    let removed = self.pendingContinuations.removeValue(forKey: id)
-                    self.lock.unlock()
+                    let removed = self.withStateLock { self.pendingContinuations.removeValue(forKey: id) }
                     removed?.resume(throwing: error)
                 }
             }
@@ -570,9 +588,7 @@ private final class HTTPMCPTransport: @unchecked Sendable {
             // Timeout watchdog
             Task {
                 try? await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
-                self.lock.lock()
-                let removed = self.pendingContinuations.removeValue(forKey: id)
-                self.lock.unlock()
+                let removed = self.withStateLock { self.pendingContinuations.removeValue(forKey: id) }
                 removed?.resume(throwing: ToolError.executionFailed("MCP RPC timed out"))
             }
         }

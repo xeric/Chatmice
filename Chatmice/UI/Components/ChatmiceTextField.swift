@@ -23,6 +23,7 @@ struct ChatmiceTextField: View {
     var onTab: (() -> Void)?
     var onBackTab: (() -> Void)?
     var onEscape: (() -> Void)?
+    var onTextSettled: (() -> Void)?
 
     @State private var measuredHeight: CGFloat
     @State private var placeholderHeight: CGFloat = 0
@@ -38,6 +39,7 @@ struct ChatmiceTextField: View {
         onTab: (() -> Void)? = nil,
         onBackTab: (() -> Void)? = nil,
         onEscape: (() -> Void)? = nil,
+        onTextSettled: (() -> Void)? = nil,
         onCommit: (() -> Void)? = nil
     ) {
         self.title = String(title)
@@ -50,6 +52,7 @@ struct ChatmiceTextField: View {
         self.onCommit = onCommit
         self.onTab = onTab
         self.onBackTab = onBackTab
+        self.onTextSettled = onTextSettled
         self.onEscape = onEscape
         _measuredHeight = State(initialValue: minHeight)
     }
@@ -84,7 +87,8 @@ struct ChatmiceTextField: View {
                 onCommit: onCommit,
                 onTab: onTab,
                 onBackTab: onBackTab,
-                onEscape: onEscape
+                onEscape: onEscape,
+                onTextSettled: onTextSettled
             )
         }
         .frame(height: min(max(currentHeight, minHeight), maxHeight))
@@ -121,6 +125,7 @@ private struct ChatmiceTextFieldRep: NSViewRepresentable {
     var onTab: (() -> Void)?
     var onBackTab: (() -> Void)?
     var onEscape: (() -> Void)?
+    var onTextSettled: (() -> Void)?
 
     func makeCoordinator() -> Coordinator {
         Coordinator(self)
@@ -159,7 +164,9 @@ private struct ChatmiceTextFieldRep: NSViewRepresentable {
         guard let textView = scrollView.documentView as? MacaiNSTextView else { return }
         textView.focusBinding = isFocused
 
-        if textView.string != text, !textView.hasMarkedText() {
+        if textView.string != text,
+           !textView.hasMarkedText(),
+           !context.coordinator.hasPendingLocalText {
             let selectedRange = textView.selectedRange()
             textView.string = text
             let clampedLocation = min(selectedRange.location, (text as NSString).length)
@@ -170,13 +177,14 @@ private struct ChatmiceTextFieldRep: NSViewRepresentable {
             textView.font = NSFont.systemFont(ofSize: fontSize)
         }
 
-        updateHeight(for: textView)
+        context.coordinator.updateHeightIfNeeded(for: textView)
         updateFocus(for: textView)
     }
 
     private func makeTextView() -> MacaiNSTextView {
         let textStorage = NSTextStorage()
         let layoutManager = NSLayoutManager()
+        layoutManager.allowsNonContiguousLayout = true
         textStorage.addLayoutManager(layoutManager)
 
         let textContainer = NSTextContainer(size: NSSize(width: 0, height: CGFloat.greatestFiniteMagnitude))
@@ -239,16 +247,41 @@ private struct ChatmiceTextFieldRep: NSViewRepresentable {
     class Coordinator: NSObject, NSTextViewDelegate {
         var parent: ChatmiceTextFieldRep
         weak var textView: NSTextView?
+        private var textPublishWorkItem: DispatchWorkItem?
+        private(set) var hasPendingLocalText = false
 
         init(_ parent: ChatmiceTextFieldRep) {
             self.parent = parent
         }
 
         func textDidChange(_ notification: Notification) {
-            guard let textView = notification.object as? NSTextView else { return }
-            parent.text = textView.string
-            updateHeight(for: textView)
-            textView.scrollRangeToVisible(textView.selectedRange())
+            guard notification.object is NSTextView else { return }
+            scheduleTextPublish()
+            if let textView = notification.object as? NSTextView {
+                updateHeightIfNeeded(for: textView)
+            }
+        }
+
+        private func scheduleTextPublish() {
+            textPublishWorkItem?.cancel()
+            hasPendingLocalText = true
+            let workItem = DispatchWorkItem { [weak self] in
+                guard let self, let value = self.textView?.string else { return }
+                self.hasPendingLocalText = false
+                if self.parent.text != value {
+                    self.parent.text = value
+                }
+                self.parent.onTextSettled?()
+            }
+            textPublishWorkItem = workItem
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2, execute: workItem)
+        }
+
+        private func flushText() {
+            textPublishWorkItem?.cancel()
+            hasPendingLocalText = false
+            guard let value = textView?.string, parent.text != value else { return }
+            parent.text = value
         }
 
         func textView(_: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
@@ -256,6 +289,7 @@ private struct ChatmiceTextFieldRep: NSViewRepresentable {
                commandSelector == #selector(NSResponder.insertNewline(_:)),
                !(NSApp.currentEvent?.modifierFlags.contains(.shift) ?? false)
             {
+                flushText()
                 onCommit()
                 return true
             } else if let onTab = parent.onTab,
@@ -279,6 +313,11 @@ private struct ChatmiceTextFieldRep: NSViewRepresentable {
         }
 
         func updateHeight(for textView: NSTextView) {
+            parent.updateHeight(for: textView)
+        }
+
+        func updateHeightIfNeeded(for textView: NSTextView) {
+            guard parent.height < parent.maxHeight || textView.string.isEmpty else { return }
             parent.updateHeight(for: textView)
         }
     }

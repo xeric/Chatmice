@@ -14,8 +14,9 @@ enum SettingsPage: String, CaseIterable, Identifiable {
     case providers = "Providers"
     case assistants = "AI Assistants"
     case mcp = "MCP Servers"
+    case skills = "Skills"
     case webSearch = "Web Search"
-    case skills = "Tools"
+    case tools = "Tools"
     case backup = "Backup & Restore"
     case dangerZone = "Danger Zone"
 
@@ -34,10 +35,12 @@ enum SettingsPage: String, CaseIterable, Identifiable {
             return "Manage system instructions, avatars, and AI personas."
         case .mcp:
             return "Configure Model Context Protocol external tool servers."
+        case .skills:
+            return "Discover, install, enable, and manage reusable Agent Skills."
         case .webSearch:
             return "Connect search and URL retrieval providers for AI assistants."
-        case .skills:
-            return "Configure File Tool, Code Execution, Computer Use, and Skills."
+        case .tools:
+            return "Configure File Tool, Code Execution, and Computer Use."
         case .backup:
             return "Export and restore Chatmice database and chat history."
         case .dangerZone:
@@ -51,9 +54,10 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         case .appearance: return "paintpalette"
         case .providers: return "cpu"
         case .assistants: return "person.2"
-        case .webSearch: return "globe"
         case .mcp: return "hammer"
-        case .skills: return "arrow.triangle.branch"
+        case .skills: return "puzzlepiece.extension"
+        case .webSearch: return "globe"
+        case .tools: return "wrench.and.screwdriver"
         case .backup: return "externaldrive"
         case .dangerZone: return "flame"
         }
@@ -103,7 +107,23 @@ struct PreferencesView: View {
         .frame(width: 960, height: 680)
         .onAppear {
             store.saveInCoreData()
+            selectRequestedPage()
         }
+        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("OpenSettingsPage"))) { notification in
+            guard let rawValue = notification.object as? String,
+                  let page = SettingsPage(rawValue: rawValue)
+            else { return }
+            selectedPage = page
+            UserDefaults.standard.removeObject(forKey: "requestedSettingsPage")
+        }
+    }
+
+    private func selectRequestedPage() {
+        guard let rawValue = UserDefaults.standard.string(forKey: "requestedSettingsPage"),
+              let page = SettingsPage(rawValue: rawValue)
+        else { return }
+        selectedPage = page
+        UserDefaults.standard.removeObject(forKey: "requestedSettingsPage")
     }
 
     // MARK: - Detail Content
@@ -175,13 +195,17 @@ struct PreferencesView: View {
             TabAIPersonasView()
 
 
-        case .webSearch:
-            TabWebSearchSettingsView()
         case .mcp:
             TabMCPServersView()
 
         case .skills:
             TabSkillsView()
+
+        case .webSearch:
+            TabWebSearchSettingsView()
+
+        case .tools:
+            TabToolsView()
 
         case .backup:
             BackupRestoreView(store: store)

@@ -8,7 +8,7 @@ import SwiftUI
 
 struct ChatBottomContainerView: View {
     @ObservedObject var chat: ChatEntity
-    @Binding var newMessage: String
+    @Bindable var inputBuffer: ChatInputBuffer
     @Binding var isExpanded: Bool
     @Binding var attachedImages: [ImageAttachment]
     @Binding var attachedFiles: [DocumentAttachment]
@@ -23,11 +23,12 @@ struct ChatBottomContainerView: View {
     var onAddFile: () -> Void
     var onStopInference: () -> Void
     var onCancelEdit: () -> Void
+    var onTextSettled: () -> Void
     var onExpandedStateChange: ((Bool) -> Void)?  // Add this line
 
     init(
         chat: ChatEntity,
-        newMessage: Binding<String>,
+        inputBuffer: ChatInputBuffer,
         isExpanded: Binding<Bool>,
         attachedImages: Binding<[ImageAttachment]> = .constant([]),
         attachedFiles: Binding<[DocumentAttachment]> = .constant([]),
@@ -42,10 +43,11 @@ struct ChatBottomContainerView: View {
         onAddFile: @escaping () -> Void = {},
         onStopInference: @escaping () -> Void = {},
         onCancelEdit: @escaping () -> Void = {},
+        onTextSettled: @escaping () -> Void = {},
         onExpandedStateChange: ((Bool) -> Void)? = nil
     ) {
         self.chat = chat
-        self._newMessage = newMessage
+        self.inputBuffer = inputBuffer
         self._isExpanded = isExpanded
         self._attachedImages = attachedImages
         self._attachedFiles = attachedFiles
@@ -60,6 +62,7 @@ struct ChatBottomContainerView: View {
         self.onAddFile = onAddFile
         self.onStopInference = onStopInference
         self.onCancelEdit = onCancelEdit
+        self.onTextSettled = onTextSettled
         self.onExpandedStateChange = onExpandedStateChange
 
         if chat.messagesArray.isEmpty {
@@ -105,7 +108,7 @@ struct ChatBottomContainerView: View {
                 HStack {
                     MessageInputView(
                         chat: chat,
-                        text: $newMessage,
+                        text: $inputBuffer.text,
                         attachedImages: $attachedImages,
                         attachedFiles: $attachedFiles,
                         isInferenceInProgress: isInferenceInProgress,
@@ -117,7 +120,8 @@ struct ChatBottomContainerView: View {
                         onAddImage: onAddImage,
                         onAddFile: onAddFile,
                         onStopInference: onStopInference,
-                        onCancelEdit: onCancelEdit
+                        onCancelEdit: onCancelEdit,
+                        onTextSettled: onTextSettled
                     )
                     .disabled(!hasModelSelected)
                     .opacity(hasModelSelected ? 1.0 : 0.6)

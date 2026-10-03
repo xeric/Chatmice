@@ -11,10 +11,9 @@ import Foundation
 class MessageManager: ObservableObject {
     private var apiService: APIService
     private var viewContext: NSManagedObjectContext
-    private var lastUpdateTime = Date()
-    private let updateInterval = AppConstants.streamedResponseUpdateUIInterval
     private var streamTask: Task<Void, Never>?
     private var cancelRequested = false
+    private var streamGeneration: UUID?
     private var activeChatId: UUID?
 
     init(apiService: APIService, viewContext: NSManagedObjectContext) {
@@ -60,9 +59,18 @@ class MessageManager: ObservableObject {
         _ message: String,
         in chat: ChatEntity,
         contextSize: Int,
+        replacing responseToReplace: MessageEntity? = nil,
         completion: @escaping (Result<Void, Error>) -> Void
     ) {
-        let requestMessages = prepareRequestMessages(userMessage: message, chat: chat, contextSize: contextSize)
+        let requestMessages = prepareRequestMessages(
+            userMessage: message,
+            chat: chat,
+            contextSize: contextSize,
+            excluding: responseToReplace
+        )
+        if let responseToReplace {
+            prepareForRetry(responseToReplace, in: chat)
+        }
         beginActivity(for: chat.id)
         chat.waitingForResponse = true
         let temperature = (chat.persona?.temperature ?? AppConstants.defaultTemperatureForChat).roundedToOneDecimal()
@@ -78,11 +86,11 @@ class MessageManager: ObservableObject {
                     serviceType: chat.apiService?.type
                 )
                 self.addMessageToChat(chat: chat, message: messageBody, partsEnvelope: partsEnvelope)
-                self.addNewMessageToRequestMessages(
-                    chat: chat,
+                self.replaceLastAssistantRequestMessage(
+                    in: chat,
                     content: messageBody,
-                    role: AppConstants.defaultRole,
-                    geminiParts: decodePartsEnvelopeToBase64(partsEnvelope)
+                    geminiParts: decodePartsEnvelopeToBase64(partsEnvelope),
+                    isRetry: false
                 )
                 self.viewContext.saveWithRetry(attempts: 1)
                 self.endActivity(for: chat.id, kind: .completed)
@@ -120,26 +128,48 @@ class MessageManager: ObservableObject {
         _ message: String,
         in chat: ChatEntity,
         contextSize: Int,
+        replacing responseToReplace: MessageEntity? = nil,
         completion: @escaping (Result<Void, Error>) -> Void
     ) {
-        cancelRequested = false
-        let requestMessages = prepareRequestMessages(userMessage: message, chat: chat, contextSize: contextSize)
-        let temperature = (chat.persona?.temperature ?? AppConstants.defaultTemperatureForChat).roundedToOneDecimal()
-        beginActivity(for: chat.id)
+        let requestMessages = prepareRequestMessages(
+            userMessage: message,
+            chat: chat,
+            contextSize: contextSize,
+            excluding: responseToReplace
+        )
+        if let responseToReplace {
+            prepareForRetry(responseToReplace, in: chat)
+        }
 
         streamTask?.cancel()
-        streamTask = Task { [weak self] in
-            guard let self = self else { return }
-            defer { self.streamTask = nil }
+        apiService.cancelCurrentRequest()
+
+        let generation = UUID()
+        streamGeneration = generation
+        cancelRequested = false
+        let temperature = (chat.persona?.temperature ?? AppConstants.defaultTemperatureForChat).roundedToOneDecimal()
+        beginActivity(for: chat.id)
+        chat.waitingForResponse = true
+
+        streamTask = Task { [self] in
+            defer {
+                if self.streamGeneration == generation {
+                    self.streamTask = nil
+                    self.streamGeneration = nil
+                    self.cancelRequested = false
+                    chat.waitingForResponse = false
+                    self.viewContext.saveWithRetry(attempts: 1)
+                }
+            }
+
             do {
                 let stream = try await apiService.sendMessageStream(requestMessages, temperature: temperature)
                 var accumulatedResponse = ""
                 var deferImageResponse = false
                 var streamingMessage: MessageEntity?
-                chat.waitingForResponse = true
 
                 for try await chunk in stream {
-                    if Task.isCancelled || cancelRequested {
+                    if Task.isCancelled || cancelRequested || streamGeneration != generation {
                         break
                     }
                     guard !chunk.isEmpty else { continue }
@@ -159,34 +189,26 @@ class MessageManager: ObservableObject {
                         }
                     }
 
-                    if deferImageResponse {
-                        continue
-                    }
-
+                    if deferImageResponse { continue }
                     guard let lastMessage = chat.lastMessage else { continue }
 
                     if lastMessage.own {
                         self.addMessageToChat(chat: chat, message: accumulatedResponse)
                         streamingMessage = chat.lastMessage
-                    }
-                    else {
-                        let now = Date()
-                        if now.timeIntervalSince(lastUpdateTime) >= updateInterval {
-                            updateLastMessage(
-                                chat: chat,
-                                lastMessage: lastMessage,
-                                accumulatedResponse: accumulatedResponse
-                            )
-                            lastUpdateTime = now
-                            streamingMessage = lastMessage
-                        }
+                    } else {
+                        updateLastMessage(
+                            chat: chat,
+                            lastMessage: lastMessage,
+                            accumulatedResponse: accumulatedResponse
+                        )
+                        streamingMessage = lastMessage
                     }
                 }
 
-                if Task.isCancelled || cancelRequested {
-                    cancelRequested = false
-                    chat.waitingForResponse = false
-                    self.endActivity(for: chat.id, kind: .cancelled)
+                guard !Task.isCancelled, !cancelRequested, streamGeneration == generation else {
+                    if streamGeneration == generation {
+                        self.endActivity(for: chat.id, kind: .cancelled)
+                    }
                     completion(.failure(CancellationError()))
                     return
                 }
@@ -204,54 +226,47 @@ class MessageManager: ObservableObject {
 
                 if deferImageResponse {
                     self.addMessageToChat(chat: chat, message: accumulatedResponse, partsEnvelope: geminiParts)
-                }
-                else if let assistantMessage = streamingMessage ?? (chat.lastMessage?.own == false ? chat.lastMessage : nil) {
+                } else if let assistantMessage = streamingMessage ?? (chat.lastMessage?.own == false ? chat.lastMessage : nil) {
                     updateLastMessage(
                         chat: chat,
                         lastMessage: assistantMessage,
                         accumulatedResponse: accumulatedResponse
                     )
                     assistantMessage.messageParts = geminiParts
-                }
-                else {
+                } else {
                     self.addMessageToChat(chat: chat, message: accumulatedResponse, partsEnvelope: geminiParts)
                 }
 
-                chat.waitingForResponse = false
-
-                addNewMessageToRequestMessages(
-                    chat: chat,
+                replaceLastAssistantRequestMessage(
+                    in: chat,
                     content: accumulatedResponse,
-                    role: AppConstants.defaultRole,
-                    geminiParts: decodePartsEnvelopeToBase64(geminiParts)
+                    geminiParts: decodePartsEnvelopeToBase64(geminiParts),
+                    isRetry: false
                 )
 
-                // Save once at the end of the stream
                 try? self.viewContext.save()
-                DispatchQueue.main.async {
-                    NotificationCenter.default.post(
-                        name: NSNotification.Name("ChatResponseCompleted"),
-                        object: chat,
-                        userInfo: [
-                            "responseId": UUID().uuidString,
-                            "chatId": chat.id,
-                            "message": accumulatedResponse,
-                            "chatName": chat.name
-                        ]
-                    )
-                }
+                NotificationCenter.default.post(
+                    name: NSNotification.Name("ChatResponseCompleted"),
+                    object: chat,
+                    userInfo: [
+                        "responseId": UUID().uuidString,
+                        "chatId": chat.id,
+                        "message": accumulatedResponse,
+                        "chatName": chat.name
+                    ]
+                )
                 self.endActivity(for: chat.id, kind: .completed)
                 completion(.success(()))
-            }
-            catch is CancellationError {
-                chat.waitingForResponse = false
-                self.endActivity(for: chat.id, kind: .cancelled)
+            } catch is CancellationError {
+                if streamGeneration == generation {
+                    self.endActivity(for: chat.id, kind: .cancelled)
+                }
                 completion(.failure(CancellationError()))
-            }
-            catch {
+            } catch {
                 print("Streaming error: \(error)")
-                chat.waitingForResponse = false
-                self.endActivity(for: chat.id, kind: .failed(message: error.localizedDescription))
+                if streamGeneration == generation {
+                    self.endActivity(for: chat.id, kind: .failed(message: error.localizedDescription))
+                }
                 completion(.failure(error))
             }
         }
@@ -274,11 +289,13 @@ class MessageManager: ObservableObject {
             return
         }
 
-        let requestMessages = prepareRequestMessages(
-            userMessage: AppConstants.chatGptGenerateChatInstruction,
-            chat: chat,
-            contextSize: 3
-        )
+        let firstUserMessage = chat.messagesArray.first(where: { $0.own })?.body ?? ""
+        let titleSource = String(firstUserMessage.prefix(4_000))
+        let requestMessages: [[String: String]] = [
+            ["role": "system", "content": chat.systemMessage],
+            ["role": "user", "content": titleSource],
+            ["role": "user", "content": AppConstants.chatGptGenerateChatInstruction],
+        ]
         let personaTemperature = (chat.persona?.temperature ?? AppConstants.defaultTemperatureForChat)
             .roundedToOneDecimal()
 
@@ -338,8 +355,18 @@ class MessageManager: ObservableObject {
         }
     }
 
-    private func prepareRequestMessages(userMessage: String, chat: ChatEntity, contextSize: Int) -> [[String: String]] {
-        var messages = constructRequestMessages(chat: chat, forUserMessage: userMessage, contextSize: contextSize)
+    private func prepareRequestMessages(
+        userMessage: String,
+        chat: ChatEntity,
+        contextSize: Int,
+        excluding responseToReplace: MessageEntity? = nil
+    ) -> [[String: String]] {
+        var messages = constructRequestMessages(
+            chat: chat,
+            forUserMessage: userMessage,
+            contextSize: contextSize,
+            excluding: responseToReplace
+        )
 
         // Strip vendor-specific payloads when current service is not Gemini to avoid API validation errors.
         if !(apiService is GeminiHandler) {
@@ -368,6 +395,7 @@ class MessageManager: ObservableObject {
 
         chat.updatedDate = Date()
         chat.addToMessages(newMessage)
+        viewContext.processPendingChanges()
         chat.objectWillChange.send()
     }
 
@@ -379,8 +407,37 @@ class MessageManager: ObservableObject {
         chat.requestMessages.append(message)
     }
 
+    private func prepareForRetry(_ response: MessageEntity, in chat: ChatEntity) {
+        if let lastAssistantIndex = chat.requestMessages.lastIndex(where: { $0["role"] == AppConstants.defaultRole }) {
+            chat.requestMessages.remove(at: lastAssistantIndex)
+        }
+        guard !response.isDeleted else { return }
+        chat.removeFromMessages(response)
+        viewContext.delete(response)
+        viewContext.processPendingChanges()
+        chat.objectWillChange.send()
+        viewContext.saveWithRetry(attempts: 1)
+    }
+
+    private func replaceLastAssistantRequestMessage(
+        in chat: ChatEntity,
+        content: String,
+        geminiParts: String?,
+        isRetry: Bool
+    ) {
+        if isRetry,
+           let lastAssistantIndex = chat.requestMessages.lastIndex(where: { $0["role"] == AppConstants.defaultRole }) {
+            chat.requestMessages.remove(at: lastAssistantIndex)
+        }
+        addNewMessageToRequestMessages(
+            chat: chat,
+            content: content,
+            role: AppConstants.defaultRole,
+            geminiParts: geminiParts
+        )
+    }
+
     private func updateLastMessage(chat: ChatEntity, lastMessage: MessageEntity, accumulatedResponse: String) {
-        print("Streaming chunk received: \(accumulatedResponse.suffix(20))")
         lastMessage.body = accumulatedResponse
         lastMessage.timestamp = Date()
         lastMessage.waitingForResponse = false
@@ -388,8 +445,12 @@ class MessageManager: ObservableObject {
         chat.objectWillChange.send()
     }
 
-    private func constructRequestMessages(chat: ChatEntity, forUserMessage userMessage: String?, contextSize: Int)
-        -> [[String: String]]
+    private func constructRequestMessages(
+        chat: ChatEntity,
+        forUserMessage userMessage: String?,
+        contextSize: Int,
+        excluding responseToReplace: MessageEntity? = nil
+    ) -> [[String: String]]
     {
         var messages: [[String: String]] = []
 
@@ -408,6 +469,10 @@ class MessageManager: ObservableObject {
         }
 
         let sortedMessages = chat.messagesArray
+            .filter { message in
+                guard let responseToReplace else { return true }
+                return message.objectID != responseToReplace.objectID
+            }
             .suffix(contextSize)
 
         // Add conversation history

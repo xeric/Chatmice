@@ -162,7 +162,6 @@ final class ProgrammaticMigrator {
         }
     }
 
-    @discardableResult
     private static func presentFatalAlert(messageText: String, informativeText: String, includeBackupsButton: Bool) -> Never {
         let work = {
             if !restoreLinkOpened {

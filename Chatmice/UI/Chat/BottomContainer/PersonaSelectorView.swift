@@ -217,7 +217,7 @@ struct PersonaSelectorView: View {
                 .frame(width: 24)
                 .allowsHitTesting(false)
             }
-            .onChange(of: contentWidth) { _ in
+            .onChange(of: contentWidth) {
                 scrollOffset = clampedOffset(scrollOffset, viewportWidth: geometry.size.width)
             }
         }

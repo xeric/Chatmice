@@ -58,9 +58,9 @@ struct TabAIPersonasView: View {
             }
         }
         .frame(minHeight: 300)
-        .onChange(of: selectedPersonaID) { id in
+        .onChange(of: selectedPersonaID) { _, id in
             selectedPersona = personas.first(where: { $0.objectID == id })
-            print("Selected Assistant ID: \(id)")
+            print("Selected Assistant ID: \(String(describing: id))")
             print("Selected Assistant: \(selectedPersona?.name ?? "nil")")
         }
         .sheet(isPresented: $isShowingAddOrEditPersona) {

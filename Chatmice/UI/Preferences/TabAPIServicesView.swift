@@ -141,7 +141,7 @@ struct TabAPIServicesView: View {
             editingService = service
         }) {
             HStack(spacing: 12) {
-                providerBrandIcon(name: service.name ?? "", type: service.type ?? "")
+                ProviderBrandIcon(name: service.name ?? "", type: service.type ?? "")
                     .frame(width: 22, height: 22)
 
                 VStack(alignment: .leading, spacing: 3) {
@@ -283,29 +283,6 @@ struct TabAPIServicesView: View {
         return entity
     }
 
-    @ViewBuilder
-    private func providerBrandIcon(name: String, type: String) -> some View {
-        let low = (name + " " + type).lowercased()
-        if low.contains("openai") || low.contains("chatgpt") || low.contains("gpt") {
-            Image(systemName: "cpu")
-                .foregroundStyle(Color.green)
-        } else if low.contains("claude") || low.contains("anthropic") {
-            Image(systemName: "brain")
-                .foregroundStyle(Color.orange)
-        } else if low.contains("gemini") || low.contains("google") {
-            Image(systemName: "sparkles")
-                .foregroundStyle(Color.blue)
-        } else if low.contains("deepseek") {
-            Image(systemName: "bolt.fill")
-                .foregroundStyle(Color.cyan)
-        } else if low.contains("ollama") {
-            Image(systemName: "terminal.fill")
-                .foregroundStyle(Color.purple)
-        } else {
-            Image(systemName: "network")
-                .foregroundStyle(Color.accentColor)
-        }
-    }
 }
 
 // Preset Provider template used for populating the add menu
@@ -378,6 +355,12 @@ struct ProviderEditorSheet: View {
     @State private var fetchedCandidateModels: [AIModel] = []
     @State private var selectedModelIDsForImport: Set<String> = []
     @State private var modelSearchQuery = ""
+    @State private var showingCapabilityTestSheet = false
+    @State private var selectedModelIDsForTest: Set<String> = []
+    @State private var capabilityResults: [String: ModelCapabilityTestResult] = [:]
+    @State private var capabilityTestErrors: [String: String] = [:]
+    @State private var currentlyTestingModel: String?
+    @State private var isTestingCapabilities = false
 
     var isEditing: Bool { service != nil }
 
@@ -537,6 +520,24 @@ struct ProviderEditorSheet: View {
                                 .controlSize(.small)
                             }
 
+                            HStack(spacing: 8) {
+                                Button(action: openCapabilityTestSheet) {
+                                    Label("Test Connection", systemImage: "wave.3.right")
+                                }
+                                .buttonStyle(.bordered)
+                                .controlSize(.small)
+                                .disabled(modelsList.isEmpty || urlText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+
+                                if let currentlyTestingModel {
+                                    ProgressView()
+                                        .controlSize(.mini)
+                                    Text("Testing \(currentlyTestingModel)…")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(1)
+                                }
+                            }
+
                             if let err = fetchError {
                                 Text(err)
                                     .font(.caption)
@@ -566,6 +567,24 @@ struct ProviderEditorSheet: View {
                                                     .foregroundStyle(Color.primary)
 
                                                 Spacer()
+
+                                                if let result = capabilityResults[m.modelID] {
+                                                    Image(systemName: result.connectionSucceeded ? "checkmark.circle.fill" : "xmark.circle.fill")
+                                                        .foregroundStyle(result.connectionSucceeded ? Color.green : Color.red)
+                                                        .help(result.connectionSucceeded ? "Connection test passed" : (result.errorMessage ?? "Connection test failed"))
+
+                                                    if result.visionSupported == true {
+                                                        Image(systemName: "eye.fill")
+                                                            .foregroundStyle(Color.blue)
+                                                            .help("Vision support verified")
+                                                    }
+
+                                                    if result.reasoningSupported == true {
+                                                        Image(systemName: "brain.head.profile")
+                                                            .foregroundStyle(Color.purple)
+                                                            .help("Thinking support verified")
+                                                    }
+                                                }
 
                                                 ModelTrashButton(action: {
                                                     deleteModel(m.id)
@@ -659,6 +678,9 @@ struct ProviderEditorSheet: View {
         .sheet(isPresented: $showingModelSelectionSheet) {
             modelSelectionSheetView
         }
+        .sheet(isPresented: $showingCapabilityTestSheet) {
+            capabilityTestSheet
+        }
     }
 
     // MARK: - Add Model Sheet
@@ -697,6 +719,176 @@ struct ProviderEditorSheet: View {
         .frame(width: 340)
     }
 
+    private var capabilityTestSheet: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Test Models")
+                    .font(.headline)
+                Text("Each selected model receives a connection request, a one-pixel image, and a thinking request.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            HStack {
+                Button("Select All") {
+                    selectedModelIDsForTest = Set(modelsList.map(\.modelID))
+                }
+                .buttonStyle(.plain)
+                .disabled(isTestingCapabilities)
+
+                Button("Deselect All") {
+                    selectedModelIDsForTest.removeAll()
+                }
+                .buttonStyle(.plain)
+                .disabled(isTestingCapabilities)
+
+                Spacer()
+
+                Text("\(selectedModelIDsForTest.count) selected")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Divider()
+
+            ScrollView {
+                LazyVStack(spacing: 2) {
+                    ForEach(modelsList, id: \.id) { model in
+                        Button {
+                            guard !isTestingCapabilities else { return }
+                            if selectedModelIDsForTest.contains(model.modelID) {
+                                selectedModelIDsForTest.remove(model.modelID)
+                            } else {
+                                selectedModelIDsForTest.insert(model.modelID)
+                            }
+                        } label: {
+                            HStack(spacing: 10) {
+                                Image(systemName: selectedModelIDsForTest.contains(model.modelID) ? "checkmark.square.fill" : "square")
+                                    .foregroundStyle(selectedModelIDsForTest.contains(model.modelID) ? Color.accentColor : Color.secondary)
+
+                                Text(model.modelID)
+                                    .font(.system(.body, design: .monospaced))
+                                    .foregroundStyle(Color.primary)
+
+                                Spacer()
+
+                                if currentlyTestingModel == model.modelID {
+                                    ProgressView()
+                                        .controlSize(.mini)
+                                } else if let result = capabilityResults[model.modelID] {
+                                    capabilityResultLabel(result)
+                                }
+                            }
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 7)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+
+                        if let error = capabilityTestErrors[model.modelID] {
+                            Text(error)
+                                .font(.caption2)
+                                .foregroundStyle(.red)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.horizontal, 36)
+                        }
+                    }
+                }
+            }
+            .frame(height: 300)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(Color(NSColor.textBackgroundColor))
+                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color(NSColor.separatorColor), lineWidth: 0.5))
+            )
+
+            HStack {
+                Button("Close") {
+                    showingCapabilityTestSheet = false
+                }
+                .disabled(isTestingCapabilities)
+
+                Spacer()
+
+                Button("Test Selected (\(selectedModelIDsForTest.count))") {
+                    testSelectedModels()
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(isTestingCapabilities || selectedModelIDsForTest.isEmpty)
+            }
+        }
+        .padding(20)
+        .frame(width: 560, height: 460)
+    }
+
+    @ViewBuilder
+    private func capabilityResultLabel(_ result: ModelCapabilityTestResult) -> some View {
+        if result.connectionSucceeded {
+            HStack(spacing: 7) {
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundStyle(Color.green)
+                    .help("Connection successful")
+                Image(systemName: result.visionSupported == true ? "eye.fill" : "eye.slash")
+                    .foregroundStyle(result.visionSupported == true ? Color.blue : Color.secondary)
+                    .help(result.visionSupported == true ? "Vision supported" : "Vision not supported")
+                Image(systemName: "brain.head.profile")
+                    .foregroundStyle(result.reasoningSupported == true ? Color.purple : Color.secondary.opacity(0.35))
+                    .help(result.reasoningSupported == true ? "Thinking supported" : "Thinking not supported")
+            }
+        } else {
+            Image(systemName: "xmark.circle.fill")
+                .foregroundStyle(Color.red)
+                .help(result.errorMessage ?? "Connection failed")
+        }
+    }
+
+    private func openCapabilityTestSheet() {
+        selectedModelIDsForTest = Set(modelsList.map(\.modelID))
+        capabilityTestErrors.removeAll()
+        showingCapabilityTestSheet = true
+    }
+
+    private func testSelectedModels() {
+        let selectedModels = modelsList.map(\.modelID).filter { selectedModelIDsForTest.contains($0) }
+        guard !selectedModels.isEmpty else { return }
+
+        isTestingCapabilities = true
+        capabilityTestErrors.removeAll()
+        let effectiveKey = apiKeyText.isEmpty
+            ? (ProcessInfo.processInfo.environment["LOCAL_SAP_AI_CORE_PROXY_KEY"] ?? "")
+            : apiKeyText
+
+        Task {
+            for modelID in selectedModels {
+                await MainActor.run { currentlyTestingModel = modelID }
+                let config = APIServiceConfig(
+                    name: nameText,
+                    apiUrl: URL(string: urlText) ?? URL(fileURLWithPath: ""),
+                    apiKey: effectiveKey,
+                    model: modelID,
+                    type: typeText
+                )
+                let result = await ModelCapabilityProbe.test(config: config, modelID: modelID)
+                await MainActor.run {
+                    capabilityResults[modelID] = result
+                    if let error = result.errorMessage {
+                        capabilityTestErrors[modelID] = error
+                    }
+                    persistCapabilityResultsIfPossible()
+                }
+            }
+            await MainActor.run {
+                currentlyTestingModel = nil
+                isTestingCapabilities = false
+            }
+        }
+    }
+
+    private func persistCapabilityResultsIfPossible() {
+        guard let serviceID = service?.id else { return }
+        ModelCapabilityTestStore.save(capabilityResults, for: serviceID)
+    }
+
     // MARK: - Save / Load
 
     private func loadInitialData() {
@@ -707,6 +899,7 @@ struct ProviderEditorSheet: View {
 
             if let id = service.id {
                 apiKeyText = (try? TokenManager.getToken(for: id.uuidString)) ?? ""
+                capabilityResults = ModelCapabilityTestStore.results(for: id)
                 let key = "service_models_\(id.uuidString)"
                 if let data = UserDefaults.standard.string(forKey: key)?.data(using: .utf8),
                    let list = try? JSONDecoder().decode([ServiceModelRow].self, from: data) {
@@ -751,6 +944,7 @@ struct ProviderEditorSheet: View {
                let str = String(data: data, encoding: .utf8) {
                 UserDefaults.standard.set(str, forKey: key)
             }
+            ModelCapabilityTestStore.save(capabilityResults, for: id)
         }
 
         onSave()
@@ -929,7 +1123,7 @@ struct ProviderEditorSheet: View {
         }
         .padding(20)
         .frame(width: 540, height: 460)
-        .onChange(of: modelSearchQuery) { newQuery in
+        .onChange(of: modelSearchQuery) { _, newQuery in
             updateSelectionForFilter(query: newQuery)
         }
     }

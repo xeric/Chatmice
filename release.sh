@@ -8,11 +8,14 @@ CONFIGURATION="${CONFIGURATION:-Release}"
 DIST_DIR="${DIST_DIR:-$ROOT_DIR/dist}"
 ARCHS="${ARCHS:-arm64 x86_64}"
 SKIP_CODE_SIGNING="${SKIP_CODE_SIGNING:-0}"
-CODE_SIGN_IDENTITY="${CODE_SIGN_IDENTITY:-Developer ID Application}"
-DEVELOPMENT_TEAM="${DEVELOPMENT_TEAM:-KJ5KHP7B96}"
-NOTARY_PROFILE="${NOTARY_PROFILE:-}"
+CODE_SIGN_IDENTITY="${CODE_SIGN_IDENTITY:-Developer ID Application: Juan Zhang (KJ5KHP7B96)}"
+RELEASE_ENTITLEMENTS="${RELEASE_ENTITLEMENTS:-$ROOT_DIR/Chatmice/Chatmice-no-icloud.entitlements}"
+NOTARY_PROFILE="${NOTARY_PROFILE:-notarytool-profile}"
+NOTARIZE="${NOTARIZE:-ask}"
+SIGN_RETRIES="${SIGN_RETRIES:-5}"
 SPARKLE_SIGN_UPDATE="${SPARKLE_SIGN_UPDATE:-}"
 REQUIRE_SPARKLE_SIGNATURE="${REQUIRE_SPARKLE_SIGNATURE:-0}"
+KEEP_WORK_DIR_ON_FAILURE="${KEEP_WORK_DIR_ON_FAILURE:-1}"
 
 for command in xcodebuild ditto hdiutil plutil shasum; do
     if ! command -v "$command" >/dev/null 2>&1; then
@@ -21,6 +24,73 @@ for command in xcodebuild ditto hdiutil plutil shasum; do
     fi
 done
 
+case "$NOTARIZE" in
+    ask)
+        SHOULD_NOTARIZE=0
+        if [[ -t 0 ]]; then
+            read -r -p "Notarize this release? (y/n) " -n 1 notarize_reply
+            echo
+            [[ "$notarize_reply" =~ ^[Yy]$ ]] && SHOULD_NOTARIZE=1
+        fi
+        ;;
+    auto)
+        SHOULD_NOTARIZE=1
+        ;;
+    0|1)
+        SHOULD_NOTARIZE="$NOTARIZE"
+        ;;
+    *)
+        echo "error: NOTARIZE must be 'ask', 'auto', '0', or '1'" >&2
+        exit 1
+        ;;
+esac
+
+if [[ "$SHOULD_NOTARIZE" == "1" ]]; then
+    if [[ "$SKIP_CODE_SIGNING" == "1" ]]; then
+        echo "error: notarization requires code signing" >&2
+        exit 1
+    fi
+    if ! notary_check_output="$(xcrun notarytool history --keychain-profile "$NOTARY_PROFILE" 2>&1)"; then
+        echo "error: notarization profile validation failed: $NOTARY_PROFILE" >&2
+        printf '%s\n' "$notary_check_output" >&2
+        exit 1
+    fi
+    for command in xcrun codesign; do
+        if ! command -v "$command" >/dev/null 2>&1; then
+            echo "error: notarization command not found: $command" >&2
+            exit 1
+        fi
+    done
+fi
+
+if [[ "$SKIP_CODE_SIGNING" != "1" ]] && ! command -v codesign >/dev/null 2>&1; then
+    echo "error: required command not found: codesign" >&2
+    exit 1
+fi
+
+if [[ "$SKIP_CODE_SIGNING" != "1" && ! -f "$RELEASE_ENTITLEMENTS" ]]; then
+    echo "error: release entitlements not found: $RELEASE_ENTITLEMENTS" >&2
+    exit 1
+fi
+
+sign_with_retry() {
+    local target="$1"
+    local attempt=1
+    while (( attempt <= SIGN_RETRIES )); do
+        if codesign --force --sign "$CODE_SIGN_IDENTITY" --options runtime --timestamp \
+            --preserve-metadata=identifier,entitlements,flags,requirements "$target"; then
+            return 0
+        fi
+        if (( attempt == SIGN_RETRIES )); then
+            echo "error: failed to sign after $SIGN_RETRIES attempts: $target" >&2
+            return 1
+        fi
+        echo "warning: timestamp service unavailable; retrying signature ($attempt/$SIGN_RETRIES)" >&2
+        sleep 5
+        ((attempt += 1))
+    done
+}
+
 WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/chatmice-release.XXXXXX")"
 ARCHIVE_PATH="$WORK_DIR/Chatmice.xcarchive"
 DERIVED_DATA_PATH="$WORK_DIR/DerivedData"
@@ -28,6 +98,11 @@ DMG_ROOT="$WORK_DIR/dmg-root"
 NOTARY_ZIP="$WORK_DIR/notarization.zip"
 
 cleanup() {
+    local status=$?
+    if [[ "$status" != "0" && "$KEEP_WORK_DIR_ON_FAILURE" == "1" ]]; then
+        echo "error: release workspace retained for diagnostics: $WORK_DIR" >&2
+        return
+    fi
     rm -rf "$WORK_DIR"
 }
 trap cleanup EXIT
@@ -45,16 +120,11 @@ build_args=(
     archive
     ONLY_ACTIVE_ARCH=NO
     "ARCHS=$ARCHS"
+    "CODE_SIGN_ENTITLEMENTS=$RELEASE_ENTITLEMENTS"
 )
 
 if [[ "$SKIP_CODE_SIGNING" == "1" ]]; then
     build_args+=(CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO)
-else
-    build_args+=(
-        "CODE_SIGN_IDENTITY=$CODE_SIGN_IDENTITY"
-        "DEVELOPMENT_TEAM=$DEVELOPMENT_TEAM"
-        CODE_SIGN_STYLE=Manual
-    )
 fi
 
 echo "==> Archiving Chatmice ($CONFIGURATION, $ARCHS)"
@@ -76,11 +146,23 @@ ZIP_PATH="$DIST_DIR/$ZIP_NAME"
 DMG_PATH="$DIST_DIR/$DMG_NAME"
 
 if [[ "$SKIP_CODE_SIGNING" != "1" ]]; then
+    echo "==> Applying trusted timestamps"
+    SPARKLE_ROOT="$APP_PATH/Contents/Frameworks/Sparkle.framework/Versions/Current"
+    for target in \
+        "$SPARKLE_ROOT/Autoupdate" \
+        "$SPARKLE_ROOT/XPCServices/Downloader.xpc" \
+        "$SPARKLE_ROOT/XPCServices/Installer.xpc" \
+        "$SPARKLE_ROOT/Updater.app" \
+        "$APP_PATH/Contents/Frameworks/Sparkle.framework" \
+        "$APP_PATH"; do
+        [[ -e "$target" ]] && sign_with_retry "$target"
+    done
+
     echo "==> Verifying Developer ID signature"
     codesign --verify --deep --strict --verbose=2 "$APP_PATH"
 fi
 
-if [[ -n "$NOTARY_PROFILE" ]]; then
+if [[ "$SHOULD_NOTARIZE" == "1" ]]; then
     echo "==> Notarizing application"
     ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" "$NOTARY_ZIP"
     xcrun notarytool submit "$NOTARY_ZIP" --keychain-profile "$NOTARY_PROFILE" --wait
@@ -102,7 +184,7 @@ hdiutil create \
     -ov \
     "$DMG_PATH"
 
-if [[ -n "$NOTARY_PROFILE" ]]; then
+if [[ "$SHOULD_NOTARIZE" == "1" ]]; then
     echo "==> Notarizing DMG"
     xcrun notarytool submit "$DMG_PATH" --keychain-profile "$NOTARY_PROFILE" --wait
     xcrun stapler staple "$DMG_PATH"
@@ -124,9 +206,8 @@ elif [[ "$REQUIRE_SPARKLE_SIGNATURE" == "1" ]]; then
     echo "error: sign_update not found; set SPARKLE_SIGN_UPDATE to Sparkle's sign_update binary" >&2
     exit 1
 else
-    echo "warning: sign_update not found; ZIP created without Sparkle signature metadata" >&2
+    echo "note: sign_update not found; ZIP created without Sparkle signature metadata" >&2
 fi
-
 (
     cd "$DIST_DIR"
     shasum -a 256 "$ZIP_NAME" "$DMG_NAME" > SHA256SUMS
@@ -139,7 +220,7 @@ build=$BUILD_NUMBER
 configuration=$CONFIGURATION
 architectures=$ARCHS
 code_signed=$([[ "$SKIP_CODE_SIGNING" == "1" ]] && echo false || echo true)
-notarized=$([[ -n "$NOTARY_PROFILE" ]] && echo true || echo false)
+notarized=$([[ "$SHOULD_NOTARIZE" == "1" ]] && echo true || echo false)
 EOF
 
 printf '\nRelease artifacts:\n'

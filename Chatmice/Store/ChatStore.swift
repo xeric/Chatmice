@@ -21,6 +21,29 @@ class ChatStore: ObservableObject {
 
         migrateFromJSONIfNeeded()
         ensureDefaultAPIServiceExists()
+        enableStreamingByDefaultIfNeeded()
+    }
+
+    private func enableStreamingByDefaultIfNeeded() {
+        let defaults = UserDefaults.standard
+        guard !defaults.bool(forKey: AppConstants.streamingDefaultsPatchCompletedKey) else { return }
+
+        let request = NSFetchRequest<APIServiceEntity>(entityName: "APIServiceEntity")
+        guard let services = try? viewContext.fetch(request) else { return }
+
+        for service in services {
+            service.useStreamResponse = true
+        }
+
+        do {
+            if viewContext.hasChanges {
+                try viewContext.save()
+            }
+        } catch {
+            viewContext.rollback()
+            return
+        }
+        defaults.set(true, forKey: AppConstants.streamingDefaultsPatchCompletedKey)
     }
 
     private func ensureDefaultAPIServiceExists() {
@@ -48,6 +71,7 @@ class ChatStore: ObservableObject {
         var googleService = allServices.first(where: { $0.name == "Google AI" || $0.type == "gemini" })
 
         if let service = openAIService {
+            service.useStreamResponse = true
             service.imageUploadsAllowed = true
             service.pdfUploadsAllowed = true
         } else {
@@ -72,6 +96,7 @@ class ChatStore: ObservableObject {
         }
 
         if let service = googleService {
+            service.useStreamResponse = true
             service.imageUploadsAllowed = true
             service.pdfUploadsAllowed = true
             service.url = URL(string: "http://127.0.0.1:9988/google/v1beta")

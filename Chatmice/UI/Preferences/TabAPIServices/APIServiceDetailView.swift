@@ -61,7 +61,7 @@ struct APIServiceDetailView: View {
                                 }
                             }
                             .frame(maxWidth: .infinity, alignment: .leading)
-                            .onChange(of: viewModel.type) { newValue in
+                            .onChange(of: viewModel.type) { _, newValue in
                                 viewModel.onChangeApiType(newValue)
                             }
                         }
@@ -91,7 +91,7 @@ struct APIServiceDetailView: View {
                                 .textFieldStyle(RoundedBorderTextFieldStyle())
                                 .focused($isFocused)
                                 .blur(radius: !viewModel.apiKey.isEmpty && !isFocused ? 3 : 0.0, opaque: false)
-                                .onChange(of: viewModel.apiKey) { newValue in
+                                .onChange(of: viewModel.apiKey) { _, newValue in
                                     viewModel.onChangeApiKey(newValue)
                                 }
                         }
@@ -119,7 +119,7 @@ struct APIServiceDetailView: View {
                             }
                             Text("Enter custom model").tag("custom")
                         }
-                        .onChange(of: viewModel.selectedModel) { newValue in
+                        .onChange(of: viewModel.selectedModel) { _, newValue in
                             if newValue == "custom" {
                                 viewModel.isCustomModel = true
                             }

@@ -99,7 +99,7 @@ enum ClaudeRequestCompatibility {
     }
 }
 
-class ClaudeHandler: APIService {
+final class ClaudeHandler: APIService, @unchecked Sendable {
     let name: String
     let baseURL: URL
     private let apiKey: String
@@ -422,7 +422,7 @@ class ClaudeHandler: APIService {
     private func parseSSEEvent(_ event: String) -> (Bool, Error?, String?, String?) {
         var isFinished = false
         var textContent = ""
-        var parseError: Error?
+        let parseError: Error? = nil
         var jsonString: String?
 
         if event.hasPrefix("data: ") {

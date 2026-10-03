@@ -6,19 +6,30 @@
 //  Created by Renat Notfullin on 18.03.2023.
 //
 
+import Combine
 import CoreData
 import SwiftUI
 import UniformTypeIdentifiers
+
+@Observable
+final class ChatInputBuffer {
+    var text: String
+
+    init(text: String = "") {
+        self.text = text
+    }
+}
 
 struct ChatView: View {
     let viewContext: NSManagedObjectContext
     @ObservedObject var chat: ChatEntity
     @Binding var searchText: String
+    let window: NSWindow?
     @AppStorage("lastOpenedChatId") var lastOpenedChatId = ""
     
     // UI State
     @State private var messageField = ""
-    @State private var newMessage: String = ""
+    @State private var inputBuffer: ChatInputBuffer
     @State private var editSystemMessage: Bool = false
     @State private var attachedImages: [ImageAttachment] = []
     @State private var attachedFiles: [DocumentAttachment] = []
@@ -42,11 +53,13 @@ struct ChatView: View {
     init(
         viewContext: NSManagedObjectContext,
         chat: ChatEntity,
-        searchText: Binding<String>
+        searchText: Binding<String>,
+        window: NSWindow?
     ) {
         self.viewContext = viewContext
         self._chat = ObservedObject(wrappedValue: chat)
         self._searchText = searchText
+        self.window = window
 
         // Initialize view models
         let viewModel = ChatViewModel(chat: chat, viewContext: viewContext)
@@ -63,7 +76,7 @@ struct ChatView: View {
             imageIDs: draftSnapshot.imageIDs,
             fileIDs: draftSnapshot.fileIDs
         )
-        self._newMessage = State(initialValue: draftSnapshot.message)
+        self._inputBuffer = State(initialValue: ChatInputBuffer(text: draftSnapshot.message))
         self._attachedImages = State(initialValue: attachmentSnapshot.images)
         self._attachedFiles = State(initialValue: attachmentSnapshot.files)
     }
@@ -84,9 +97,8 @@ struct ChatView: View {
         logicHandler.isStreaming || chat.waitingForResponse
     }
 
-    private var draftSignature: DraftSignature {
-        DraftSignature(
-            message: newMessage,
+    private var attachmentDraftSignature: AttachmentDraftSignature {
+        AttachmentDraftSignature(
             imageIDs: attachedImages.map(\.id),
             fileIDs: attachedFiles.map(\.id),
             imageReadyStates: attachedImages.map(\.isReadyForUpload),
@@ -114,7 +126,7 @@ struct ChatView: View {
         .onDisappear {
             draftManager.persistImmediately(
                 chat: chat,
-                message: newMessage,
+                message: inputBuffer.text,
                 images: attachedImages,
                 files: attachedFiles,
                 isEditingSystemMessage: editSystemMessage
@@ -128,9 +140,16 @@ struct ChatView: View {
                 chatViewModel.recreateMessageManager()
             }
         }
-        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("RetryMessage"))) { _ in
+        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("RetryMessage"))) { notification in
+            if let targetChatID = notification.userInfo?["chatId"] as? UUID {
+                guard targetChatID == chat.id else { return }
+            } else if let targetWindowID = notification.userInfo?["windowId"] as? Int {
+                guard targetWindowID != 0, targetWindowID == window?.windowNumber else { return }
+            } else {
+                return
+            }
             lastRequestStartTime = Date()
-            logicHandler.handleRetryMessage(newMessage: &newMessage)
+            logicHandler.handleRetryMessage()
         }
         .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("StopInference"))) { _ in
             logicHandler.stopInference()
@@ -164,26 +183,26 @@ struct ChatView: View {
                 SearchNavigationView(chatViewModel: chatViewModel)
             }
         }
-        .onChange(of: searchText) { newSearchText in
+        .onChange(of: searchText) { _, newSearchText in
             chatViewModel.updateSearchOccurrences(searchText: newSearchText)
         }
-        .onChange(of: draftSignature) { _ in
+        .onChange(of: attachmentDraftSignature) {
             guard !editSystemMessage else { return }
             scheduleDraftSave()
         }
-        .onChange(of: editSystemMessage) { isEditing in
-            if !isEditing, newMessage.isEmpty {
-                newMessage = draftManager.draftMessage(for: chat)
+        .onChange(of: editSystemMessage) { _, isEditing in
+            if !isEditing, inputBuffer.text.isEmpty {
+                inputBuffer.text = draftManager.draftMessage(for: chat)
             }
         }
-        .onChange(of: chatViewModel.sortedMessages.count) { newCount in
+        .onChange(of: chatViewModel.sortedMessages.count) { _, newCount in
             if newCount == 1 {
                 withAnimation {
                     isBottomContainerExpanded = false
                 }
             }
         }
-        .onChange(of: chat.lastMessage?.body) { _ in
+        .onChange(of: chat.lastMessage?.body) {
             guard let lastMessage = chat.lastMessage, !lastMessage.own else { return }
             updateReasoningTiming(for: lastMessage, isStreamingActive: logicHandler.isStreaming)
         }
@@ -198,7 +217,7 @@ struct ChatView: View {
         ChatMessagesView(
             chat: chat,
             chatViewModel: chatViewModel,
-            newMessage: $newMessage,
+            inputBuffer: inputBuffer,
             editSystemMessage: $editSystemMessage,
             isStreaming: $logicHandler.isStreaming,
             currentError: $logicHandler.currentError,
@@ -212,7 +231,7 @@ struct ChatView: View {
     private var chatInputView: some View {
         ChatInputView(
             chat: chat,
-            newMessage: $newMessage,
+            inputBuffer: inputBuffer,
             editSystemMessage: $editSystemMessage,
             attachedImages: $attachedImages,
             attachedFiles: $attachedFiles,
@@ -225,18 +244,19 @@ struct ChatView: View {
             onAddImage: handleAddImage,
             onAddFile: handleAddFile,
             onStopInference: handleStopInference,
-            onCancelSystemMessageEdit: cancelSystemMessageEdit
+            onCancelSystemMessageEdit: cancelSystemMessageEdit,
+            onTextSettled: scheduleDraftSave
         )
     }
 
     private func handleSendMessage() {
         lastRequestStartTime = Date()
         logicHandler.sendMessage(
-            messageText: newMessage,
+            messageText: inputBuffer.text,
             attachedImages: attachedImages,
             attachedFiles: attachedFiles
         )
-        newMessage = ""
+        inputBuffer.text = ""
         attachedImages = []
         attachedFiles = []
         draftManager.clearDraft(chat: chat)
@@ -268,7 +288,7 @@ struct ChatView: View {
            !oldChat.isDeleted {
             draftManager.persistImmediately(
                 chat: oldChat,
-                message: newMessage,
+                message: inputBuffer.text,
                 images: attachedImages,
                 files: attachedFiles,
                 isEditingSystemMessage: editSystemMessage
@@ -280,7 +300,7 @@ struct ChatView: View {
             imageIDs: draftSnapshot.imageIDs,
             fileIDs: draftSnapshot.fileIDs
         )
-        newMessage = draftSnapshot.message
+        inputBuffer.text = draftSnapshot.message
         attachedImages = attachmentSnapshot.images
         attachedFiles = attachmentSnapshot.files
         editSystemMessage = false
@@ -292,16 +312,16 @@ struct ChatView: View {
     private func scheduleDraftSave() {
         draftManager.scheduleSave(
             chat: chat,
-            message: newMessage,
-            images: attachedImages,
-            files: attachedFiles,
+            messageProvider: { inputBuffer.text },
+            imageProvider: { attachedImages },
+            fileProvider: { attachedFiles },
             isEditingSystemMessage: editSystemMessage
         )
     }
 
     private func cancelSystemMessageEdit() {
         guard editSystemMessage else { return }
-        newMessage = draftManager.draftMessage(for: chat)
+        inputBuffer.text = draftManager.draftMessage(for: chat)
         editSystemMessage = false
     }
 
@@ -364,8 +384,7 @@ struct ChatView: View {
     }
 }
 
-private struct DraftSignature: Equatable {
-    let message: String
+private struct AttachmentDraftSignature: Equatable {
     let imageIDs: [UUID]
     let fileIDs: [UUID]
     let imageReadyStates: [Bool]

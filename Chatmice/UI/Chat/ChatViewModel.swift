@@ -109,13 +109,15 @@ class ChatViewModel: NSObject, ObservableObject, NSFetchedResultsControllerDeleg
     func sendMessage(
         _ message: String,
         contextSize: Int,
+        replacing responseToReplace: MessageEntity? = nil,
         completion: @escaping (Result<Void, Error>) -> Void
     ) {
         self.messageManager.sendMessage(
             message,
             in: chat,
-            contextSize: contextSize
-        ) { [weak self] result in
+            contextSize: contextSize,
+            replacing: responseToReplace
+        ) { result in
             switch result {
             case .success:
                 completion(.success(()))
@@ -126,8 +128,18 @@ class ChatViewModel: NSObject, ObservableObject, NSFetchedResultsControllerDeleg
     }
 
     @MainActor
-    func sendMessageStream(_ message: String, contextSize: Int, completion: @escaping (Result<Void, Error>) -> Void) {
-        self.messageManager.sendMessageStream(message, in: chat, contextSize: contextSize) { [weak self] result in
+    func sendMessageStream(
+        _ message: String,
+        contextSize: Int,
+        replacing responseToReplace: MessageEntity? = nil,
+        completion: @escaping (Result<Void, Error>) -> Void
+    ) {
+        self.messageManager.sendMessageStream(
+            message,
+            in: chat,
+            contextSize: contextSize,
+            replacing: responseToReplace
+        ) { [weak self] result in
             switch result {
             case .success:
                 self?.chat.objectWillChange.send()

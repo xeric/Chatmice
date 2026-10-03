@@ -12,7 +12,10 @@ final class ChatDraftManager: ObservableObject {
     private let viewContext: NSManagedObjectContext
     private let backgroundContext: NSManagedObjectContext
     private var saveWorkItem: DispatchWorkItem?
-
+    private weak var pendingChat: ChatEntity?
+    private var pendingMessageProvider: (() -> String)?
+    private var pendingImageProvider: (() -> [ImageAttachment])?
+    private var pendingFileProvider: (() -> [DocumentAttachment])?
     init(viewContext: NSManagedObjectContext) {
         self.viewContext = viewContext
         let context = NSManagedObjectContext(concurrencyType: .privateQueueConcurrencyType)
@@ -25,35 +28,38 @@ final class ChatDraftManager: ObservableObject {
 
     func scheduleSave(
         chat: ChatEntity,
-        message: String,
-        images: [ImageAttachment],
-        files: [DocumentAttachment],
+        messageProvider: @escaping () -> String,
+        imageProvider: @escaping () -> [ImageAttachment],
+        fileProvider: @escaping () -> [DocumentAttachment],
         isEditingSystemMessage: Bool
     ) {
         guard !isEditingSystemMessage else { return }
         saveWorkItem?.cancel()
 
-        let snapshotMessage = message
-        let snapshotImageIDs = images
-            .filter { $0.error == nil }
-            .map(\.id)
-        let snapshotFileIDs = files
-            .filter { $0.error == nil }
-            .map(\.id)
-        let chatID = chat.objectID
+        pendingChat = chat
+        pendingMessageProvider = messageProvider
+        pendingImageProvider = imageProvider
+        pendingFileProvider = fileProvider
 
         let workItem = DispatchWorkItem { [weak self] in
-            guard let self else { return }
+            guard let self, let chat = self.pendingChat else { return }
+            let message = self.pendingMessageProvider?() ?? ""
+            let imageIDs = (self.pendingImageProvider?() ?? [])
+                .filter { $0.error == nil }
+                .map(\.id)
+            let fileIDs = (self.pendingFileProvider?() ?? [])
+                .filter { $0.error == nil }
+                .map(\.id)
             self.persistDraft(
-                chatID: chatID,
-                message: snapshotMessage,
-                imageIDs: snapshotImageIDs,
-                fileIDs: snapshotFileIDs
+                chatID: chat.objectID,
+                message: message,
+                imageIDs: imageIDs,
+                fileIDs: fileIDs
             )
         }
 
         saveWorkItem = workItem
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35, execute: workItem)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.75, execute: workItem)
     }
 
     func persistImmediately(

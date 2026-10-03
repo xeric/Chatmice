@@ -13,10 +13,60 @@ import AppKit
 import CoreData
 import SwiftUI
 
+struct ProviderBrandIcon: View {
+    let name: String
+    let type: String
+
+    private var identifier: String {
+        "\(name) \(type)".lowercased()
+    }
+
+    var body: some View {
+        if identifier.contains("anthropic") || identifier.contains("claude") {
+            brandImage("logo_claude", color: Color(red: 0.94, green: 0.42, blue: 0.16))
+        }
+        else if identifier.contains("gemini") || identifier.contains("google") {
+            brandImage("logo_gemini", color: Color(red: 0.20, green: 0.76, blue: 0.42))
+        }
+        else if identifier.contains("openai") || identifier.contains("chatgpt") || identifier.contains("gpt") {
+            brandImage("logo_openai-responses", color: Color(red: 0.18, green: 0.55, blue: 0.96))
+        }
+        else if identifier.contains("deepseek") {
+            Image(systemName: "bolt.fill")
+                .resizable()
+                .scaledToFit()
+                .foregroundStyle(Color.cyan)
+        }
+        else if identifier.contains("ollama") {
+            Image(systemName: "terminal.fill")
+                .resizable()
+                .scaledToFit()
+                .foregroundStyle(Color.purple)
+        }
+        else {
+            Image(systemName: "network")
+                .resizable()
+                .scaledToFit()
+                .foregroundStyle(Color.accentColor)
+        }
+    }
+
+    private func brandImage(_ name: String, color: Color) -> some View {
+        Image(name)
+            .renderingMode(.template)
+            .resizable()
+            .scaledToFit()
+            .foregroundStyle(color)
+    }
+}
+
 struct ModelPickerPopoverView: View {
     let apiServices: [APIServiceEntity]
     let selectedChat: ChatEntity?
     let onSelect: (APIServiceEntity, String) -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var testedCapabilitiesByService: [UUID: [String: ModelCapabilityTestResult]] = [:]
+    @Environment(\.openWindow) private var openWindow
 
     @State private var searchQuery = ""
     @State private var filterMode: FilterMode = .all
@@ -73,6 +123,31 @@ struct ModelPickerPopoverView: View {
                     RoundedRectangle(cornerRadius: 6, style: .continuous)
                         .fill(Color(red: 0.18, green: 0.18, blue: 0.20))
                 )
+
+                Button {
+                    UserDefaults.standard.set(SettingsPage.providers.rawValue, forKey: "requestedSettingsPage")
+                    openWindow(id: "settings")
+                    NSApp.activate(ignoringOtherApps: true)
+                    DispatchQueue.main.async {
+                        NotificationCenter.default.post(
+                            name: NSNotification.Name("OpenSettingsPage"),
+                            object: SettingsPage.providers.rawValue
+                        )
+                    }
+                    dismiss()
+                } label: {
+                    Image(systemName: "gearshape")
+                        .font(.system(size: 12, weight: .medium))
+                        .frame(width: 24, height: 24)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(Color.white.opacity(0.65))
+                .background(
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(Color(red: 0.18, green: 0.18, blue: 0.20))
+                )
+                .help("Configure Models and Providers")
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 8)
@@ -92,7 +167,8 @@ struct ModelPickerPopoverView: View {
                         }
                     }
                 }
-                .padding(.horizontal, 8)
+                .padding(.leading, 8)
+                .padding(.trailing, 24)
                 .padding(.vertical, 8)
             }
             .frame(height: 380)
@@ -101,6 +177,10 @@ struct ModelPickerPopoverView: View {
         .background(Color(red: 0.14, green: 0.14, blue: 0.15))
         .onAppear {
             loadFavorites()
+            testedCapabilitiesByService = Dictionary(uniqueKeysWithValues: apiServices.compactMap { service in
+                guard let id = service.id else { return nil }
+                return (id, ModelCapabilityTestStore.results(for: id))
+            })
         }
     }
 
@@ -123,7 +203,7 @@ struct ModelPickerPopoverView: View {
         VStack(alignment: .leading, spacing: 2) {
             // Section Header
             HStack(spacing: 6) {
-                providerIcon(name: service.name ?? "", type: service.type ?? "")
+                ProviderBrandIcon(name: service.name ?? "", type: service.type ?? "")
                     .frame(width: 13, height: 13)
 
                 Text(service.name ?? "Provider")
@@ -149,8 +229,9 @@ struct ModelPickerPopoverView: View {
     private func modelRow(service: APIServiceEntity, modelID: String) -> some View {
         let isSelected = selectedChat?.apiService == service && selectedChat?.gptModel == modelID
         let isFav = favorites.contains(modelID)
-        let isVision = isVisionModel(modelID)
-        let isReasoning = isReasoningModel(modelID)
+        let testedCapabilities = service.id.flatMap { testedCapabilitiesByService[$0]?[modelID] }
+        let isVision = testedCapabilities?.visionSupported ?? isVisionModel(modelID)
+        let isReasoning = testedCapabilities?.reasoningSupported ?? isReasoningModel(modelID)
 
         return Button(action: {
             onSelect(service, modelID)
@@ -215,7 +296,8 @@ struct ModelPickerPopoverView: View {
         if let id = service.id {
             let key = "service_models_\(id.uuidString)"
             if let data = UserDefaults.standard.string(forKey: key)?.data(using: .utf8),
-               let items = try? JSONDecoder().decode([ServiceModelRow].self, from: data) {
+                let items = try? JSONDecoder().decode([ServiceModelRow].self, from: data)
+            {
                 list = items.map(\.modelID).filter { !$0.isEmpty }
             }
         }
@@ -244,21 +326,21 @@ struct ModelPickerPopoverView: View {
 
     private func isReasoningModel(_ id: String) -> Bool {
         let lower = id.lowercased()
-        return lower.contains("o1") || lower.contains("o3") || lower.contains("r1") ||
-               lower.contains("reason") || lower.contains("luna") || lower.contains("think") ||
-               lower.contains("opus")
+        return lower.contains("o1") || lower.contains("o3") || lower.contains("r1") || lower.contains("reason")
+            || lower.contains("luna") || lower.contains("think") || lower.contains("opus")
     }
 
     private func isVisionModel(_ id: String) -> Bool {
         let lower = id.lowercased()
-        return lower.contains("4o") || lower.contains("vl") || lower.contains("vision") ||
-               lower.contains("gemini") || lower.contains("sonnet") || lower.contains("claude")
+        return lower.contains("4o") || lower.contains("vl") || lower.contains("vision") || lower.contains("gemini")
+            || lower.contains("sonnet") || lower.contains("claude")
     }
 
     private func toggleFavorite(_ id: String) {
         if favorites.contains(id) {
             favorites.remove(id)
-        } else {
+        }
+        else {
             favorites.insert(id)
         }
         saveFavorites()
@@ -266,45 +348,18 @@ struct ModelPickerPopoverView: View {
 
     private func loadFavorites() {
         if let data = favoriteModelIDsJSON.data(using: .utf8),
-           let arr = try? JSONDecoder().decode([String].self, from: data) {
+            let arr = try? JSONDecoder().decode([String].self, from: data)
+        {
             favorites = Set(arr)
         }
     }
 
     private func saveFavorites() {
         if let data = try? JSONEncoder().encode(Array(favorites)),
-           let str = String(data: data, encoding: .utf8) {
+            let str = String(data: data, encoding: .utf8)
+        {
             favoriteModelIDsJSON = str
         }
     }
 
-    @ViewBuilder
-    private func providerIcon(name: String, type: String) -> some View {
-        let lower = (name + " " + type).lowercased()
-        if lower.contains("anthropic") || lower.contains("claude") {
-            Text("A\\")
-                .font(.system(size: 9, weight: .black, design: .serif))
-                .foregroundStyle(Color(red: 0.85, green: 0.45, blue: 0.35))
-        } else if lower.contains("gemini") || lower.contains("google") {
-            Text("G")
-                .font(.system(size: 9, weight: .heavy, design: .rounded))
-                .foregroundStyle(Color(red: 0.3, green: 0.5, blue: 0.9))
-        } else if lower.contains("deepseek") {
-            Image(systemName: "sparkles")
-                .font(.system(size: 8))
-                .foregroundStyle(Color.cyan)
-        } else if lower.contains("ollama") {
-            Image(systemName: "desktopcomputer")
-                .font(.system(size: 8))
-                .foregroundStyle(Color.white.opacity(0.8))
-        } else if lower.contains("cpa") || lower.contains("proxy") || lower.contains("server") {
-            Image(systemName: "server.rack")
-                .font(.system(size: 8))
-                .foregroundStyle(Color.white.opacity(0.8))
-        } else {
-            Image(systemName: "circle.hexagonpath.fill")
-                .font(.system(size: 8))
-                .foregroundStyle(Color.green)
-        }
-    }
 }

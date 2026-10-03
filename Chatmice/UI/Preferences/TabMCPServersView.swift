@@ -14,11 +14,20 @@ enum MCPFormMode: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
+private struct MCPToolInspector: Identifiable {
+    let serverName: String
+    let tools: [MCPToolSummary]
+
+    var id: String { serverName }
+}
+
 struct TabMCPServersView: View {
     @AppStorage("mcpServersJSON") private var mcpServersJSON: String = "[]"
     @State private var servers: [MCPServerConfig] = []
     @State private var showingEditSheet = false
     @State private var editingServer: MCPServerConfig? = nil
+    @State private var toolInspector: MCPToolInspector?
+    @State private var reconnectingServerNames: Set<String> = []
 
     @State private var formMode: MCPFormMode = .form
     @State private var formKind: MCPServerConfig.Kind = .stdio
@@ -84,6 +93,9 @@ struct TabMCPServersView: View {
         .sheet(isPresented: $showingEditSheet) {
             serverFormSheet
         }
+        .sheet(item: $toolInspector) { inspector in
+            toolInspectorSheet(inspector)
+        }
     }
 
     private func serverRow(_ server: MCPServerConfig) -> some View {
@@ -147,20 +159,36 @@ struct TabMCPServersView: View {
 
             Spacer()
 
-            // Reconnect button
             Button(action: {
-                Task {
-                    await MCPService.shared.sync(servers: servers)
-                    refreshStatus()
-                }
+                showTools(for: server)
             }) {
-                Image(systemName: "arrow.clockwise")
+                Image(systemName: "eye")
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
             }
             .buttonStyle(.plain)
+            .help(isConnected ? "View Available Tools" : "Connect the server to view its tools")
+            .disabled(!isConnected)
+            .padding(.trailing, 2)
+
+            // Reconnect button
+            Button(action: {
+                reconnect(server)
+            }) {
+                if reconnectingServerNames.contains(server.name) {
+                    ProgressView()
+                        .controlSize(.mini)
+                        .frame(width: 11, height: 11)
+                } else {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .buttonStyle(.plain)
             .help("Reconnect / Refresh Server")
             .padding(.trailing, 2)
+            .disabled(!server.enabled || reconnectingServerNames.contains(server.name))
 
             // Edit button
             Button(action: {
@@ -203,6 +231,75 @@ struct TabMCPServersView: View {
         )
     }
 
+    private func toolInspectorSheet(_ inspector: MCPToolInspector) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .firstTextBaseline) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(inspector.serverName)
+                        .font(.headline)
+                    Text("\(inspector.tools.count) available tools")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer()
+
+                Button("Done") {
+                    toolInspector = nil
+                }
+                .keyboardShortcut(.cancelAction)
+            }
+
+            Divider()
+
+            if inspector.tools.isEmpty {
+                ContentUnavailableView(
+                    "No Tools Available",
+                    systemImage: "wrench.and.screwdriver",
+                    description: Text("This server did not advertise any tools.")
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 0) {
+                        ForEach(inspector.tools) { tool in
+                            VStack(alignment: .leading, spacing: 5) {
+                                Text(tool.name)
+                                    .font(.system(.body, design: .monospaced, weight: .semibold))
+                                    .textSelection(.enabled)
+
+                                if !tool.description.isEmpty {
+                                    Text(tool.description)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                        .textSelection(.enabled)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.vertical, 10)
+
+                            if tool.id != inspector.tools.last?.id {
+                                Divider()
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        .padding(20)
+        .frame(width: 560, height: 500)
+    }
+
+    private func showTools(for server: MCPServerConfig) {
+        Task {
+            let tools = await MCPService.shared.tools(forServer: server.name)
+            await MainActor.run {
+                toolInspector = MCPToolInspector(serverName: server.name, tools: tools)
+            }
+        }
+    }
+
     private var isSaveDisabled: Bool {
         if formMode == .json {
             return rawJSON.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || jsonError != nil
@@ -228,7 +325,7 @@ struct TabMCPServersView: View {
                 }
                 .pickerStyle(.segmented)
                 .frame(width: 200)
-                .onChange(of: formMode) { newMode in
+                .onChange(of: formMode) { _, newMode in
                     if newMode == .json {
                         syncFormToJSON()
                     } else {
@@ -356,7 +453,7 @@ struct TabMCPServersView: View {
                 .background(Color(NSColor.controlBackgroundColor))
                 .cornerRadius(6)
                 .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.2), lineWidth: 1))
-                .onChange(of: rawJSON) { _ in
+                .onChange(of: rawJSON) {
                     validateJSON()
                 }
 
@@ -606,6 +703,18 @@ struct TabMCPServersView: View {
         var updated = servers
         updated.removeAll { $0.id == server.id }
         saveServers(updated)
+    }
+
+    private func reconnect(_ server: MCPServerConfig) {
+        reconnectingServerNames.insert(server.name)
+        Task {
+            await MCPService.shared.reconnect(server)
+            let updatedStatuses = await MCPService.shared.statuses()
+            await MainActor.run {
+                statuses = updatedStatuses
+                reconnectingServerNames.remove(server.name)
+            }
+        }
     }
 
     private func refreshStatus() {

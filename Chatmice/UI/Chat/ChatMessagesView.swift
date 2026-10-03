@@ -11,7 +11,7 @@ import SwiftUI
 struct ChatMessagesView: View {
     @ObservedObject var chat: ChatEntity
     @ObservedObject var chatViewModel: ChatViewModel
-    @Binding var newMessage: String
+    let inputBuffer: ChatInputBuffer
     @Binding var editSystemMessage: Bool
     @Binding var isStreaming: Bool
     @Binding var currentError: ErrorMessage?
@@ -30,15 +30,6 @@ struct ChatMessagesView: View {
         activityStore.activeSnapshot(for: chat.id)
     }
 
-    private var activeActivity: ChatActivitySnapshot? {
-        guard let snapshot = activitySnapshot, snapshot.phase.showsInlineIndicator else { return nil }
-        return snapshot
-    }
-
-    private var activeToolActivity: ChatActivitySnapshot? {
-        guard let snapshot = activitySnapshot, snapshot.phase.showsStandaloneToolCard else { return nil }
-        return snapshot
-    }
 
     private var activityAnchorID: String {
         "chat-activity-\(chat.id.uuidString)"
@@ -51,7 +42,7 @@ struct ChatMessagesView: View {
                     SystemMessageBubbleView(
                         message: chat.systemMessage,
                         color: chat.persona?.color,
-                        newMessage: $newMessage,
+                        inputBuffer: inputBuffer,
                         editSystemMessage: $editSystemMessage,
                         searchText: $searchText
                     )
@@ -59,6 +50,8 @@ struct ChatMessagesView: View {
 
                     if !chatViewModel.sortedMessages.isEmpty {
                         ForEach(chatViewModel.sortedMessages, id: \.objectID) { messageEntity in
+                            let isLatest = messageEntity.objectID == chatViewModel.sortedMessages.last?.objectID
+                            let isActiveAssistant = isLatest && !messageEntity.own && activitySnapshot != nil
                             let storedDuration = messageEntity.reasoningDuration > 0 ? messageEntity.reasoningDuration : nil
                             let bubbleContent = ChatBubbleContent(
                                 message: messageEntity.body,
@@ -66,22 +59,24 @@ struct ChatMessagesView: View {
                                 waitingForResponse: messageEntity.waitingForResponse,
                                 errorMessage: nil,
                                 systemMessage: false,
-                                isStreaming: isStreaming,
-                                isLatestMessage: messageEntity.objectID == chatViewModel.sortedMessages.last?.objectID,
+                                isStreaming: isStreaming && isLatest && !messageEntity.own,
+                                isLatestMessage: isLatest,
                                 reasoningDuration: reasoningDurations[messageEntity.objectID] ?? storedDuration,
                                 isActiveReasoning: messageEntity.objectID == activeReasoningMessageID
                             )
-                            ChatBubbleView(content: bubbleContent, message: messageEntity, searchText: $searchText, currentSearchOccurrence: chatViewModel.currentSearchOccurrence)
-                                .id(messageEntity.objectID)
+                            ChatBubbleView(
+                                content: bubbleContent,
+                                message: messageEntity,
+                                searchText: $searchText,
+                                currentSearchOccurrence: chatViewModel.currentSearchOccurrence,
+                                activitySnapshot: isActiveAssistant ? activitySnapshot : nil
+                            )
+                            .id(messageEntity.objectID)
                         }
                     }
 
-                    if let activeToolActivity {
-                        ActiveToolActivityView(snapshot: activeToolActivity)
-                            .id(activityAnchorID)
-                    }
-                    else if let activeActivity {
-                        ChatActivityIndicatorView(snapshot: activeActivity)
+                    if chatViewModel.sortedMessages.last?.own != false, let activitySnapshot {
+                        AssistantTurnActivityView(snapshot: activitySnapshot)
                             .id(activityAnchorID)
                     }
                     else if let error = currentError {
@@ -121,7 +116,7 @@ struct ChatMessagesView: View {
                         break
                     }
                 }
-                .onChange(of: chat.lastMessage?.body) { _ in
+                .onChange(of: chat.lastMessage?.body) {
                     if isStreaming && !userIsScrolling {
                         scrollDebounceWorkItem?.cancel()
 
@@ -139,13 +134,13 @@ struct ChatMessagesView: View {
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1, execute: workItem)
                     }
                 }
-                .onChange(of: activitySnapshot?.phase) { phase in
+                .onChange(of: activitySnapshot?.phase) { _, phase in
                     guard phase != nil, !userIsScrolling else { return }
                     withAnimation(.easeOut(duration: 0.22)) {
                         scrollView.scrollTo(activityAnchorID, anchor: .bottom)
                     }
                 }
-                .onChange(of: chatViewModel.sortedMessages.count) { _ in
+                .onChange(of: chatViewModel.sortedMessages.count) {
                     if activitySnapshot != nil {
                         withAnimation {
                             scrollView.scrollTo(activityAnchorID, anchor: .bottom)
@@ -186,7 +181,7 @@ struct ChatMessagesView: View {
                         }
                     }
                 }
-                .onChange(of: chatViewModel.currentSearchOccurrence) { newOccurrence in
+                .onChange(of: chatViewModel.currentSearchOccurrence) { _, newOccurrence in
                     if let occurrence = newOccurrence {
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                             // Generate element ID for the occurrence
@@ -204,22 +199,7 @@ struct ChatMessagesView: View {
     }
 }
 
-private extension ChatActivityPhase {
-    var showsInlineIndicator: Bool {
-        !showsStandaloneToolCard
-    }
-
-    var showsStandaloneToolCard: Bool {
-        switch self {
-        case .awaitingApproval, .runningTool:
-            return true
-        default:
-            return false
-        }
-    }
-}
-
-private struct ActiveToolActivityView: View {
+struct AssistantTurnActivityView: View {
     let snapshot: ChatActivitySnapshot
 
     @ViewBuilder
@@ -230,11 +210,10 @@ private struct ActiveToolActivityView: View {
         case .runningTool(let tool, let detail):
             ToolActivityView(name: tool, input: detail, state: .running)
         default:
-            EmptyView()
+            ChatActivityIndicatorView(snapshot: snapshot)
         }
     }
 }
-
 
 private struct ChatActivityIndicatorView: View {
     let snapshot: ChatActivitySnapshot

@@ -8,6 +8,7 @@
 import AppKit
 import AttributedText
 import CoreData
+import MermaidRender
 import SwiftMath
 import SwiftUI
 
@@ -521,7 +522,33 @@ struct MessageContentView: View {
             .padding(.bottom, 12)
 
         case .code(let code, let lang, let indent):
-            renderCode(code: code, lang: lang, indent: indent, isStreaming: isStreaming, elementIndex: elementIndex)
+            if lang.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "mermaid",
+                !isStreaming
+            {
+                MermaidView(code, spacing: .regular)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(12)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .fill(Color.primary.opacity(0.04))
+                    )
+                    .contextMenu {
+                        Button("Copy Mermaid Source") {
+                            let pasteboard = NSPasteboard.general
+                            pasteboard.clearContents()
+                            pasteboard.setString(code, forType: .string)
+                        }
+                    }
+            }
+            else {
+                renderCode(
+                    code: code,
+                    lang: lang,
+                    indent: indent,
+                    isStreaming: isStreaming,
+                    elementIndex: elementIndex
+                )
+            }
 
         case .formula(let formula):
             if isStreaming {

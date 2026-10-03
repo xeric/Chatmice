@@ -111,7 +111,6 @@ class DeepseekHandler: ChatGPTHandler {
 
             let streamTask = Task {
                 defer { self.activeStreamTask = nil }
-                var accumulatedReasoning = ""
                 var isInReasoningBlock = false
                 
                 do {

@@ -108,19 +108,15 @@ final class TokenManager {
     static func cacheAllTokens() -> [String: String] {
         var tokens: [String: String] = [:]
 
-        if let localKeys = try? localKeychain.allKeys() {
-            for key in localKeys where key.hasPrefix(tokenPrefix) {
-                if let token = try? localKeychain.get(key, ignoringAttributeSynchronizable: true) {
-                    tokens[key] = token
-                }
+        for key in localKeychain.allKeys() where key.hasPrefix(tokenPrefix) {
+            if let token = try? localKeychain.get(key, ignoringAttributeSynchronizable: true) {
+                tokens[key] = token
             }
         }
 
-        if let cloudKeys = try? cloudKeychain.allKeys() {
-            for key in cloudKeys where key.hasPrefix(tokenPrefix) {
-                if let token = try? cloudKeychain.get(key, ignoringAttributeSynchronizable: true) {
-                    tokens[key] = token
-                }
+        for key in cloudKeychain.allKeys() where key.hasPrefix(tokenPrefix) {
+            if let token = try? cloudKeychain.get(key, ignoringAttributeSynchronizable: true) {
+                tokens[key] = token
             }
         }
 
@@ -146,21 +142,17 @@ final class TokenManager {
     static func migrateTokensForSyncChange(toSyncEnabled: Bool) {
         let destination = toSyncEnabled ? cloudKeychain : localKeychain
 
-        if let localKeys = try? localKeychain.allKeys() {
-            for key in localKeys where key.hasPrefix(tokenPrefix) {
-                if let token = try? localKeychain.get(key, ignoringAttributeSynchronizable: true) {
-                    _ = try? destination.set(token, key: key)
-                    cache(token, forKey: key)
-                }
+        for key in localKeychain.allKeys() where key.hasPrefix(tokenPrefix) {
+            if let token = try? localKeychain.get(key, ignoringAttributeSynchronizable: true) {
+                _ = try? destination.set(token, key: key)
+                cache(token, forKey: key)
             }
         }
 
-        if let cloudKeys = try? cloudKeychain.allKeys() {
-            for key in cloudKeys where key.hasPrefix(tokenPrefix) {
-                if let token = try? cloudKeychain.get(key, ignoringAttributeSynchronizable: true) {
-                    _ = try? destination.set(token, key: key)
-                    cache(token, forKey: key)
-                }
+        for key in cloudKeychain.allKeys() where key.hasPrefix(tokenPrefix) {
+            if let token = try? cloudKeychain.get(key, ignoringAttributeSynchronizable: true) {
+                _ = try? destination.set(token, key: key)
+                cache(token, forKey: key)
             }
         }
     }

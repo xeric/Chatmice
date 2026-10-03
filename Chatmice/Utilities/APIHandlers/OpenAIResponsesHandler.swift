@@ -267,7 +267,7 @@ class OpenAIResponsesHandler: OpenAIHandlerBase, APIService {
                             let safeFilename = (filePayload.filename?.isEmpty == false)
                                 ? (filePayload.filename ?? "document.pdf")
                                 : "document.pdf"
-                            var fileItem: [String: Any] = [
+                            let fileItem: [String: Any] = [
                                 "type": "input_file",
                                 "file_data": "data:\(mimeType);base64,\(base64)",
                                 "filename": safeFilename,

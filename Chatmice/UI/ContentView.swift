@@ -31,7 +31,6 @@ struct ContentView: View {
     @FetchRequest(sortDescriptors: [NSSortDescriptor(keyPath: \PersonaEntity.order, ascending: true)])
     private var personas: FetchedResults<PersonaEntity>
 
-
     @State var selectedChat: ChatEntity?
     @State private var displayedChat: ChatEntity?
     @State private var headerChat: ChatEntity?
@@ -55,10 +54,12 @@ struct ContentView: View {
     @FocusState private var isSearchFieldFocused: Bool
 
     var body: some View {
-        NavigationSplitView(columnVisibility: Binding(
-            get: { isSidebarVisible ? .all : .detailOnly },
-            set: { isSidebarVisible = $0 != .detailOnly }
-        )) {
+        NavigationSplitView(
+            columnVisibility: Binding(
+                get: { isSidebarVisible ? .all : .detailOnly },
+                set: { isSidebarVisible = $0 != .detailOnly }
+            )
+        ) {
             VStack(spacing: 0) {
                 sidebarHeader
                 ChatListView(selectedChat: $selectedChat, searchText: $searchText)
@@ -132,7 +133,6 @@ struct ContentView: View {
                 installLocalKeyMonitor()
             }
         }
-        .toolbar(removing: .sidebarToggle)
         .onAppear(perform: {
             if chats.count == 0 { isSidebarVisible = false }
             lastChatCount = chats.count
@@ -146,7 +146,7 @@ struct ContentView: View {
                 applicationIsActive: scenePhase == .active && NSApp.isActive
             )
         })
-        .onChange(of: chats.count) { newCount in
+        .onChange(of: chats.count) { _, newCount in
             if let prev = lastChatCount {
                 updateSidebarVisibilityForChatCount(previousCount: prev, newCount: newCount)
             }
@@ -180,7 +180,7 @@ struct ContentView: View {
                 }
 
                 if let uriString = notification.userInfo?["apiServiceURI"] as? String,
-                   let service = apiService(fromURI: uriString)
+                    let service = apiService(fromURI: uriString)
                 {
                     newChat(using: service)
                 }
@@ -195,24 +195,27 @@ struct ContentView: View {
                 object: nil,
                 queue: .main
             ) { _ in
-                activityStore.updatePresentationContext(
-                    focusedChatId: selectedChat?.id,
-                    applicationIsActive: true
-                )
+                Task { @MainActor in
+                    activityStore.updatePresentationContext(
+                        focusedChatId: selectedChat?.id,
+                        applicationIsActive: true
+                    )
+                }
             }
         }
         .navigationTitle("")
 
-        .onChange(of: scenePhase) { phase in
+        .onChange(of: scenePhase) { _, phase in
             activityStore.updatePresentationContext(
                 focusedChatId: selectedChat?.id,
                 applicationIsActive: phase == .active && NSApp.isActive
             )
         }
-        .onChange(of: selectedChat) { newValue in
+        .onChange(of: selectedChat) { _, newValue in
             handleSelectedChatChange(newValue)
         }
-        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("ChatResponseCompleted"))) { notification in
+        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("ChatResponseCompleted"))) {
+            notification in
             if let responseId = notification.userInfo?["responseId"] as? String {
                 if ContentView.handledResponseIds.contains(responseId) {
                     return
@@ -252,33 +255,12 @@ struct ContentView: View {
     }
 
     private var sidebarHeader: some View {
-        HStack {
-            Spacer()
-            Button {
-                isSidebarVisible = false
-            } label: {
-                Image(systemName: "sidebar.left")
-                    .font(.system(size: 14, weight: .medium))
-            }
-            .buttonStyle(.plain)
-            .help("Hide Sidebar")
-        }
-        .padding(.horizontal, 14)
-        .frame(height: 52)
+        Color.clear
+            .frame(height: 52)
     }
 
     private var detailHeader: some View {
         HStack(spacing: 12) {
-            if !isSidebarVisible {
-                Button {
-                    isSidebarVisible = true
-                } label: {
-                    Image(systemName: "sidebar.right")
-                        .font(.system(size: 14, weight: .medium))
-                }
-                .buttonStyle(.plain)
-                .help("Show Sidebar")
-            }
 
             Text(headerChat.map { $0.name.isEmpty ? ($0.persona?.name ?? "Chatmice") : $0.name } ?? "")
                 .font(.system(size: 15, weight: .semibold))
@@ -323,7 +305,7 @@ struct ContentView: View {
         if let headerChat {
             Button(action: { isShowingModelPickerPopover.toggle() }) {
                 HStack(spacing: 6) {
-                    providerBrandIcon(
+                    ProviderBrandIcon(
                         name: headerChat.apiService?.name ?? "",
                         type: headerChat.apiService?.type ?? ""
                     )
@@ -331,9 +313,12 @@ struct ContentView: View {
 
                     VStack(alignment: .leading, spacing: 0) {
                         HStack(spacing: 3) {
-                            Text(headerChat.gptModel.isEmpty ? (headerChat.apiService?.model ?? "Select Model") : headerChat.gptModel)
-                                .font(.system(size: 11, weight: .semibold))
-                                .lineLimit(1)
+                            Text(
+                                headerChat.gptModel.isEmpty
+                                    ? (headerChat.apiService?.model ?? "Select Model") : headerChat.gptModel
+                            )
+                            .font(.system(size: 11, weight: .semibold))
+                            .lineLimit(1)
                             Image(systemName: "chevron.right")
                                 .font(.system(size: 7, weight: .bold))
                                 .foregroundStyle(.secondary)
@@ -377,10 +362,11 @@ struct ContentView: View {
                 ChatView(
                     viewContext: viewContext,
                     chat: displayedChat,
-                    searchText: $searchText
+                    searchText: $searchText,
+                    window: window
                 )
-                    .frame(minWidth: 400)
-                    .disabled(isLoadingConversation)
+                .frame(minWidth: 400)
+                .disabled(isLoadingConversation)
             }
             else if !isLoadingConversation {
                 WelcomeScreen(
@@ -416,36 +402,6 @@ struct ContentView: View {
         }
     }
 
-    @ViewBuilder
-    private func providerBrandIcon(name: String, type: String) -> some View {
-        let lower = (name + " " + type).lowercased()
-        if lower.contains("cpa") || lower.contains("hai") || lower.contains("sap") || lower.contains("proxy") || lower.contains("server") {
-            Image(systemName: "server.rack")
-                .font(.system(size: 11))
-                .foregroundStyle(Color.accentColor)
-        } else if lower.contains("anthropic") || lower.contains("claude") {
-            Text("A\\")
-                .font(.system(size: 11, weight: .black, design: .serif))
-                .foregroundStyle(Color(red: 0.85, green: 0.45, blue: 0.35))
-        } else if lower.contains("google") || lower.contains("gemini") {
-            Text("G")
-                .font(.system(size: 11, weight: .heavy, design: .rounded))
-                .foregroundStyle(Color(red: 0.3, green: 0.5, blue: 0.9))
-        } else if lower.contains("deepseek") {
-            Image(systemName: "sparkles")
-                .font(.system(size: 11))
-                .foregroundStyle(Color.cyan)
-        } else if lower.contains("ollama") {
-            Image(systemName: "desktopcomputer")
-                .font(.system(size: 11))
-                .foregroundStyle(Color.white.opacity(0.8))
-        } else {
-            Image(systemName: "circle.hexagonpath.fill")
-                .font(.system(size: 11))
-                .foregroundStyle(Color.green)
-        }
-    }
-
     func newChat() {
         newChat(using: nil)
     }
@@ -472,9 +428,9 @@ struct ContentView: View {
         }
         // 2. Otherwise inherit from Global Model (the model chosen in previous chats)
         else if let globalModel = UserDefaults.standard.string(forKey: "global_selected_model"),
-                !globalModel.isEmpty,
-                let globalServiceID = UserDefaults.standard.string(forKey: "global_selected_service_id"),
-                let matchedService = apiServices.first(where: { $0.id?.uuidString == globalServiceID })
+            !globalModel.isEmpty,
+            let globalServiceID = UserDefaults.standard.string(forKey: "global_selected_service_id"),
+            let matchedService = apiServices.first(where: { $0.id?.uuidString == globalServiceID })
         {
             newChat.apiService = matchedService
             newChat.gptModel = globalModel
@@ -490,9 +446,10 @@ struct ContentView: View {
             newChat.gptModel = ""
         }
 
-        let defaultPersona = personas.first {
-            $0.name == AppConstants.PersonaPresets.defaultAssistant.name
-        } ?? newChat.apiService?.defaultPersona
+        let defaultPersona =
+            personas.first {
+                $0.name == AppConstants.PersonaPresets.defaultAssistant.name
+            } ?? newChat.apiService?.defaultPersona
         newChat.persona = defaultPersona
         newChat.systemMessage = defaultPersona?.systemMessage ?? AppConstants.chatGptSystemMessage
         do {
@@ -507,7 +464,7 @@ struct ContentView: View {
 
     private func apiService(fromURI uriString: String) -> APIServiceEntity? {
         guard let url = URL(string: uriString),
-              let objectID = viewContext.persistentStoreCoordinator?.managedObjectID(forURIRepresentation: url)
+            let objectID = viewContext.persistentStoreCoordinator?.managedObjectID(forURIRepresentation: url)
         else {
             return nil
         }
@@ -527,9 +484,9 @@ struct ContentView: View {
         }
 
         if let defaultServiceIDString = UserDefaults.standard.string(forKey: "defaultApiService"),
-           let url = URL(string: defaultServiceIDString),
-           let objectID = viewContext.persistentStoreCoordinator?.managedObjectID(forURIRepresentation: url),
-           let service = try? viewContext.existingObject(with: objectID) as? APIServiceEntity
+            let url = URL(string: defaultServiceIDString),
+            let objectID = viewContext.persistentStoreCoordinator?.managedObjectID(forURIRepresentation: url),
+            let service = try? viewContext.existingObject(with: objectID) as? APIServiceEntity
         {
             service.isDefault = true
             viewContext.saveWithRetry(attempts: 1)
@@ -548,7 +505,8 @@ struct ContentView: View {
         guard let chat = selectedChat else { return }
         let alert = NSAlert()
         alert.messageText = "Clear chat \(chat.name)?"
-        alert.informativeText = "Are you sure you want to delete all messages from this chat? Chat parameters will not be deleted. This action cannot be undone."
+        alert.informativeText =
+            "Are you sure you want to delete all messages from this chat? Chat parameters will not be deleted. This action cannot be undone."
         alert.addButton(withTitle: "Clear")
         alert.addButton(withTitle: "Cancel")
         alert.alertStyle = .warning
@@ -557,7 +515,8 @@ struct ContentView: View {
                 chat.clearMessages()
                 do {
                     try viewContext.save()
-                } catch {
+                }
+                catch {
                     print("Error clearing chat: \(error.localizedDescription)")
                 }
             }
@@ -574,11 +533,12 @@ struct ContentView: View {
     }
 
     private func handleServiceChange(_ chat: ChatEntity, _ newService: APIServiceEntity, selectedModel: String? = nil) {
-        
+
         chat.apiService = newService
         if let model = selectedModel, !model.isEmpty {
             chat.gptModel = model
-        } else if chat.gptModel.isEmpty {
+        }
+        else if chat.gptModel.isEmpty {
             chat.gptModel = newService.model ?? AppConstants.defaultModel(for: newService.type)
         }
 
@@ -603,13 +563,15 @@ struct ContentView: View {
         NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
             let isShiftReturn = event.keyCode == 36 && event.modifierFlags.contains(.shift)
             if isShiftReturn && isSearchPresented && !searchText.isEmpty,
-               let firstResponder = NSApp.keyWindow?.firstResponder as? NSView,
-               String(describing: type(of: firstResponder)).contains("Search") {
+                let firstResponder = NSApp.keyWindow?.firstResponder as? NSView,
+                String(describing: type(of: firstResponder)).contains("Search")
+            {
                 NotificationCenter.default.post(name: NSNotification.Name("FindPrevious"), object: nil)
                 return nil
             }
 
-            let isClearShortcut = event.keyCode == 51
+            let isClearShortcut =
+                event.keyCode == 51
                 && event.modifierFlags.contains(.command)
                 && event.modifierFlags.contains(.shift)
             if isClearShortcut && selectedChat != nil {
@@ -646,15 +608,15 @@ struct ContentView: View {
 
             await warmConversation(targetID)
             guard !Task.isCancelled, selectedChat?.objectID == targetID,
-                  let loadedChat = try? viewContext.existingObject(with: targetID) as? ChatEntity,
-                  !loadedChat.isDeleted else { return }
+                let loadedChat = try? viewContext.existingObject(with: targetID) as? ChatEntity,
+                !loadedChat.isDeleted
+            else { return }
 
             displayedChat = loadedChat
             headerChat = loadedChat
             isLoadingConversation = false
         }
     }
-
 
     private func warmConversation(_ chatID: NSManagedObjectID) async {
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
@@ -687,8 +649,8 @@ struct ContentView: View {
     }
 }
 
-private extension ContentView {
-    func chatDisplayName(for chatId: UUID, fallback: String?) -> String {
+extension ContentView {
+    fileprivate func chatDisplayName(for chatId: UUID, fallback: String?) -> String {
         if let chat = chats.first(where: { $0.id == chatId }) {
             if !chat.name.isEmpty {
                 return chat.name
@@ -703,7 +665,7 @@ private extension ContentView {
         return "Chat"
     }
 
-    func notificationBody(from message: String) -> String {
+    fileprivate func notificationBody(from message: String) -> String {
         if message.isEmpty {
             return "Response finished"
         }

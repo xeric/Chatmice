@@ -135,6 +135,15 @@ class ChatmiceEngine: APIService, AgentActivityReporting {
         temperature: Float,
         continuation: AsyncThrowingStream<String, Error>.Continuation
     ) async throws {
+        // Perplexity Sonar models provide search natively but reject OpenAI function tools.
+        // Send the normal chat request directly instead of entering Chatmice's tool loop.
+        if isSonarModel {
+            let stream = try await baseService.sendMessageStream(requestMessages, temperature: temperature)
+            for try await chunk in stream {
+                continuation.yield(chunk)
+            }
+            return
+        }
         let box = ToolBox()
         let defaults = UserDefaults.standard
         let disabledSources = ToolSelectionStore.disabledSourceIDs(for: chatID)
@@ -279,18 +288,23 @@ class ChatmiceEngine: APIService, AgentActivityReporting {
             let rawResult = try await executeTurn(
                 messages: conversationHistory,
                 tools: defs,
-                temperature: temperature
+                temperature: temperature,
+                onText: { continuation.yield($0) }
             )
 
             if rawResult.toolCalls.isEmpty {
-                if !rawResult.text.isEmpty {
+                if !rawResult.text.isEmpty && !rawResult.textWasStreamed {
                     continuation.yield(rawResult.text)
                 }
                 break
             }
 
             if !rawResult.text.isEmpty {
-                continuation.yield(rawResult.text + "\n")
+                if rawResult.textWasStreamed {
+                    continuation.yield("\n")
+                } else {
+                    continuation.yield(rawResult.text + "\n")
+                }
             }
 
             conversationHistory.append(.assistant(text: rawResult.text, toolCalls: rawResult.toolCalls))
@@ -393,6 +407,7 @@ class ChatmiceEngine: APIService, AgentActivityReporting {
     private struct TurnResult {
         var text: String
         var toolCalls: [ToolCall]
+        var textWasStreamed = false
     }
 
     private var serviceType: String {
@@ -404,6 +419,10 @@ class ChatmiceEngine: APIService, AgentActivityReporting {
     private var nativeSearchEnabled: Bool {
         guard let chatID else { return false }
         return SearchModeStore.mode(for: chatID) == .native
+    }
+
+    private var isSonarModel: Bool {
+        config.model.lowercased().contains("sonar")
     }
 
     private var effectiveKey: String {
@@ -419,15 +438,31 @@ class ChatmiceEngine: APIService, AgentActivityReporting {
     private func executeTurn(
         messages: [AgentMessage],
         tools: [ToolDefinition],
-        temperature: Float
+        temperature: Float,
+        onText: @escaping (String) -> Void
     ) async throws -> TurnResult {
         let type = serviceType
         if type == "gemini" {
-            return try await executeTurnGemini(messages: messages, tools: tools, temperature: temperature)
+            return try await executeTurnGemini(
+                messages: messages,
+                tools: tools,
+                temperature: temperature,
+                onText: onText
+            )
         } else if type == "claude" {
-            return try await executeTurnClaude(messages: messages, tools: tools, temperature: temperature)
+            return try await executeTurnClaude(
+                messages: messages,
+                tools: tools,
+                temperature: temperature,
+                onText: onText
+            )
         } else {
-            return try await executeTurnOpenAI(messages: messages, tools: tools, temperature: temperature)
+            return try await executeTurnOpenAI(
+                messages: messages,
+                tools: tools,
+                temperature: temperature,
+                onText: onText
+            )
         }
     }
 
@@ -435,7 +470,8 @@ class ChatmiceEngine: APIService, AgentActivityReporting {
     private func executeTurnOpenAI(
         messages: [AgentMessage],
         tools: [ToolDefinition],
-        temperature: Float
+        temperature: Float,
+        onText: @escaping (String) -> Void
     ) async throws -> TurnResult {
         var targetURL = baseURL
         if !targetURL.absoluteString.hasSuffix("/chat/completions") {
@@ -444,21 +480,17 @@ class ChatmiceEngine: APIService, AgentActivityReporting {
         var req = URLRequest(url: targetURL)
         req.httpMethod = "POST"
         let key = effectiveKey
-        if !key.isEmpty {
-            req.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
-        }
+        if !key.isEmpty { req.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization") }
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        let toolsPayload = tools.map { t -> [String: Any] in
-            [
-                "type": "function",
-                "function": [
-                    "name": t.name,
-                    "description": t.description,
-                    "parameters": t.parameters.openAIWireDict
-                ]
-            ]
-        }
+        req.setValue("text/event-stream", forHTTPHeaderField: "Accept")
 
+        let toolsPayload = tools.map { tool -> [String: Any] in
+            ["type": "function", "function": [
+                "name": tool.name,
+                "description": tool.description,
+                "parameters": tool.parameters.openAIWireDict
+            ]]
+        }
         let wireMessages = messages.flatMap { message -> [[String: Any]] in
             switch message {
             case .text(let role, let content):
@@ -468,20 +500,12 @@ class ChatmiceEngine: APIService, AgentActivityReporting {
                     "role": "assistant",
                     "content": text.isEmpty ? NSNull() : text,
                     "tool_calls": calls.map { call in
-                        [
-                            "id": call.id,
-                            "type": "function",
-                            "function": ["name": call.name, "arguments": call.arguments]
-                        ] as [String: Any]
+                        ["id": call.id, "type": "function", "function": ["name": call.name, "arguments": call.arguments]] as [String: Any]
                     }
                 ]]
             case .toolResults(let results):
                 return results.map { result in
-                    [
-                        "role": "tool",
-                        "tool_call_id": result.call.id,
-                        "content": result.output
-                    ]
+                    ["role": "tool", "tool_call_id": result.call.id, "content": result.output]
                 }
             }
         }
@@ -489,11 +513,10 @@ class ChatmiceEngine: APIService, AgentActivityReporting {
         var body: [String: Any] = [
             "model": config.model,
             "messages": wireMessages,
-            "temperature": temperature
+            "temperature": temperature,
+            "stream": true
         ]
-        if !toolsPayload.isEmpty {
-            body["tools"] = toolsPayload
-        }
+        if !toolsPayload.isEmpty { body["tools"] = toolsPayload }
         if nativeSearchEnabled {
             if serviceType == "openrouter" {
                 body["plugins"] = [["id": "web", "engine": "native"]]
@@ -501,53 +524,87 @@ class ChatmiceEngine: APIService, AgentActivityReporting {
                 body["web_search_options"] = [String: Any]()
             }
         }
-
         req.httpBody = try JSONSerialization.data(withJSONObject: body)
-        let (data, response) = try await URLSession.shared.data(for: req)
 
+        let (bytes, response) = try await URLSession.shared.bytes(for: req)
         guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
-            let errStr = String(data: data, encoding: .utf8) ?? "HTTP Error"
-            throw APIError.serverError(errStr)
+            var data = Data()
+            for try await byte in bytes { data.append(byte) }
+            throw APIError.serverError(String(data: data, encoding: .utf8) ?? "HTTP Error")
         }
 
-        guard let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let choices = obj["choices"] as? [[String: Any]],
-              let first = choices.first,
-              let msg = first["message"] as? [String: Any] else {
-            throw APIError.decodingFailed("Failed to parse response")
-        }
+        var text = ""
+        var streamedText = false
+        var callIDs: [Int: String] = [:]
+        var callNames: [Int: String] = [:]
+        var callArguments: [Int: String] = [:]
 
-        var text = msg["content"] as? String ?? ""
-        var calls: [ToolCall] = []
+        for try await line in bytes.lines {
+            guard line.hasPrefix("data:") else { continue }
+            let payload = line.dropFirst(5).trimmingCharacters(in: .whitespaces)
+            if payload == "[DONE]" { break }
+            guard let data = payload.data(using: .utf8),
+                  let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let choice = (object["choices"] as? [[String: Any]])?.first,
+                  let delta = choice["delta"] as? [String: Any] else { continue }
 
-        if let rawCalls = msg["tool_calls"] as? [[String: Any]] {
-            for rc in rawCalls {
-                guard let id = rc["id"] as? String,
-                      let fn = rc["function"] as? [String: Any],
-                      let fName = fn["name"] as? String else { continue }
-                let args = fn["arguments"] as? String ?? "{}"
-                calls.append(ToolCall(id: id, name: fName, arguments: args))
+            if let chunk = delta["content"] as? String, !chunk.isEmpty {
+                text += chunk
+                streamedText = true
+                onText(chunk)
+            }
+            if let toolDeltas = delta["tool_calls"] as? [[String: Any]] {
+                for toolDelta in toolDeltas {
+                    let index = toolDelta["index"] as? Int ?? 0
+                    if let id = toolDelta["id"] as? String { callIDs[index] = id }
+                    if let function = toolDelta["function"] as? [String: Any] {
+                        if let name = function["name"] as? String { callNames[index] = name }
+                        if let arguments = function["arguments"] as? String {
+                            callArguments[index, default: ""] += arguments
+                        }
+                    }
+                }
             }
         }
 
-        return TurnResult(text: text, toolCalls: calls)
+        let indices = Set(callIDs.keys).union(callNames.keys).union(callArguments.keys).sorted()
+        let calls = indices.compactMap { index -> ToolCall? in
+            guard let name = callNames[index], !name.isEmpty else { return nil }
+            return ToolCall(
+                id: callIDs[index] ?? UUID().uuidString,
+                name: name,
+                arguments: callArguments[index] ?? "{}"
+            )
+        }
+        return TurnResult(text: text, toolCalls: calls, textWasStreamed: streamedText)
     }
 
     // MARK: - Gemini Execution
     private func executeTurnGemini(
         messages: [AgentMessage],
         tools: [ToolDefinition],
-        temperature: Float
+        temperature: Float,
+        onText: @escaping (String) -> Void
     ) async throws -> TurnResult {
         var targetURL = baseURL
-        let urlStr = targetURL.absoluteString
-        if !urlStr.contains(":generateContent") {
-            if !urlStr.contains("/models/") {
-                targetURL = targetURL.appendingPathComponent("models/\(config.model):generateContent")
+        var urlString = targetURL.absoluteString
+        urlString = urlString.replacingOccurrences(of: ":generateContent", with: ":streamGenerateContent")
+        if !urlString.contains(":streamGenerateContent") {
+            if !urlString.contains("/models/") {
+                targetURL = targetURL.appendingPathComponent("models/\(config.model):streamGenerateContent")
             } else {
-                targetURL = targetURL.appendingPathComponent(":generateContent")
+                targetURL = targetURL.appendingPathComponent(":streamGenerateContent")
             }
+        } else if let streamingURL = URL(string: urlString) {
+            targetURL = streamingURL
         }
+        var components = URLComponents(url: targetURL, resolvingAgainstBaseURL: false)
+        var queryItems = components?.queryItems ?? []
+        if !queryItems.contains(where: { $0.name == "alt" }) {
+            queryItems.append(URLQueryItem(name: "alt", value: "sse"))
+        }
+        components?.queryItems = queryItems
+        if let url = components?.url { targetURL = url }
         var req = URLRequest(url: targetURL)
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -634,51 +691,57 @@ class ChatmiceEngine: APIService, AgentActivityReporting {
         }
 
         req.httpBody = try JSONSerialization.data(withJSONObject: body)
-        let (data, response) = try await URLSession.shared.data(for: req)
+        req.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+        let (bytes, response) = try await URLSession.shared.bytes(for: req)
 
         guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
-            let errStr = String(data: data, encoding: .utf8) ?? "HTTP Error"
-            throw APIError.serverError(errStr)
-        }
-
-        guard let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            throw APIError.decodingFailed("Failed to parse Gemini response")
+            var data = Data()
+            for try await byte in bytes { data.append(byte) }
+            throw APIError.serverError(String(data: data, encoding: .utf8) ?? "HTTP Error")
         }
 
         var text = ""
+        var streamedText = false
         var calls: [ToolCall] = []
 
-        if let candidates = obj["candidates"] as? [[String: Any]],
-           let first = candidates.first,
-           let content = first["content"] as? [String: Any],
-           let parts = content["parts"] as? [[String: Any]] {
+        for try await line in bytes.lines {
+            guard line.hasPrefix("data:") else { continue }
+            let payload = line.dropFirst(5).trimmingCharacters(in: .whitespaces)
+            guard let data = payload.data(using: .utf8),
+                  let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let candidate = (object["candidates"] as? [[String: Any]])?.first,
+                  let content = candidate["content"] as? [String: Any],
+                  let parts = content["parts"] as? [[String: Any]] else { continue }
+
             for part in parts {
-                if let t = part["text"] as? String {
-                    text += t
+                if let chunk = part["text"] as? String, !chunk.isEmpty {
+                    text += chunk
+                    streamedText = true
+                    onText(chunk)
                 }
-                if let fnCall = part["functionCall"] as? [String: Any],
-                   let fName = fnCall["name"] as? String {
-                    let argsObj = fnCall["args"] as? [String: Any] ?? [:]
-                    let argsData = (try? JSONSerialization.data(withJSONObject: argsObj)) ?? Data()
-                    let argsStr = String(data: argsData, encoding: .utf8) ?? "{}"
+                if let functionCall = part["functionCall"] as? [String: Any],
+                   let name = functionCall["name"] as? String {
+                    let argumentsObject = functionCall["args"] as? [String: Any] ?? [:]
+                    let argumentsData = try JSONSerialization.data(withJSONObject: argumentsObject)
                     calls.append(ToolCall(
                         id: UUID().uuidString,
-                        name: fName,
-                        arguments: argsStr,
+                        name: name,
+                        arguments: String(data: argumentsData, encoding: .utf8) ?? "{}",
                         thoughtSignature: part["thoughtSignature"] as? String
                     ))
                 }
             }
         }
 
-        return TurnResult(text: text, toolCalls: calls)
+        return TurnResult(text: text, toolCalls: calls, textWasStreamed: streamedText)
     }
 
     // MARK: - Claude Execution
     private func executeTurnClaude(
         messages: [AgentMessage],
         tools: [ToolDefinition],
-        temperature: Float
+        temperature: Float,
+        onText: @escaping (String) -> Void
     ) async throws -> TurnResult {
         var targetURL = baseURL
         if !targetURL.absoluteString.hasSuffix("/messages") {
@@ -756,7 +819,8 @@ class ChatmiceEngine: APIService, AgentActivityReporting {
         var body: [String: Any] = [
             "model": resolvedModel,
             "max_tokens": 4096,
-            "messages": claudeMsgs
+            "messages": claudeMsgs,
+            "stream": true
         ]
         if !claudeTools.isEmpty {
             body["tools"] = claudeTools
@@ -767,38 +831,66 @@ class ChatmiceEngine: APIService, AgentActivityReporting {
         }
 
         req.httpBody = try JSONSerialization.data(withJSONObject: body)
-        let (data, response) = try await URLSession.shared.data(for: req)
+        req.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+        let (bytes, response) = try await URLSession.shared.bytes(for: req)
 
         guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+            var data = Data()
+            for try await byte in bytes { data.append(byte) }
             let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
             throw APIError.serverError(
                 ClaudeRequestCompatibility.errorMessage(statusCode: statusCode, data: data)
             )
         }
 
-        guard let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            throw APIError.decodingFailed("Failed to parse Claude response")
-        }
-
         var text = ""
-        var calls: [ToolCall] = []
+        var streamedText = false
+        var callIDs: [Int: String] = [:]
+        var callNames: [Int: String] = [:]
+        var callArguments: [Int: String] = [:]
 
-        if let contentList = obj["content"] as? [[String: Any]] {
-            for item in contentList {
-                if let type = item["type"] as? String {
-                    if type == "text", let t = item["text"] as? String {
-                        text += t
-                    } else if type == "tool_use", let fName = item["name"] as? String {
-                        let id = item["id"] as? String ?? UUID().uuidString
-                        let inputObj = item["input"] as? [String: Any] ?? [:]
-                        let inputData = (try? JSONSerialization.data(withJSONObject: inputObj)) ?? Data()
-                        let inputStr = String(data: inputData, encoding: .utf8) ?? "{}"
-                        calls.append(ToolCall(id: id, name: fName, arguments: inputStr))
+        for try await line in bytes.lines {
+            guard line.hasPrefix("data:") else { continue }
+            let payload = line.dropFirst(5).trimmingCharacters(in: .whitespaces)
+            guard let data = payload.data(using: .utf8),
+                  let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let eventType = object["type"] as? String else { continue }
+
+            if eventType == "content_block_start",
+               let index = object["index"] as? Int,
+               let block = object["content_block"] as? [String: Any],
+               block["type"] as? String == "tool_use" {
+                callIDs[index] = block["id"] as? String ?? UUID().uuidString
+                callNames[index] = block["name"] as? String ?? ""
+            } else if eventType == "content_block_delta",
+                      let index = object["index"] as? Int,
+                      let delta = object["delta"] as? [String: Any] {
+                switch delta["type"] as? String {
+                case "text_delta":
+                    if let chunk = delta["text"] as? String, !chunk.isEmpty {
+                        text += chunk
+                        streamedText = true
+                        onText(chunk)
                     }
+                case "input_json_delta":
+                    if let partialJSON = delta["partial_json"] as? String {
+                        callArguments[index, default: ""] += partialJSON
+                    }
+                default:
+                    break
                 }
             }
         }
 
-        return TurnResult(text: text, toolCalls: calls)
+        let indices = Set(callIDs.keys).union(callNames.keys).union(callArguments.keys).sorted()
+        let calls = indices.compactMap { index -> ToolCall? in
+            guard let name = callNames[index], !name.isEmpty else { return nil }
+            return ToolCall(
+                id: callIDs[index] ?? UUID().uuidString,
+                name: name,
+                arguments: callArguments[index].flatMap { $0.isEmpty ? nil : $0 } ?? "{}"
+            )
+        }
+        return TurnResult(text: text, toolCalls: calls, textWasStreamed: streamedText)
     }
 }

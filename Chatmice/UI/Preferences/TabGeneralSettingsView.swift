@@ -65,9 +65,9 @@ struct TabGeneralSettingsView: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
-                // iCloud Sync Section - hidden when DISABLE_ICLOUD flag is set or CloudKit is not configured
+                // Offer sync only when this build is signed for the configured CloudKit container.
                 #if !DISABLE_ICLOUD
-                    if AppConstants.cloudKitContainerIdentifier != nil {
+                    if AppConstants.isCloudKitAvailable {
                         GroupBox {
                             VStack(alignment: .leading, spacing: 12) {
                                 HStack(alignment: .center, spacing: 8) {
@@ -436,7 +436,7 @@ struct SyncDebugLogView: View {
                         }
                         .id(entry.id)
                     }
-                    .onChange(of: filteredLogs.count) { _ in
+                    .onChange(of: filteredLogs.count) {
                         if autoScroll, let lastEntry = filteredLogs.last {
                             withAnimation {
                                 proxy.scrollTo(lastEntry.id, anchor: .bottom)

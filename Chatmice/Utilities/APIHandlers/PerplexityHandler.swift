@@ -106,7 +106,7 @@ class PerplexityHandler: APIService {
                             }
                             let jsonData = String(line[index...]).trimmingCharacters(in: .whitespacesAndNewlines)
                             if let jsonData = jsonData.data(using: .utf8) {
-                                let (finished, error, messageData, messageRole) = parseDeltaJSONResponse(data: jsonData)
+                                let (finished, error, messageData, _) = parseDeltaJSONResponse(data: jsonData)
 
                                 if error != nil {
                                     continuation.finish(throwing: error)

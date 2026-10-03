@@ -113,9 +113,9 @@ private struct ToolSelectionPopover: View {
 
                 ForEach(sources) { source in
                     HStack(spacing: 8) {
-                        Image(systemName: source.kind.systemImage)
+                        Image(systemName: source.isAvailable ? source.kind.systemImage : "exclamationmark.triangle.fill")
                             .font(.system(size: 11))
-                            .foregroundStyle(source.isAvailable ? Color.accentColor : .secondary)
+                            .foregroundStyle(source.isAvailable ? Color.accentColor : Color.orange)
                             .frame(width: 16)
                         VStack(alignment: .leading, spacing: 1) {
                             Text(source.name)
@@ -123,15 +123,21 @@ private struct ToolSelectionPopover: View {
                                 .foregroundStyle(Color.primary)
                             Text(source.detail)
                                 .font(.caption2)
-                                .foregroundStyle(Color.secondary)
+                                .foregroundStyle(source.isAvailable ? Color.secondary : Color.orange)
                                 .lineLimit(1)
                         }
                         Spacer(minLength: 8)
-                        Toggle("", isOn: sourceBinding(source))
-                            .labelsHidden()
-                            .toggleStyle(.switch)
-                            .controlSize(.mini)
-                            .disabled(!source.isAvailable)
+                        if source.isAvailable {
+                            Toggle("", isOn: sourceBinding(source))
+                                .labelsHidden()
+                                .toggleStyle(.switch)
+                                .controlSize(.mini)
+                        } else {
+                            Text(source.kind == .mcp ? "Offline" : "Disabled")
+                                .font(.system(size: 9, weight: .semibold))
+                                .foregroundStyle(Color.orange)
+                                .help(unavailableHelp(for: source))
+                        }
                     }
                     .padding(.horizontal, 4)
                     .padding(.vertical, 5)
@@ -158,6 +164,13 @@ private struct ToolSelectionPopover: View {
             }
         )
     }
+
+    private func unavailableHelp(for source: ToolSourceDescriptor) -> String {
+        if source.kind == .mcp {
+            return "This MCP server cannot be selected for this chat because it is not connected. Open Settings → MCP Servers to reconnect it or correct its configuration."
+        }
+        return "This tool is disabled globally. Enable it in Settings before selecting it for this chat."
+    }
 }
 
 struct MessageInputView: View {
@@ -176,6 +189,7 @@ struct MessageInputView: View {
     var onAddFile: () -> Void
     var onStopInference: () -> Void
     var onCancelEdit: () -> Void
+    var onTextSettled: () -> Void
 
     private let frontReturnKeyType: ChatmiceTextField.ReturnKeyType = .next
     @State var isFocused: Focus?
@@ -304,6 +318,7 @@ struct MessageInputView: View {
         onAddFile: @escaping () -> Void,
         onStopInference: @escaping () -> Void,
         onCancelEdit: @escaping () -> Void = {},
+        onTextSettled: @escaping () -> Void = {},
         inputPlaceholderText: String = "Type your prompt here",
         cornerRadius: Double = 20.0
     ) {
@@ -321,6 +336,7 @@ struct MessageInputView: View {
         self.onAddFile = onAddFile
         self.onStopInference = onStopInference
         self.onCancelEdit = onCancelEdit
+        self.onTextSettled = onTextSettled
         self.inputPlaceholderText = inputPlaceholderText
         self.cornerRadius = cornerRadius
     }
@@ -369,7 +385,12 @@ struct MessageInputView: View {
     private var searchMode: SearchMode {
         _ = toolSelectionRevision
         guard let chat else { return .off }
-        return SearchModeStore.mode(for: chat.id)
+        let storedMode = SearchModeStore.mode(for: chat.id)
+        return isSonarModel && storedMode == .web ? .native : storedMode
+    }
+
+    private var isSonarModel: Bool {
+        chat?.gptModel.lowercased().contains("sonar") == true
     }
 
     private var isSearchActive: Bool {
@@ -433,7 +454,7 @@ struct MessageInputView: View {
                     mode: .web,
                     title: "Web Search",
                     symbol: "globe",
-                    available: isWebSearchConfigured
+                    available: isWebSearchConfigured && !isSonarModel
                 )
             }
 
@@ -506,6 +527,9 @@ struct MessageInputView: View {
     private var searchModeDescription: String {
         switch searchMode {
         case .native:
+            if isSonarModel {
+                return "Sonar performs web search natively; no function tools are sent to the endpoint."
+            }
             return "Search is delegated to the selected model API; unsupported endpoints may return an API error."
         case .web:
             return "Chatmice calls \(WebSearchSettings.load().defaultSearchProvider.name) and returns results to the model."
@@ -681,7 +705,7 @@ struct MessageInputView: View {
                                 }
                             ) { _ in
                                 if let index = attachedImages.firstIndex(where: { $0.id == imageAttachment.id }) {
-                                    withAnimation {
+                                    _ = withAnimation {
                                         attachedImages.remove(at: index)
                                     }
                                 }
@@ -712,7 +736,7 @@ struct MessageInputView: View {
                                 }
                             ) { _ in
                                 if let index = attachedFiles.firstIndex(where: { $0.id == fileAttachment.id }) {
-                                    withAnimation {
+                                    _ = withAnimation {
                                         attachedFiles.remove(at: index)
                                     }
                                 }
@@ -748,6 +772,7 @@ struct MessageInputView: View {
                     minHeight: 28,
                     maxHeight: maxInputHeight,
                     onEscape: isEditingSystemMessage ? onCancelEdit : nil,
+                    onTextSettled: onTextSettled,
                     onCommit: {
                         guard !isInferenceInProgress else { return }
                         onEnter()
@@ -781,10 +806,10 @@ struct MessageInputView: View {
         .onAppear {
             syncAttachmentOrder()
         }
-        .onChange(of: attachedImages.map { $0.id }) { _ in
+        .onChange(of: attachedImages.map { $0.id }) {
             syncAttachmentOrder()
         }
-        .onChange(of: attachedFiles.map { $0.id }) { _ in
+        .onChange(of: attachedFiles.map { $0.id }) {
             syncAttachmentOrder()
         }
         .onAppear {
@@ -798,7 +823,7 @@ struct MessageInputView: View {
             matching: .images,
             photoLibrary: .shared()
         )
-        .onChange(of: photoPickerItems) { newItems in
+        .onChange(of: photoPickerItems) { _, newItems in
             guard imageUploadsAllowed, !newItems.isEmpty else { return }
             Task {
                 var newAttachments: [ImageAttachment] = []
