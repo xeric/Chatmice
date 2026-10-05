@@ -68,8 +68,9 @@ Run Chatmice with Ollama:
 1. Install Ollama from the [official website](https://ollama.com)
 2. Follow installation guides
 3. After installation, select model (llama3.1 or llama3.2 are recommended) and pull model using command in terminal: `ollama pull <model>`
-4. In Chatmice settings, open API Service, add a new API service in Expert mode, and select Ollama:
-   <img width="607" height="757" src="https://github.com/user-attachments/assets/19bc239b-f64d-4c8d-85a3-b05e5e727d2c" />
+4. Open **Settings → Providers**, choose **Add Provider**, then enter Ollama's OpenAI-compatible endpoint (by default `http://127.0.0.1:11434/v1`):
+
+   <img width="960" alt="Add an Ollama-compatible provider in Chatmice" src="docs/images/chatmice-ollama-provider.webp" />
 
 5. Select model, and default AI Assistant and save
 6. Test and enjoy!
