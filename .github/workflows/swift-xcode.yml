@@ -16,4 +16,4 @@ jobs:
         uses: actions/checkout@v4
       - name: Build
         run: |
-          xcodebuild clean build analyze -scheme "Chatmice" -project "Chatmice.xcodeproj" -allowProvisioningUpdates -allowProvisioningDeviceRegistration CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO
+          xcodebuild clean build analyze -scheme "Chatmice" -project "Chatmice.xcodeproj" CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO
