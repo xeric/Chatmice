@@ -1,5 +1,5 @@
 <div align="center">
-  <img width="256" height="256" alt="Chatmice App icon" src="https://github.com/user-attachments/assets/e5abd1b5-352f-41a1-92c4-8c159e873e6e" />
+  <img width="192" height="192" alt="Chatmice app icon" src="Chatmice/Assets.xcassets/AppIcon.appiconset/icon_1024x1024.png" />
 </div>
 <h2 align="center">Chatmice</h2>
 
@@ -8,9 +8,18 @@
 
 Chatmice is a simple yet powerful native macOS AI chat client that supports most AI providers: ChatGPT, Claude, xAI (Grok), Google Gemini, Perplexity, Ollama, OpenRouter, and almost any OpenAI-compatible APIs.
 
-<img width="1152" height="821" src="https://github.com/user-attachments/assets/734afb2c-9b77-4076-9f5d-d3d4c94f3f23" />
+## Screenshots
+
+<p align="center">
+  <img width="1152" alt="Chatmice conversation interface in dark mode" src="docs/images/chatmice-chat.webp" />
+</p>
+
+<p align="center">
+  <img width="960" alt="Chatmice provider settings in dark mode" src="docs/images/chatmice-providers.webp" />
+</p>
 
 ## Table of Contents
+- [Screenshots](#screenshots)
 - [Downloads](#downloads)
   - [Manual](#manual)
 - [Contributions](#contributions)
