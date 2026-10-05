@@ -18,6 +18,14 @@
 	<string>Chatmice records voice messages as WAV audio to send to audio-capable AI models.</string>
 	<key>NSUserNotificationUsageDescription</key>
 	<string>Chatmice uses notifications to inform you about new features, important updates, and new messages from chats</string>
+	<key>SUAllowsAutomaticUpdates</key>
+	<true/>
+	<key>SUEnableInstallerLauncherService</key>
+	<true/>
+	<key>SUFeedURL</key>
+	<string>https://raw.githubusercontent.com/xeric/Chatmice/main/appcast.xml</string>
+	<key>SUScheduledCheckInterval</key>
+	<integer>7200</integer>
 	<key>UIAppFonts</key>
 	<array>
 		<string>FiraCode-VF.ttf</string>

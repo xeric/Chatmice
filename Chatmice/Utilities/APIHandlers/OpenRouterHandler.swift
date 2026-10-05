@@ -192,7 +192,7 @@ class OpenRouterHandler: ChatGPTHandler {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
         // Add OpenRouter specific headers
-        request.setValue("https://github.com/Renset/macai", forHTTPHeaderField: "HTTP-Referer")
+        request.setValue("https://github.com/xeric/Chatmice", forHTTPHeaderField: "HTTP-Referer")
         request.setValue("Chatmice", forHTTPHeaderField: "X-Title")
 
         var temperatureOverride = temperature
