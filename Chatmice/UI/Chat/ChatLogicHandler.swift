@@ -27,7 +27,7 @@ final class ChatLogicHandler: ObservableObject {
         self.chatViewModel = chatViewModel
     }
     
-    func sendMessage(messageText: String, attachedImages: [ImageAttachment], attachedFiles: [DocumentAttachment]) {
+    func sendMessage(messageText: String, attachedImages: [ImageAttachment], attachedFiles: [DocumentAttachment], attachedAudio: DocumentAttachment? = nil) {
         guard !chat.waitingForResponse, !isStreaming else { return }
         guard chatViewModel.canSendMessage else {
             currentError = ErrorMessage(
@@ -41,8 +41,11 @@ final class ChatLogicHandler: ObservableObject {
 
         let pendingImages = attachedImages.filter { !$0.isReadyForUpload }
         let pendingFiles = attachedFiles.filter { !$0.isReadyForUpload }
-        if !pendingImages.isEmpty || !pendingFiles.isEmpty {
-            let hasErrors = pendingImages.contains { $0.error != nil } || pendingFiles.contains { $0.error != nil }
+        let pendingAudio = attachedAudio.map { $0.isReadyForUpload ? [] : [$0] } ?? []
+        if !pendingImages.isEmpty || !pendingFiles.isEmpty || !pendingAudio.isEmpty {
+            let hasErrors = pendingImages.contains { $0.error != nil }
+                || pendingFiles.contains { $0.error != nil }
+                || pendingAudio.contains { $0.error != nil }
             let message = hasErrors
                 ? "One or more attachments failed to load. Remove them or try again."
                 : "Attachments are still loading. Please wait until they finish."
@@ -70,8 +73,15 @@ final class ChatLogicHandler: ObservableObject {
             messageContents.append(MessageContent(fileAttachment: attachment))
         }
 
+        if let attachedAudio {
+            if attachedAudio.documentEntity?.fileData == nil {
+                attachedAudio.saveToEntity(context: viewContext, waitForCompletion: true)
+            }
+            messageContents.append(MessageContent(audioAttachment: attachedAudio))
+        }
+
         let messageBody: String
-        let hasAttachments = !attachedImages.isEmpty || !attachedFiles.isEmpty
+        let hasAttachments = !attachedImages.isEmpty || !attachedFiles.isEmpty || attachedAudio != nil
 
         if hasAttachments {
             messageBody = messageContents.toString()

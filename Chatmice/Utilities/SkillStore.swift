@@ -55,8 +55,10 @@ public protocol SkillCatalog: Sendable {
 
 public actor SkillStore: SkillCatalog {
     public let directories: [URL]
+    private let allowedIdentifiers: Set<String>?
 
-    public init(directories: [URL]? = nil) {
+    public init(directories: [URL]? = nil, allowedIdentifiers: Set<String>? = nil) {
+        self.allowedIdentifiers = allowedIdentifiers
         if let directories {
             self.directories = directories
         } else {
@@ -71,7 +73,11 @@ public actor SkillStore: SkillCatalog {
     }
 
     public func skills() async -> [SkillInfo] {
-        await allSkills().filter { SkillEnablementStore.isEnabled($0.directory.lastPathComponent) }
+        await allSkills().filter { skill in
+            let identifier = skill.directory.lastPathComponent
+            return SkillEnablementStore.isEnabled(identifier)
+                && (allowedIdentifiers?.contains(identifier) ?? true)
+        }
     }
 
     public func allSkills() async -> [SkillInfo] {

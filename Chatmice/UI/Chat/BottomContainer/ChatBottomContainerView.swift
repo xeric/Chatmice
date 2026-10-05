@@ -12,11 +12,13 @@ struct ChatBottomContainerView: View {
     @Binding var isExpanded: Bool
     @Binding var attachedImages: [ImageAttachment]
     @Binding var attachedFiles: [DocumentAttachment]
+    @Binding var attachedAudio: DocumentAttachment?
     let isInferenceInProgress: Bool
     let isEditingSystemMessage: Bool
     var imageUploadsAllowed: Bool
     var pdfUploadsAllowed: Bool
     var imageGenerationSupported: Bool
+    var audioInputAllowed: Bool
     var onSendMessage: () -> Void
     var onExpandToggle: () -> Void
     var onAddImage: () -> Void
@@ -32,11 +34,13 @@ struct ChatBottomContainerView: View {
         isExpanded: Binding<Bool>,
         attachedImages: Binding<[ImageAttachment]> = .constant([]),
         attachedFiles: Binding<[DocumentAttachment]> = .constant([]),
+        attachedAudio: Binding<DocumentAttachment?> = .constant(nil),
         isInferenceInProgress: Bool = false,
         isEditingSystemMessage: Bool = false,
         imageUploadsAllowed: Bool = false,
         pdfUploadsAllowed: Bool = false,
         imageGenerationSupported: Bool = false,
+        audioInputAllowed: Bool = false,
         onSendMessage: @escaping () -> Void,
         onExpandToggle: @escaping () -> Void = {},
         onAddImage: @escaping () -> Void = {},
@@ -51,11 +55,13 @@ struct ChatBottomContainerView: View {
         self._isExpanded = isExpanded
         self._attachedImages = attachedImages
         self._attachedFiles = attachedFiles
+        self._attachedAudio = attachedAudio
         self.isInferenceInProgress = isInferenceInProgress
         self.isEditingSystemMessage = isEditingSystemMessage
         self.imageUploadsAllowed = imageUploadsAllowed
         self.pdfUploadsAllowed = pdfUploadsAllowed
         self.imageGenerationSupported = imageGenerationSupported
+        self.audioInputAllowed = audioInputAllowed
         self.onSendMessage = onSendMessage
         self.onExpandToggle = onExpandToggle
         self.onAddImage = onAddImage
@@ -111,11 +117,13 @@ struct ChatBottomContainerView: View {
                         text: $inputBuffer.text,
                         attachedImages: $attachedImages,
                         attachedFiles: $attachedFiles,
+                        attachedAudio: $attachedAudio,
                         isInferenceInProgress: isInferenceInProgress,
                         isEditingSystemMessage: isEditingSystemMessage,
                         imageUploadsAllowed: imageUploadsAllowed,
                         pdfUploadsAllowed: pdfUploadsAllowed,
                         imageGenerationSupported: imageGenerationSupported,
+                        audioInputAllowed: audioInputAllowed,
                         onEnter: onSendMessage,
                         onAddImage: onAddImage,
                         onAddFile: onAddFile,

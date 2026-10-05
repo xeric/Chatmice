@@ -33,6 +33,7 @@ struct ChatView: View {
     @State private var editSystemMessage: Bool = false
     @State private var attachedImages: [ImageAttachment] = []
     @State private var attachedFiles: [DocumentAttachment] = []
+    @State private var attachedAudio: DocumentAttachment?
     @State private var isBottomContainerExpanded = false
     @State private var reasoningStartTimes: [NSManagedObjectID: Date] = [:]
     @State private var reasoningDurations: [NSManagedObjectID: TimeInterval] = [:]
@@ -91,6 +92,10 @@ struct ChatView: View {
 
     private var imageGenerationSupported: Bool {
         chat.apiService?.imageGenerationSupported ?? false
+    }
+
+    private var audioInputAllowed: Bool {
+        AudioInputCapability.supportsAudio(serviceType: chat.apiService?.type, modelID: chat.gptModel)
     }
 
     private var isInferenceInProgress: Bool {
@@ -235,11 +240,13 @@ struct ChatView: View {
             editSystemMessage: $editSystemMessage,
             attachedImages: $attachedImages,
             attachedFiles: $attachedFiles,
+            attachedAudio: $attachedAudio,
             isBottomContainerExpanded: $isBottomContainerExpanded,
             isInferenceInProgress: isInferenceInProgress,
             imageUploadsAllowed: imageUploadsAllowed,
             pdfUploadsAllowed: pdfUploadsAllowed,
             imageGenerationSupported: imageGenerationSupported,
+            audioInputAllowed: audioInputAllowed,
             onSendMessage: handleSendMessage,
             onAddImage: handleAddImage,
             onAddFile: handleAddFile,
@@ -254,11 +261,13 @@ struct ChatView: View {
         logicHandler.sendMessage(
             messageText: inputBuffer.text,
             attachedImages: attachedImages,
-            attachedFiles: attachedFiles
+            attachedFiles: attachedFiles,
+            attachedAudio: attachedAudio
         )
         inputBuffer.text = ""
         attachedImages = []
         attachedFiles = []
+        attachedAudio = nil
         draftManager.clearDraft(chat: chat)
     }
 

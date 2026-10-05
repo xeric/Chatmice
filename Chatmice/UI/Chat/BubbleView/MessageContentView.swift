@@ -322,6 +322,7 @@ struct MessageContentView: View {
     @State private var isParsingFullMessage = false
     @State private var expandedReasoningElements: Set<String> = []
     @State private var expandedToolElements: Set<String> = []
+    @State private var copiedMermaidItem: String?
     @AppStorage("chatFontWeight") private var chatFontWeight = ChatFontWeightPreference.light.rawValue
 
     private var preferredFontWeight: ChatFontWeightPreference {
@@ -525,20 +526,32 @@ struct MessageContentView: View {
             if lang.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "mermaid",
                 !isStreaming
             {
-                MermaidView(code, spacing: .regular)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(12)
-                    .background(
-                        RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .fill(Color.primary.opacity(0.04))
-                    )
-                    .contextMenu {
-                        Button("Copy Mermaid Source") {
-                            let pasteboard = NSPasteboard.general
-                            pasteboard.clearContents()
-                            pasteboard.setString(code, forType: .string)
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 10) {
+                        Text("Mermaid")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        mermaidCopyButton(title: "SVG", itemID: "svg-\(elementIndex)") {
+                            copyMermaidSVG(code)
+                        }
+                        mermaidCopyButton(title: "Source", itemID: "source-\(elementIndex)") {
+                            copyMermaidSource(code)
                         }
                     }
+
+                    MermaidView(code, spacing: .regular)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .padding(12)
+                .background(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(Color.primary.opacity(0.04))
+                )
+                .contextMenu {
+                    Button("Copy SVG") { copyMermaidSVG(code) }
+                    Button("Copy Mermaid Source") { copyMermaidSource(code) }
+                }
             }
             else {
                 renderCode(
@@ -1166,6 +1179,44 @@ struct MessageContentView: View {
         }
 
         return result
+    }
+
+    private func copyMermaidSource(_ source: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(source, forType: .string)
+    }
+
+    private func copyMermaidSVG(_ source: String) {
+        let theme = DiagramTheme(prefersDark: colorScheme == .dark)
+        guard let svg = MermaidRenderer.svg(source: source, theme: theme, spacing: .regular) else { return }
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(svg, forType: NSPasteboard.PasteboardType("public.svg-image"))
+        pasteboard.setString(svg, forType: .string)
+    }
+
+    private func mermaidCopyButton(
+        title: String,
+        itemID: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button {
+            action()
+            copiedMermaidItem = itemID
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                if copiedMermaidItem == itemID {
+                    copiedMermaidItem = nil
+                }
+            }
+        } label: {
+            Label(
+                copiedMermaidItem == itemID ? "Copied" : title,
+                systemImage: copiedMermaidItem == itemID ? "checkmark" : "doc.on.doc"
+            )
+            .font(.system(size: 10, weight: .medium))
+        }
+        .buttonStyle(.plain)
+        .help("Copy Mermaid \(title.lowercased())")
     }
 }
 

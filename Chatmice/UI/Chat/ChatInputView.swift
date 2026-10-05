@@ -14,12 +14,14 @@ struct ChatInputView: View {
     @Binding var editSystemMessage: Bool
     @Binding var attachedImages: [ImageAttachment]
     @Binding var attachedFiles: [DocumentAttachment]
+    @Binding var attachedAudio: DocumentAttachment?
     @Binding var isBottomContainerExpanded: Bool
     let isInferenceInProgress: Bool
     
     let imageUploadsAllowed: Bool
     let pdfUploadsAllowed: Bool
     let imageGenerationSupported: Bool
+    let audioInputAllowed: Bool
     let onSendMessage: () -> Void
     let onAddImage: () -> Void
     let onAddFile: () -> Void
@@ -36,11 +38,13 @@ struct ChatInputView: View {
             isExpanded: $isBottomContainerExpanded,
             attachedImages: $attachedImages,
             attachedFiles: $attachedFiles,
+            attachedAudio: $attachedAudio,
             isInferenceInProgress: isInferenceInProgress,
             isEditingSystemMessage: editSystemMessage,
             imageUploadsAllowed: imageUploadsAllowed,
             pdfUploadsAllowed: pdfUploadsAllowed,
             imageGenerationSupported: imageGenerationSupported,
+            audioInputAllowed: audioInputAllowed,
             onSendMessage: {
                 if editSystemMessage {
                     chat.systemMessage = inputBuffer.text
@@ -49,7 +53,8 @@ struct ChatInputView: View {
                     store.saveInCoreData()
                 }
                 else if !isInferenceInProgress,
-                        !inputBuffer.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        !inputBuffer.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                            || attachedAudio != nil {
                     onSendMessage()
                 }
             },
@@ -69,11 +74,13 @@ struct ChatInputView: View {
         editSystemMessage: .constant(false),
         attachedImages: .constant([]),
         attachedFiles: .constant([]),
+        attachedAudio: .constant(nil),
         isBottomContainerExpanded: .constant(false),
         isInferenceInProgress: false,
         imageUploadsAllowed: true,
         pdfUploadsAllowed: true,
         imageGenerationSupported: true,
+        audioInputAllowed: true,
         onSendMessage: {},
         onAddImage: {},
         onAddFile: {},

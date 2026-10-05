@@ -24,6 +24,7 @@ struct ChatmiceTextField: View {
     var onBackTab: (() -> Void)?
     var onEscape: (() -> Void)?
     var onTextSettled: (() -> Void)?
+    var onPasteImage: ((NSImage) -> Void)?
 
     @State private var measuredHeight: CGFloat
     @State private var placeholderHeight: CGFloat = 0
@@ -40,6 +41,7 @@ struct ChatmiceTextField: View {
         onBackTab: (() -> Void)? = nil,
         onEscape: (() -> Void)? = nil,
         onTextSettled: (() -> Void)? = nil,
+        onPasteImage: ((NSImage) -> Void)? = nil,
         onCommit: (() -> Void)? = nil
     ) {
         self.title = String(title)
@@ -53,6 +55,7 @@ struct ChatmiceTextField: View {
         self.onTab = onTab
         self.onBackTab = onBackTab
         self.onTextSettled = onTextSettled
+        self.onPasteImage = onPasteImage
         self.onEscape = onEscape
         _measuredHeight = State(initialValue: minHeight)
     }
@@ -88,7 +91,8 @@ struct ChatmiceTextField: View {
                 onTab: onTab,
                 onBackTab: onBackTab,
                 onEscape: onEscape,
-                onTextSettled: onTextSettled
+                onTextSettled: onTextSettled,
+                onPasteImage: onPasteImage,
             )
         }
         .frame(height: min(max(currentHeight, minHeight), maxHeight))
@@ -126,6 +130,7 @@ private struct ChatmiceTextFieldRep: NSViewRepresentable {
     var onBackTab: (() -> Void)?
     var onEscape: (() -> Void)?
     var onTextSettled: (() -> Void)?
+    var onPasteImage: ((NSImage) -> Void)?
 
     func makeCoordinator() -> Coordinator {
         Coordinator(self)
@@ -136,6 +141,7 @@ private struct ChatmiceTextFieldRep: NSViewRepresentable {
         textView.focusBinding = isFocused
         textView.delegate = context.coordinator
         textView.string = text
+        textView.onPasteImage = onPasteImage
         if let fontSize {
             textView.font = NSFont.systemFont(ofSize: fontSize)
         }
@@ -163,6 +169,7 @@ private struct ChatmiceTextFieldRep: NSViewRepresentable {
 
         guard let textView = scrollView.documentView as? MacaiNSTextView else { return }
         textView.focusBinding = isFocused
+        textView.onPasteImage = onPasteImage
 
         if textView.string != text,
            !textView.hasMarkedText(),
@@ -326,8 +333,30 @@ private struct ChatmiceTextFieldRep: NSViewRepresentable {
 private final class MacaiNSTextView: NSTextView {
     var focusBinding: Binding<Bool>?
     var onSizeChange: (() -> Void)?
+    var onPasteImage: ((NSImage) -> Void)?
     private var isUpdatingSize = false
 
+
+    override func paste(_ sender: Any?) {
+        guard let onPasteImage else {
+            super.paste(sender)
+            return
+        }
+        let pasteboard = NSPasteboard.general
+        if let image = NSImage(pasteboard: pasteboard) {
+            onPasteImage(image)
+            return
+        }
+        if let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: [
+            .urlReadingFileURLsOnly: true,
+        ]) as? [URL],
+           let imageURL = urls.first(where: { UTType(filenameExtension: $0.pathExtension)?.conforms(to: .image) == true }),
+           let image = NSImage(contentsOf: imageURL) {
+            onPasteImage(image)
+            return
+        }
+        super.paste(sender)
+    }
     override func becomeFirstResponder() -> Bool {
         focusBinding?.wrappedValue = true
         return super.becomeFirstResponder()

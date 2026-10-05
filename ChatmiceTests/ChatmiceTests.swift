@@ -73,6 +73,62 @@ final class ChatmiceTests: XCTestCase {
     }
 
 
+    func testSkillStoreRestrictsCatalogPromptAndReads() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let enabledID = "enabled-\(UUID().uuidString)"
+        let disabledID = "disabled-\(UUID().uuidString)"
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        for (identifier, name) in [(enabledID, "Enabled Skill"), (disabledID, "Disabled Skill")] {
+            let directory = root.appendingPathComponent(identifier, isDirectory: true)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            try "---\nname: \(name)\ndescription: Test skill\n---\nInstructions for \(name)"
+                .write(to: directory.appendingPathComponent("SKILL.md"), atomically: true, encoding: .utf8)
+        }
+
+        let store = SkillStore(directories: [root], allowedIdentifiers: [enabledID])
+        let skills = await store.skills()
+        XCTAssertEqual(skills.map(\.name), ["Enabled Skill"])
+
+        let prompt = await store.systemPromptSection()
+        XCTAssertTrue(prompt.contains("Enabled Skill"))
+        XCTAssertFalse(prompt.contains("Disabled Skill"))
+
+        do {
+            _ = try await store.read(name: "Disabled Skill", path: nil)
+            XCTFail("A chat-disabled Skill must not be readable")
+        } catch {
+            XCTAssertTrue(error is ToolError)
+        }
+    }
+
+    func testSkillSelectionIsIsolatedPerChatAndResettable() {
+        let defaults = UserDefaults.standard
+        let storageKey = "chatmiceToolSelectionState"
+        let previousState = defaults.data(forKey: storageKey)
+        defer {
+            if let previousState {
+                defaults.set(previousState, forKey: storageKey)
+            } else {
+                defaults.removeObject(forKey: storageKey)
+            }
+        }
+        defaults.removeObject(forKey: storageKey)
+
+        let firstChat = UUID()
+        let secondChat = UUID()
+        let sourceID = ToolSourceID.skill("test-skill")
+
+        ToolSelectionStore.setSourceEnabled(false, sourceID: sourceID, for: firstChat)
+        XCTAssertTrue(ToolSelectionStore.disabledSourceIDs(for: firstChat).contains(sourceID))
+        XCTAssertFalse(ToolSelectionStore.disabledSourceIDs(for: secondChat).contains(sourceID))
+        XCTAssertFalse(ToolSelectionStore.disabledSourceIDs(for: nil).contains(sourceID))
+
+        ToolSelectionStore.resetSourcesToDefaults([sourceID], for: firstChat)
+        XCTAssertFalse(ToolSelectionStore.disabledSourceIDs(for: firstChat).contains(sourceID))
+    }
+
 }
 
 private final class DelayedStreamingAPIService: APIService {

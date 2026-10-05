@@ -18,6 +18,8 @@ private struct ToolSelectionPopover: View {
     @AppStorage("mcpServersJSON") private var mcpServersJSON = "[]"
     @State private var sources: [ToolSourceDescriptor] = []
     @State private var revision = 0
+    @State private var skills: [SkillInfo] = []
+    @State private var isShowingSkillPicker = false
 
     private var chatUsesOverride: Bool {
         _ = revision
@@ -85,7 +87,7 @@ private struct ToolSelectionPopover: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 8) {
                         sourceSection(title: "Internal Tools", sources: internalSources)
-                        sourceSection(title: "Skills", sources: skillSources)
+                        skillSourceSection()
                         sourceSection(title: "MCP", sources: mcpSources)
                     }
                 }
@@ -95,7 +97,12 @@ private struct ToolSelectionPopover: View {
         .foregroundStyle(Color.primary)
         .padding(12)
         .frame(width: 320)
-        .task { sources = await ToolSourceCatalog.load() }
+        .task {
+            async let loadedSources = ToolSourceCatalog.load()
+            async let loadedSkills = SkillStore().allSkills()
+            sources = await loadedSources
+            skills = await loadedSkills
+        }
         .onChange(of: mcpServersJSON) { _, _ in
             Task { sources = await ToolSourceCatalog.load() }
         }
@@ -146,6 +153,97 @@ private struct ToolSelectionPopover: View {
         }
     }
 
+    @ViewBuilder
+    private func skillSourceSection() -> some View {
+        if let source = skillSources.first {
+            let globallyEnabledSkills = skills.filter {
+                SkillEnablementStore.isEnabled($0.directory.lastPathComponent)
+            }
+            let disabledIDs = ToolSelectionStore.disabledSourceIDs(for: chatID)
+            let selectedCount = globallyEnabledSkills.filter {
+                !disabledIDs.contains(ToolSourceID.skill($0.directory.lastPathComponent))
+            }.count
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("SKILLS")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(Color.secondary)
+                    .padding(.horizontal, 4)
+                    .padding(.top, 2)
+
+                HStack(spacing: 8) {
+                    Image(systemName: source.isAvailable ? source.kind.systemImage : "exclamationmark.triangle.fill")
+                        .font(.system(size: 11))
+                        .foregroundStyle(source.isAvailable ? Color.accentColor : Color.orange)
+                        .frame(width: 16)
+
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(source.name)
+                            .font(.system(size: 12, weight: .medium))
+                        Text(skillSummary(
+                            source: source,
+                            selectedCount: selectedCount,
+                            installedCount: skills.count
+                        ))
+                        .font(.caption2)
+                        .foregroundStyle(source.isAvailable ? Color.secondary : Color.orange)
+                        .lineLimit(1)
+                    }
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        guard source.isAvailable, !skills.isEmpty else { return }
+                        isShowingSkillPicker = true
+                    }
+
+                    Spacer(minLength: 4)
+
+                    if source.isAvailable {
+                        Button {
+                            isShowingSkillPicker = true
+                        } label: {
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundStyle(.secondary)
+                                .frame(width: 18, height: 22)
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(skills.isEmpty)
+                        .help(skills.isEmpty ? "No skills are installed" : "Choose skills for this chat")
+                        .popover(isPresented: $isShowingSkillPicker, arrowEdge: .trailing) {
+                            ChatSkillSelectionPopover(
+                                chatID: chatID,
+                                skills: skills,
+                                onSelectionChanged: { revision += 1 }
+                            )
+                        }
+
+                        Toggle("", isOn: sourceBinding(source))
+                            .labelsHidden()
+                            .toggleStyle(.switch)
+                            .controlSize(.mini)
+                    } else {
+                        Text("Disabled")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(Color.orange)
+                            .help(unavailableHelp(for: source))
+                    }
+                }
+                .padding(.horizontal, 4)
+                .padding(.vertical, 5)
+            }
+        }
+    }
+
+    private func skillSummary(
+        source: ToolSourceDescriptor,
+        selectedCount: Int,
+        installedCount: Int
+    ) -> String {
+        guard source.isAvailable else { return "Disabled globally" }
+        guard installedCount > 0 else { return "No skills installed" }
+        return "\(selectedCount) of \(installedCount) enabled"
+    }
+
     private func sourceBinding(_ source: ToolSourceDescriptor) -> Binding<Bool> {
         Binding(
             get: {
@@ -173,17 +271,185 @@ private struct ToolSelectionPopover: View {
     }
 }
 
+private struct ChatSkillSelectionPopover: View {
+    let chatID: UUID
+    let skills: [SkillInfo]
+    let onSelectionChanged: () -> Void
+
+    @State private var searchText = ""
+    @State private var revision = 0
+
+    private var filteredSkills: [SkillInfo] {
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return skills }
+        return skills.filter { skill in
+            skill.name.localizedCaseInsensitiveContains(query)
+                || skill.description.localizedCaseInsensitiveContains(query)
+                || skill.directory.lastPathComponent.localizedCaseInsensitiveContains(query)
+        }
+    }
+
+    private var selectableSkills: [SkillInfo] {
+        skills.filter { SkillEnablementStore.isEnabled($0.directory.lastPathComponent) }
+    }
+
+    private var selectedCount: Int {
+        _ = revision
+        let disabled = ToolSelectionStore.disabledSourceIDs(for: chatID)
+        return selectableSkills.filter {
+            !disabled.contains(ToolSourceID.skill($0.directory.lastPathComponent))
+        }.count
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Skills for This Chat")
+                        .font(.system(size: 13, weight: .semibold))
+                    Text("\(selectedCount) of \(selectableSkills.count) available skills enabled")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button("Defaults") { resetToDefaults() }
+                    .buttonStyle(.borderless)
+                    .controlSize(.small)
+                    .help("Restore the global Skill selection for this chat")
+            }
+
+            TextField("Search skills", text: $searchText)
+                .textFieldStyle(.roundedBorder)
+
+            HStack(spacing: 8) {
+                Button("Enable All") { setAllEnabled(true) }
+                    .controlSize(.small)
+                Button("Disable All") { setAllEnabled(false) }
+                    .controlSize(.small)
+                Spacer()
+            }
+
+            Divider()
+
+            if filteredSkills.isEmpty {
+                ContentUnavailableView(
+                    searchText.isEmpty ? "No Skills Installed" : "No Matching Skills",
+                    systemImage: searchText.isEmpty ? "books.vertical" : "magnifyingglass",
+                    description: Text(searchText.isEmpty
+                        ? "Install Skills in Settings to make them available here."
+                        : "Try a different name or description.")
+                )
+                .frame(maxWidth: .infinity, minHeight: 140)
+            } else {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 2) {
+                        ForEach(filteredSkills) { skill in
+                            skillRow(skill)
+                        }
+                    }
+                }
+                .frame(minHeight: 120, maxHeight: 330)
+            }
+        }
+        .padding(12)
+        .frame(width: 360)
+    }
+
+    @ViewBuilder
+    private func skillRow(_ skill: SkillInfo) -> some View {
+        let identifier = skill.directory.lastPathComponent
+        let globallyEnabled = SkillEnablementStore.isEnabled(identifier)
+
+        HStack(alignment: .top, spacing: 9) {
+            Image(systemName: globallyEnabled ? "book.closed" : "exclamationmark.triangle.fill")
+                .font(.system(size: 11))
+                .foregroundStyle(globallyEnabled ? Color.accentColor : Color.orange)
+                .frame(width: 16, height: 18)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(skill.name)
+                    .font(.system(size: 12, weight: .medium))
+                    .lineLimit(1)
+                Text(globallyEnabled
+                    ? (skill.description.isEmpty ? identifier : skill.description)
+                    : "Disabled globally in Settings")
+                    .font(.caption2)
+                    .foregroundStyle(globallyEnabled ? Color.secondary : Color.orange)
+                    .lineLimit(2)
+            }
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    guard globallyEnabled else { return }
+                    let binding = skillBinding(identifier)
+                    binding.wrappedValue.toggle()
+                }
+
+            Spacer(minLength: 8)
+
+            Toggle("", isOn: globallyEnabled ? skillBinding(identifier) : .constant(false))
+                .labelsHidden()
+                .toggleStyle(.switch)
+                .controlSize(.mini)
+                .disabled(!globallyEnabled)
+        }
+        .padding(.horizontal, 4)
+        .padding(.vertical, 6)
+    }
+
+    private func skillBinding(_ identifier: String) -> Binding<Bool> {
+        Binding(
+            get: {
+                _ = revision
+                return !ToolSelectionStore.disabledSourceIDs(for: chatID)
+                    .contains(ToolSourceID.skill(identifier))
+            },
+            set: { enabled in
+                ToolSelectionStore.setSourceEnabled(
+                    enabled,
+                    sourceID: ToolSourceID.skill(identifier),
+                    for: chatID
+                )
+                didChangeSelection()
+            }
+        )
+    }
+
+    private func setAllEnabled(_ enabled: Bool) {
+        ToolSelectionStore.setSourcesEnabled(
+            enabled,
+            sourceIDs: selectableSkills.map { ToolSourceID.skill($0.directory.lastPathComponent) },
+            for: chatID
+        )
+        didChangeSelection()
+    }
+
+    private func resetToDefaults() {
+        ToolSelectionStore.resetSourcesToDefaults(
+            skills.map { ToolSourceID.skill($0.directory.lastPathComponent) },
+            for: chatID
+        )
+        didChangeSelection()
+    }
+
+    private func didChangeSelection() {
+        revision += 1
+        onSelectionChanged()
+    }
+}
+
 struct MessageInputView: View {
     @Environment(\.managedObjectContext) private var viewContext
     let chat: ChatEntity?
     @Binding var text: String
     @Binding var attachedImages: [ImageAttachment]
     @Binding var attachedFiles: [DocumentAttachment]
+    @Binding var attachedAudio: DocumentAttachment?
     let isInferenceInProgress: Bool
     let isEditingSystemMessage: Bool
     var imageUploadsAllowed: Bool
     var pdfUploadsAllowed: Bool
     var imageGenerationSupported: Bool
+    var audioInputAllowed: Bool
     var onEnter: () -> Void
     var onAddImage: () -> Void
     var onAddFile: () -> Void
@@ -205,6 +471,8 @@ struct MessageInputView: View {
     @AppStorage("chatmiceToolsEnabled") private var toolsEnabled = true
     @State private var toolSelectionRevision = 0
     @State private var reasoningSelectionRevision = 0
+    @StateObject private var voiceRecorder = VoiceRecordingController()
+    @State private var voiceRecordingError: String?
 
     private let maxInputHeight = 160.0
     private let initialInputSize = 16.0
@@ -256,7 +524,8 @@ struct MessageInputView: View {
     }
 
     private var isSendDisabled: Bool {
-        text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && attachedImages.isEmpty && attachedFiles.isEmpty
+        text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && attachedImages.isEmpty && attachedFiles.isEmpty && attachedAudio == nil
     }
 
     private var stopButtonTransition: AnyTransition {
@@ -308,11 +577,13 @@ struct MessageInputView: View {
         text: Binding<String>,
         attachedImages: Binding<[ImageAttachment]>,
         attachedFiles: Binding<[DocumentAttachment]>,
+        attachedAudio: Binding<DocumentAttachment?> = .constant(nil),
         isInferenceInProgress: Bool,
         isEditingSystemMessage: Bool = false,
         imageUploadsAllowed: Bool,
         pdfUploadsAllowed: Bool,
         imageGenerationSupported: Bool,
+        audioInputAllowed: Bool = false,
         onEnter: @escaping () -> Void,
         onAddImage: @escaping () -> Void,
         onAddFile: @escaping () -> Void,
@@ -328,9 +599,11 @@ struct MessageInputView: View {
         self._attachedFiles = attachedFiles
         self.isInferenceInProgress = isInferenceInProgress
         self.isEditingSystemMessage = isEditingSystemMessage
+        self._attachedAudio = attachedAudio
         self.imageUploadsAllowed = imageUploadsAllowed
         self.pdfUploadsAllowed = pdfUploadsAllowed
         self.imageGenerationSupported = imageGenerationSupported
+        self.audioInputAllowed = audioInputAllowed
         self.onEnter = onEnter
         self.onAddImage = onAddImage
         self.onAddFile = onAddFile
@@ -645,15 +918,42 @@ struct MessageInputView: View {
 
 
     private var micButton: some View {
-        Button(action: {}) {
-            Image(systemName: "mic.fill")
-                .font(.system(size: 12))
-                .foregroundStyle(toolbarControlForegroundColor)
-                .frame(width: 24, height: 24)
-                .background(Circle().fill(toolbarControlBackgroundColor))
+        Button(action: toggleVoiceRecording) {
+            HStack(spacing: 4) {
+                if voiceRecorder.isStarting {
+                    ProgressView().controlSize(.mini)
+                } else {
+                    Image(systemName: voiceRecorder.isRecording ? "stop.fill" : "mic.fill")
+                        .font(.system(size: 12))
+                }
+                if voiceRecorder.isRecording {
+                    Text(formatDuration(voiceRecorder.duration))
+                        .font(.system(size: 10, design: .monospaced))
+                }
+            }
+            .foregroundStyle(voiceRecorder.isRecording ? Color.white : toolbarControlForegroundColor)
+            .padding(.horizontal, voiceRecorder.isRecording ? 8 : 0)
+            .frame(minWidth: 24, minHeight: 24)
+            .background(Capsule().fill(voiceRecorder.isRecording ? Color.red : toolbarControlBackgroundColor))
         }
         .buttonStyle(.plain)
-        .help("Voice input")
+        .disabled(isInferenceInProgress || voiceRecorder.isStarting)
+        .help(voiceRecorder.isStarting ? "Requesting microphone access…" : (voiceRecorder.isRecording ? "Stop and attach WAV recording" : "Record WAV voice input"))
+    }
+
+    private func toggleVoiceRecording() {
+        voiceRecorder.toggle { result in
+            switch result {
+            case .success(let url):
+                attachedAudio = DocumentAttachment(url: url, context: viewContext)
+            case .failure(let error):
+                voiceRecordingError = error.localizedDescription
+            }
+        }
+    }
+
+    private func formatDuration(_ duration: TimeInterval) -> String {
+        String(format: "%d:%02d", Int(duration) / 60, Int(duration) % 60)
     }
 
     private var sendOrStopButton: some View {
@@ -756,11 +1056,16 @@ struct MessageInputView: View {
                             )
                         }
                     }
+                    if let audio = attachedAudio {
+                        AudioRecordingPreview(attachment: audio) {
+                            attachedAudio = nil
+                        }
+                    }
                 }
                 .padding(.horizontal, 0)
                 .padding(.bottom, 8)
             }
-            .frame(height: (attachedImages.isEmpty && attachedFiles.isEmpty) ? 0 : 100)
+            .frame(height: (attachedImages.isEmpty && attachedFiles.isEmpty && attachedAudio == nil) ? 0 : 100)
 
             VStack(alignment: .leading, spacing: 0) {
                 ChatmiceTextField(
@@ -773,6 +1078,7 @@ struct MessageInputView: View {
                     maxHeight: maxInputHeight,
                     onEscape: isEditingSystemMessage ? onCancelEdit : nil,
                     onTextSettled: onTextSettled,
+                    onPasteImage: addPastedImage,
                     onCommit: {
                         guard !isInferenceInProgress else { return }
                         onEnter()
@@ -799,8 +1105,8 @@ struct MessageInputView: View {
         }
         .scaleEffect(isHoveringDropZone ? 1.02 : 1.0)
         .animation(.spring(response: 0.3, dampingFraction: 0.6), value: isHoveringDropZone)
-        .onDrop(of: [.image, .pdf, .fileURL], isTargeted: $isHoveringDropZone) { providers in
-            guard imageUploadsAllowed || pdfUploadsAllowed else { return false }
+        .onDrop(of: [.image, .pdf, .audio, .fileURL], isTargeted: $isHoveringDropZone) { providers in
+            guard imageUploadsAllowed || pdfUploadsAllowed || audioInputAllowed || !isInferenceInProgress else { return false }
             return handleDrop(providers: providers)
         }
         .onAppear {
@@ -848,6 +1154,28 @@ struct MessageInputView: View {
                 }
             }
         }
+        .alert("Voice Recording Failed", isPresented: Binding(
+            get: { voiceRecordingError != nil },
+            set: { if !$0 { voiceRecordingError = nil } }
+        )) {
+            Button("Open Microphone Settings") {
+                if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone") {
+                    NSWorkspace.shared.open(url)
+                }
+            }
+            Button("OK", role: .cancel) { voiceRecordingError = nil }
+        } message: {
+            Text(voiceRecordingError ?? "Unknown recording error")
+        }
+    }
+
+    private func addPastedImage(_ image: NSImage) {
+        guard imageUploadsAllowed else { return }
+        let attachment = ImageAttachment(image: image)
+        attachment.saveToEntity(image: image, context: viewContext)
+        withAnimation {
+            attachedImages.append(attachment)
+        }
     }
 
     private func handleDrop(providers: [NSItemProvider]) -> Bool {
@@ -855,27 +1183,25 @@ struct MessageInputView: View {
 
         for provider in providers {
             if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
-                didHandleDrop = didHandleDrop || imageUploadsAllowed || pdfUploadsAllowed
+                didHandleDrop = didHandleDrop || imageUploadsAllowed || pdfUploadsAllowed || !isInferenceInProgress
                 provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { (data, _) in
-                    if let urlData = data as? Data,
-                        let url = URL(dataRepresentation: urlData, relativeTo: nil),
-                        isValidImageFile(url: url) || isValidPDFFile(url: url)
-                    {
-                        DispatchQueue.main.async {
-                            if isValidPDFFile(url: url) {
-                                guard pdfUploadsAllowed else { return }
-                                let attachment = DocumentAttachment(url: url, context: self.viewContext)
-                                withAnimation {
-                                    attachedFiles.append(attachment)
-                                }
+                    guard let urlData = data as? Data,
+                          let url = URL(dataRepresentation: urlData, relativeTo: nil) else { return }
+                    DispatchQueue.main.async {
+                        if isValidPDFFile(url: url) {
+                            guard pdfUploadsAllowed else { return }
+                            attachedFiles.append(DocumentAttachment(url: url, context: viewContext))
+                        } else if isValidAudioFile(url: url) {
+                            guard !isInferenceInProgress else { return }
+                            do {
+                                let normalizedURL = try AudioAttachmentConverter.normalizeForUpload(url)
+                                attachedAudio = DocumentAttachment(url: normalizedURL, context: viewContext)
+                            } catch {
+                                return
                             }
-                            else {
-                                guard imageUploadsAllowed else { return }
-                                let attachment = ImageAttachment(url: url, context: self.viewContext)
-                                withAnimation {
-                                    attachedImages.append(attachment)
-                                }
-                            }
+                        } else if isValidImageFile(url: url) {
+                            guard imageUploadsAllowed else { return }
+                            attachedImages.append(ImageAttachment(url: url, context: viewContext))
                         }
                     }
                 }
@@ -959,6 +1285,11 @@ struct MessageInputView: View {
 
     private func isValidPDFFile(url: URL) -> Bool {
         return url.pathExtension.lowercased() == "pdf"
+    }
+
+    private func isValidAudioFile(url: URL) -> Bool {
+        let validExtensions = ["mp3", "m4a", "aac", "wav"]
+        return validExtensions.contains(url.pathExtension.lowercased())
     }
 
     private func attachmentPreviewRequests(
@@ -1353,6 +1684,7 @@ struct FilePreviewView: View {
         }
     }
 
+
     private var gradientColors: [Color] {
         if colorScheme == .dark {
             return [
@@ -1382,5 +1714,28 @@ struct FilePreviewView: View {
 
     private var borderColor: Color {
         colorScheme == .dark ? Color.white.opacity(0.12) : Color.black.opacity(0.08)
+    }
+}
+
+private struct AudioRecordingPreview: View {
+    @ObservedObject var attachment: DocumentAttachment
+    let onRemove: () -> Void
+
+    var body: some View {
+        ZStack(alignment: .topTrailing) {
+            AudioAttachmentPlayerView(
+                id: attachment.id,
+                filename: attachment.filename,
+                localURL: attachment.url
+            )
+
+            Button(action: onRemove) {
+                Image(systemName: "xmark.circle.fill")
+                    .foregroundColor(.white)
+                    .background(Circle().fill(Color.black.opacity(0.6)))
+                    .padding(4)
+            }
+            .buttonStyle(.plain)
+        }
     }
 }

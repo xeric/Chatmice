@@ -37,6 +37,12 @@ struct MessageContent {
         self.imageAttachment = nil
         self.fileAttachment = fileAttachment
     }
+
+    init(audioAttachment: DocumentAttachment) {
+        self.content = "<file-uuid>\(audioAttachment.id.uuidString)</file-uuid>"
+        self.imageAttachment = nil
+        self.fileAttachment = audioAttachment
+    }
 }
 
 /// Extension to convert between MessageContent array and string representation
@@ -58,6 +64,7 @@ extension Array where Element == MessageContent {
     var fileUUIDs: [UUID] {
         compactMap { AttachmentParser.extractFileUUIDs(from: $0.content).first }
     }
+
 }
 extension String {
     func toMessageContents() -> [MessageContent] {
@@ -71,4 +78,5 @@ extension String {
     func extractFileUUIDs() -> [UUID] {
         AttachmentParser.extractFileUUIDs(from: self)
     }
+
 }

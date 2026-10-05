@@ -13,6 +13,15 @@ enum ToolSourceID {
     static let skills = "builtin:skills"
     static let computerUse = "builtin:computer-use"
     static let webSearch = "builtin:web-search"
+    static func skill(_ identifier: String) -> String {
+        "skill:\(identifier)"
+    }
+
+    static func skillIdentifier(from sourceID: String) -> String? {
+        let prefix = "skill:"
+        guard sourceID.hasPrefix(prefix) else { return nil }
+        return String(sourceID.dropFirst(prefix.count))
+    }
     static func mcpServer(_ name: String) -> String {
         "mcp:\(name)"
     }
@@ -169,17 +178,41 @@ enum ToolSelectionStore {
     }
 
     static func setSourceEnabled(_ enabled: Bool, sourceID: String, for chatID: UUID?) {
+        setSourcesEnabled(enabled, sourceIDs: [sourceID], for: chatID)
+    }
+
+    static func setSourcesEnabled(_ enabled: Bool, sourceIDs: [String], for chatID: UUID?) {
         lock.withLock {
             var state = load()
             if let chatID {
                 let key = chatID.uuidString
                 var disabled = state.chatOverrides[key] ?? state.defaultDisabledSourceIDs
-                update(&disabled, sourceID: sourceID, enabled: enabled)
+                for sourceID in sourceIDs {
+                    update(&disabled, sourceID: sourceID, enabled: enabled)
+                }
                 state.chatOverrides[key] = disabled
+            } else {
+                for sourceID in sourceIDs {
+                    update(&state.defaultDisabledSourceIDs, sourceID: sourceID, enabled: enabled)
+                }
             }
-            else {
-                update(&state.defaultDisabledSourceIDs, sourceID: sourceID, enabled: enabled)
+            save(state)
+        }
+    }
+
+    static func resetSourcesToDefaults(_ sourceIDs: [String], for chatID: UUID) {
+        lock.withLock {
+            var state = load()
+            let key = chatID.uuidString
+            var disabled = state.chatOverrides[key] ?? state.defaultDisabledSourceIDs
+            for sourceID in sourceIDs {
+                if state.defaultDisabledSourceIDs.contains(sourceID) {
+                    disabled.insert(sourceID)
+                } else {
+                    disabled.remove(sourceID)
+                }
             }
+            state.chatOverrides[key] = disabled
             save(state)
         }
     }
@@ -195,16 +228,14 @@ enum ToolSelectionStore {
     private static func update(_ disabled: inout Set<String>, sourceID: String, enabled: Bool) {
         if enabled {
             disabled.remove(sourceID)
-        }
-        else {
+        } else {
             disabled.insert(sourceID)
         }
     }
 
     private static func load() -> ToolSelectionState {
         guard let data = UserDefaults.standard.data(forKey: storageKey),
-            let state = try? JSONDecoder().decode(ToolSelectionState.self, from: data)
-        else {
+              let state = try? JSONDecoder().decode(ToolSelectionState.self, from: data) else {
             return ToolSelectionState()
         }
         return state

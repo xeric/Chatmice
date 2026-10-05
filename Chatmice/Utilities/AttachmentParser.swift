@@ -26,6 +26,7 @@ struct AttachmentParser {
         extractUUIDs(from: text, pattern: filePattern)
     }
 
+
     private static func extractUUIDs(from text: String, pattern: String) -> [UUID] {
         guard let regex = try? NSRegularExpression(pattern: pattern, options: []) else { return [] }
         let nsString = text as NSString

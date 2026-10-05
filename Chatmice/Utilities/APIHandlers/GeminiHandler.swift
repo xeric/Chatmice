@@ -764,6 +764,7 @@ class GeminiHandler: APIService {
             matches.append((match.range, "file", uuid))
         }
 
+
         matches.sort { $0.range.location < $1.range.location }
         var currentLocation = 0
 
@@ -786,8 +787,11 @@ class GeminiHandler: APIService {
                     }
                 case "file":
                     if let file = loadFileFromCoreData(uuid: uuid) {
-                        let base64 = file.data.base64EncodedString()
-                        let inlineData = GeminiInlineData(mimeType: file.mimeType, data: base64)
+                        let mimeType = file.mimeType
+                        let inlineData = GeminiInlineData(
+                            mimeType: mimeType,
+                            data: file.data.base64EncodedString()
+                        )
                         parts.append(GeminiPartRequest(inlineData: inlineData))
                     }
                 default:

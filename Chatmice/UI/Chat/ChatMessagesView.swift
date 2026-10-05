@@ -24,17 +24,19 @@ struct ChatMessagesView: View {
     @State private var pendingCodeBlocks = 0
     @State private var isInitialLoad = true
     @ObservedObject private var activityStore = ChatActivityStore.shared
-    
 
     private var activitySnapshot: ChatActivitySnapshot? {
         activityStore.activeSnapshot(for: chat.id)
     }
 
-
     private var activityAnchorID: String {
         "chat-activity-\(chat.id.uuidString)"
     }
-    
+
+    private var bottomAnchorID: String {
+        "chat-bottom-\(chat.id.uuidString)"
+    }
+
     var body: some View {
         ScrollView {
             ScrollViewReader { scrollView in
@@ -52,7 +54,8 @@ struct ChatMessagesView: View {
                         ForEach(chatViewModel.sortedMessages, id: \.objectID) { messageEntity in
                             let isLatest = messageEntity.objectID == chatViewModel.sortedMessages.last?.objectID
                             let isActiveAssistant = isLatest && !messageEntity.own && activitySnapshot != nil
-                            let storedDuration = messageEntity.reasoningDuration > 0 ? messageEntity.reasoningDuration : nil
+                            let storedDuration =
+                                messageEntity.reasoningDuration > 0 ? messageEntity.reasoningDuration : nil
                             let bubbleContent = ChatBubbleContent(
                                 message: messageEntity.body,
                                 own: messageEntity.own,
@@ -95,6 +98,10 @@ struct ChatMessagesView: View {
                         ChatBubbleView(content: bubbleContent, searchText: $searchText)
                             .id(-2)
                     }
+
+                    Color.clear
+                        .frame(height: 1)
+                        .id(bottomAnchorID)
                 }
                 .padding(24)
                 .onAppear {
@@ -111,55 +118,52 @@ struct ChatMessagesView: View {
                 .onSwipe { event in
                     switch event.direction {
                     case .up:
+                        scrollDebounceWorkItem?.cancel()
+                        scrollDebounceWorkItem = nil
                         userIsScrolling = true
-                    case .none, .down, .left, .right:
+                    case .down:
+                        userIsScrolling = false
+                        scrollView.scrollTo(bottomAnchorID, anchor: .bottom)
+                    case .none, .left, .right:
                         break
                     }
                 }
-                .onChange(of: chat.lastMessage?.body) {
-                    if isStreaming && !userIsScrolling {
-                        scrollDebounceWorkItem?.cancel()
+                .onChange(of: chat.updatedDate) {
+                    guard isStreaming, !userIsScrolling else { return }
 
-                        let workItem = DispatchWorkItem {
-                            withAnimation(.easeOut(duration: 0.22)) {
-                                if activitySnapshot != nil {
-                                    scrollView.scrollTo(activityAnchorID, anchor: .bottom)
-                                } else if let lastMessage = chatViewModel.sortedMessages.last {
-                                    scrollView.scrollTo(lastMessage.objectID, anchor: .bottom)
-                                }
-                            }
+                    scrollDebounceWorkItem?.cancel()
+                    let workItem = DispatchWorkItem {
+                        scrollDebounceWorkItem = nil
+                        guard !userIsScrolling else { return }
+
+                        DispatchQueue.main.async {
+                            scrollView.scrollTo(bottomAnchorID, anchor: .bottom)
                         }
-
-                        scrollDebounceWorkItem = workItem
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1, execute: workItem)
                     }
+
+                    scrollDebounceWorkItem = workItem
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.03, execute: workItem)
                 }
                 .onChange(of: activitySnapshot?.phase) { _, phase in
                     guard phase != nil, !userIsScrolling else { return }
                     withAnimation(.easeOut(duration: 0.22)) {
-                        scrollView.scrollTo(activityAnchorID, anchor: .bottom)
+                        scrollView.scrollTo(bottomAnchorID, anchor: .bottom)
                     }
                 }
                 .onChange(of: chatViewModel.sortedMessages.count) {
-                    if activitySnapshot != nil {
-                        withAnimation {
-                            scrollView.scrollTo(activityAnchorID, anchor: .bottom)
-                        }
-                    } else if currentError != nil {
-                        withAnimation {
-                            scrollView.scrollTo(-2, anchor: .bottom)
-                        }
+                    guard !userIsScrolling else { return }
+                    withAnimation {
+                        scrollView.scrollTo(bottomAnchorID, anchor: .bottom)
                     }
                 }
-                .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("NonStreamingMessageCompleted"))) { notification in
+                .onReceive(
+                    NotificationCenter.default.publisher(for: NSNotification.Name("NonStreamingMessageCompleted"))
+                ) { notification in
                     if let notificationChat = notification.object as? ChatEntity, notificationChat == chat {
                         DispatchQueue.main.async {
-                            if !isStreaming && !userIsScrolling {
-                                let sortedMessages = chatViewModel.sortedMessages
-                                if let lastMessage = sortedMessages.last {
-                                    withAnimation(.easeOut(duration: 0.5)) {
-                                        scrollView.scrollTo(lastMessage.objectID, anchor: .bottom)
-                                    }
+                            if !userIsScrolling {
+                                withAnimation(.easeOut(duration: 0.5)) {
+                                    scrollView.scrollTo(bottomAnchorID, anchor: .bottom)
                                 }
                             }
                         }
@@ -172,10 +176,8 @@ struct ChatMessagesView: View {
                             codeBlocksRendered = true
                             if isInitialLoad {
                                 isInitialLoad = false
-                                if let lastMessage = chatViewModel.sortedMessages.last {
-                                    DispatchQueue.main.async {
-                                        scrollView.scrollTo(lastMessage.objectID, anchor: .bottom)
-                                    }
+                                DispatchQueue.main.async {
+                                    scrollView.scrollTo(bottomAnchorID, anchor: .bottom)
                                 }
                             }
                         }

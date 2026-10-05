@@ -260,19 +260,27 @@ class OpenAIResponsesHandler: OpenAIHandlerBase, APIService {
                         }
                     }
 
+
                     for uuid in AttachmentParser.extractFileUUIDs(from: content) {
                         if let filePayload = self.loadFileFromCoreData(uuid: uuid) {
                             let mimeType = filePayload.mimeType ?? "application/pdf"
                             let base64 = filePayload.data.base64EncodedString()
-                            let safeFilename = (filePayload.filename?.isEmpty == false)
-                                ? (filePayload.filename ?? "document.pdf")
-                                : "document.pdf"
-                            let fileItem: [String: Any] = [
-                                "type": "input_file",
-                                "file_data": "data:\(mimeType);base64,\(base64)",
-                                "filename": safeFilename,
-                            ]
-                            contentArray.append(fileItem)
+                            if mimeType.hasPrefix("audio/") {
+                                let extensionName = (filePayload.filename as NSString?)?.pathExtension.lowercased()
+                                let format = extensionName == "mp3" || mimeType == "audio/mpeg" ? "mp3" : "wav"
+                                contentArray.append([
+                                    "type": "input_audio",
+                                    "input_audio": ["data": base64, "format": format],
+                                ])
+                            } else {
+                                let safeFilename = (filePayload.filename?.isEmpty == false)
+                                    ? (filePayload.filename ?? "document.pdf") : "document.pdf"
+                                contentArray.append([
+                                    "type": "input_file",
+                                    "file_data": "data:\(mimeType);base64,\(base64)",
+                                    "filename": safeFilename,
+                                ])
+                            }
                         }
                     }
                 }

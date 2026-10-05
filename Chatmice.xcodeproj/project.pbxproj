@@ -7,6 +7,9 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		33F57FB60DEE4CB8234F35B4 /* AudioAttachmentPlayerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A4ACF5465AEC95EC533B619C /* AudioAttachmentPlayerView.swift */; };
+		C76E55386D88A8A2D014F983 /* AudioAttachmentConverter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5423D86ECA9E5591AC636F93 /* AudioAttachmentConverter.swift */; };
+		AA91B830D4CC520CC3B66C28 /* VoiceRecordingController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8034B2BAB55881DBAA730B11 /* VoiceRecordingController.swift */; };
 		0BA0FF405FC14D3FABF82621 /* APIServiceTemplateProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3EA7767A135E47FFAB9E3289 /* APIServiceTemplateProvider.swift */; };
 		0E6BF47F5D74490F95504FF6 /* GeminiHandlerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1D1475CF2DC44692A9E47B9A /* GeminiHandlerTests.swift */; };
 		C1A0DE010000000000000001 /* ClaudeRequestCompatibilityTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1A0DE010000000000000002 /* ClaudeRequestCompatibilityTests.swift */; };
@@ -161,6 +164,9 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		A4ACF5465AEC95EC533B619C /* AudioAttachmentPlayerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioAttachmentPlayerView.swift; sourceTree = "<group>"; };
+		5423D86ECA9E5591AC636F93 /* AudioAttachmentConverter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioAttachmentConverter.swift; sourceTree = "<group>"; };
+		8034B2BAB55881DBAA730B11 /* VoiceRecordingController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceRecordingController.swift; sourceTree = "<group>"; };
 		04F05D023BB34EF796C7F7D3 /* ChatmiceTextField.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatmiceTextField.swift; sourceTree = "<group>"; };
 		090CED78E6224CCB84778089 /* QuickLookPreviewer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuickLookPreviewer.swift; sourceTree = "<group>"; };
 		0E7C2F2A3A4D4E5F9B8C7D6E /* MessageCellTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessageCellTests.swift; sourceTree = "<group>"; };
@@ -393,6 +399,7 @@
 		4A272A6729F5CB5300F93D0D /* Chat */ = {
 			isa = PBXGroup;
 			children = (
+				A4ACF5465AEC95EC533B619C /* AudioAttachmentPlayerView.swift */,
 				4AC37B622F1255C0006FD196 /* AttachmentPreviewViews.swift */,
 				4AC37B7D2F14000100D1A2B3 /* ChatDraftManager.swift */,
 				4A1E16832E16DB4500E5CBA3 /* ChatInputView.swift */,
@@ -496,6 +503,8 @@
 		4A272A7029F5D9C200F93D0D /* Utilities */ = {
 			isa = PBXGroup;
 			children = (
+				5423D86ECA9E5591AC636F93 /* AudioAttachmentConverter.swift */,
+				8034B2BAB55881DBAA730B11 /* VoiceRecordingController.swift */,
 				14537C1CE42F2DC7966EBF04 /* ChatmiceEngine.swift */,
 				2C64AA5DC1942A285D46D9A8 /* ComputerUseTool.swift */,
 				F21BC6502437775046CA296A /* MCPService.swift */,
@@ -782,6 +791,9 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				33F57FB60DEE4CB8234F35B4 /* AudioAttachmentPlayerView.swift in Sources */,
+				C76E55386D88A8A2D014F983 /* AudioAttachmentConverter.swift in Sources */,
+				AA91B830D4CC520CC3B66C28 /* VoiceRecordingController.swift in Sources */,
 				A997E261F772F00CE3A311EB /* ModelPickerPopoverView.swift in Sources */,
 				3B581D462F9C9596252A850F /* TabMCPServersView.swift in Sources */,
 				F1A2B3C4D5E6F7A8B9C0D1E3 /* TabSkillsView.swift in Sources */,

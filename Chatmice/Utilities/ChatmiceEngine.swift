@@ -16,6 +16,27 @@ private actor BashApprovalSession {
     func approve() { approved = true }
 }
 
+private enum BashApprovalDecision {
+    case deny
+    case allowOnce
+    case allowSession
+}
+
+@MainActor
+private final class BashApprovalResponder: NSObject {
+    @objc func allowOnce() {
+        NSApp.stopModal(withCode: .alertFirstButtonReturn)
+    }
+
+    @objc func allowSession() {
+        NSApp.stopModal(withCode: .alertSecondButtonReturn)
+    }
+
+    @objc func deny() {
+        NSApp.stopModal(withCode: .alertThirdButtonReturn)
+    }
+}
+
 
 class ChatmiceEngine: APIService, AgentActivityReporting {
     let name: String
@@ -119,14 +140,53 @@ class ChatmiceEngine: APIService, AgentActivityReporting {
         baseService.cancelCurrentRequest()
     }
     @MainActor
-    private static func requestBashApproval(prompt: String, allowTitle: String) -> Bool {
+    private static func requestBashApproval(prompt: String) -> BashApprovalDecision {
         let alert = NSAlert()
         alert.messageText = "Run Bash Command?"
         alert.informativeText = prompt
-        alert.addButton(withTitle: allowTitle)
-        alert.addButton(withTitle: "Deny")
         alert.alertStyle = .warning
-        return alert.runModal() == .alertFirstButtonReturn
+
+        alert.addButton(withTitle: "Allow Once")
+
+        let sessionButton = alert.addButton(withTitle: "Allow in This Session")
+        sessionButton.bezelColor = .systemPurple
+        sessionButton.contentTintColor = .white
+
+        let denyButton = alert.addButton(withTitle: "Deny")
+
+        let responder = BashApprovalResponder()
+        alert.buttons[0].target = responder
+        alert.buttons[0].action = #selector(BashApprovalResponder.allowOnce)
+        alert.buttons[1].target = responder
+        alert.buttons[1].action = #selector(BashApprovalResponder.allowSession)
+        alert.buttons[2].target = responder
+        alert.buttons[2].action = #selector(BashApprovalResponder.deny)
+
+        let parentWindow = NSApp.keyWindow ?? NSApp.mainWindow
+            ?? NSApp.windows.first(where: { $0 !== alert.window && $0.isVisible })
+        let alertWindow = alert.window
+        alertWindow.contentView?.layoutSubtreeIfNeeded()
+        denyButton.keyEquivalent = "\u{1b}"
+        alertWindow.makeKeyAndOrderFront(nil)
+        if let parentWindow {
+            let parentFrame = parentWindow.frame
+            let alertFrame = alertWindow.frame
+            alertWindow.setFrameOrigin(NSPoint(
+                x: parentFrame.midX - alertFrame.width / 2,
+                y: parentFrame.midY - alertFrame.height / 2
+            ))
+        }
+
+        let response = NSApp.runModal(for: alertWindow)
+        alertWindow.orderOut(nil)
+        switch response {
+        case .alertFirstButtonReturn:
+            return .allowOnce
+        case .alertSecondButtonReturn:
+            return .allowSession
+        default:
+            return .deny
+        }
     }
 
     // MARK: - Agent Tool Loop Engine
@@ -177,9 +237,23 @@ class ChatmiceEngine: APIService, AgentActivityReporting {
             await box.register(BashTool())
             await box.register(PythonInterpreterTool())
         }
-        let skillStore = SkillStore()
+        let disabledSkillIdentifiers = Set(disabledSources.compactMap(ToolSourceID.skillIdentifier(from:)))
+        let skillStore: SkillStore
         if skillsEnabled {
-            await box.register(SkillTool(catalog: skillStore))
+            let globallyEnabledIdentifiers = Set(
+                await SkillStore().allSkills().compactMap { skill in
+                    let identifier = skill.directory.lastPathComponent
+                    return SkillEnablementStore.isEnabled(identifier) ? identifier : nil
+                }
+            )
+            skillStore = SkillStore(
+                allowedIdentifiers: globallyEnabledIdentifiers.subtracting(disabledSkillIdentifiers)
+            )
+            if !globallyEnabledIdentifiers.subtracting(disabledSkillIdentifiers).isEmpty {
+                await box.register(SkillTool(catalog: skillStore))
+            }
+        } else {
+            skillStore = SkillStore(allowedIdentifiers: [])
         }
         if computerEnabled {
             await box.register(ScreenshotTool())
@@ -252,25 +326,20 @@ class ChatmiceEngine: APIService, AgentActivityReporting {
                 switch approvalMode {
                 case .alwaysAllow:
                     return true
-                case .currentSession:
+                case .currentSession, .alwaysAsk:
                     if await approvalSession.isApproved() {
                         return true
                     }
                     self.reportActivity(.awaitingApproval(tool: "bash", detail: prompt))
-                    let approved = await Self.requestBashApproval(
-                        prompt: prompt,
-                        allowTitle: "Allow for This Session"
-                    )
-                    if approved {
+                    switch await Self.requestBashApproval(prompt: prompt) {
+                    case .deny:
+                        return false
+                    case .allowOnce:
+                        return true
+                    case .allowSession:
                         await approvalSession.approve()
+                        return true
                     }
-                    return approved
-                case .alwaysAsk:
-                    self.reportActivity(.awaitingApproval(tool: "bash", detail: prompt))
-                    return await Self.requestBashApproval(
-                        prompt: prompt,
-                        allowTitle: "Allow Once"
-                    )
                 }
             }
         )

@@ -94,9 +94,12 @@ class MessageManager: ObservableObject {
                 )
                 self.viewContext.saveWithRetry(attempts: 1)
                 self.endActivity(for: chat.id, kind: .completed)
-                
+
                 DispatchQueue.main.async {
-                    NotificationCenter.default.post(name: NSNotification.Name("NonStreamingMessageCompleted"), object: chat)
+                    NotificationCenter.default.post(
+                        name: NSNotification.Name("NonStreamingMessageCompleted"),
+                        object: chat
+                    )
                     NotificationCenter.default.post(
                         name: NSNotification.Name("ChatResponseCompleted"),
                         object: chat,
@@ -104,18 +107,18 @@ class MessageManager: ObservableObject {
                             "responseId": UUID().uuidString,
                             "chatId": chat.id,
                             "message": messageBody,
-                            "chatName": chat.name
+                            "chatName": chat.name,
                         ]
                     )
                 }
-                
+
                 completion(.success(()))
 
             case .failure(let error):
                 chat.waitingForResponse = false
                 self.endActivity(for: chat.id, kind: .failed(message: error.localizedDescription))
                 completion(.failure(error))
-        }
+            }
         }
 
         apiService.sendMessage(requestMessages, temperature: temperature) { result in
@@ -195,7 +198,8 @@ class MessageManager: ObservableObject {
                     if lastMessage.own {
                         self.addMessageToChat(chat: chat, message: accumulatedResponse)
                         streamingMessage = chat.lastMessage
-                    } else {
+                    }
+                    else {
                         updateLastMessage(
                             chat: chat,
                             lastMessage: lastMessage,
@@ -214,7 +218,10 @@ class MessageManager: ObservableObject {
                 }
 
                 guard !accumulatedResponse.isEmpty else {
-                    self.endActivity(for: chat.id, kind: .failed(message: APIError.invalidResponse.localizedDescription))
+                    self.endActivity(
+                        for: chat.id,
+                        kind: .failed(message: APIError.invalidResponse.localizedDescription)
+                    )
                     completion(.failure(APIError.invalidResponse))
                     return
                 }
@@ -226,14 +233,18 @@ class MessageManager: ObservableObject {
 
                 if deferImageResponse {
                     self.addMessageToChat(chat: chat, message: accumulatedResponse, partsEnvelope: geminiParts)
-                } else if let assistantMessage = streamingMessage ?? (chat.lastMessage?.own == false ? chat.lastMessage : nil) {
+                }
+                else if let assistantMessage = streamingMessage
+                    ?? (chat.lastMessage?.own == false ? chat.lastMessage : nil)
+                {
                     updateLastMessage(
                         chat: chat,
                         lastMessage: assistantMessage,
                         accumulatedResponse: accumulatedResponse
                     )
                     assistantMessage.messageParts = geminiParts
-                } else {
+                }
+                else {
                     self.addMessageToChat(chat: chat, message: accumulatedResponse, partsEnvelope: geminiParts)
                 }
 
@@ -252,17 +263,19 @@ class MessageManager: ObservableObject {
                         "responseId": UUID().uuidString,
                         "chatId": chat.id,
                         "message": accumulatedResponse,
-                        "chatName": chat.name
+                        "chatName": chat.name,
                     ]
                 )
                 self.endActivity(for: chat.id, kind: .completed)
                 completion(.success(()))
-            } catch is CancellationError {
+            }
+            catch is CancellationError {
                 if streamGeneration == generation {
                     self.endActivity(for: chat.id, kind: .cancelled)
                 }
                 completion(.failure(CancellationError()))
-            } catch {
+            }
+            catch {
                 print("Streaming error: \(error)")
                 if streamGeneration == generation {
                     self.endActivity(for: chat.id, kind: .failed(message: error.localizedDescription))
@@ -384,7 +397,11 @@ class MessageManager: ObservableObject {
         let newMessage = MessageEntity(context: self.viewContext)
         let sequence = chat.nextSequence()
         newMessage.id = sequence
-        if chat.responds(to: #selector(getter: MessageEntity.sequence)) || (chat.managedObjectContext?.persistentStoreCoordinator?.managedObjectModel.entitiesByName["MessageEntity"]?.attributesByName["sequence"] != nil) {
+        if chat.responds(to: #selector(getter: MessageEntity.sequence))
+            || (chat.managedObjectContext?.persistentStoreCoordinator?.managedObjectModel.entitiesByName[
+                "MessageEntity"
+            ]?.attributesByName["sequence"] != nil)
+        {
             newMessage.sequence = sequence
         }
         newMessage.body = message
@@ -399,7 +416,12 @@ class MessageManager: ObservableObject {
         chat.objectWillChange.send()
     }
 
-    private func addNewMessageToRequestMessages(chat: ChatEntity, content: String, role: String, geminiParts: String? = nil) {
+    private func addNewMessageToRequestMessages(
+        chat: ChatEntity,
+        content: String,
+        role: String,
+        geminiParts: String? = nil
+    ) {
         var message: [String: String] = ["role": role, "content": content]
         if let geminiParts {
             message["message_parts"] = geminiParts
@@ -426,7 +448,8 @@ class MessageManager: ObservableObject {
         isRetry: Bool
     ) {
         if isRetry,
-           let lastAssistantIndex = chat.requestMessages.lastIndex(where: { $0["role"] == AppConstants.defaultRole }) {
+            let lastAssistantIndex = chat.requestMessages.lastIndex(where: { $0["role"] == AppConstants.defaultRole })
+        {
             chat.requestMessages.remove(at: lastAssistantIndex)
         }
         addNewMessageToRequestMessages(
@@ -441,6 +464,7 @@ class MessageManager: ObservableObject {
         lastMessage.body = accumulatedResponse
         lastMessage.timestamp = Date()
         lastMessage.waitingForResponse = false
+        chat.updatedDate = Date()
 
         chat.objectWillChange.send()
     }
@@ -450,8 +474,7 @@ class MessageManager: ObservableObject {
         forUserMessage userMessage: String?,
         contextSize: Int,
         excluding responseToReplace: MessageEntity? = nil
-    ) -> [[String: String]]
-    {
+    ) -> [[String: String]] {
         var messages: [[String: String]] = []
 
         if !AppConstants.openAiReasoningModels.contains(chat.gptModel) {
@@ -483,8 +506,9 @@ class MessageManager: ObservableObject {
             ]
 
             if let envelope = message.messageParts,
-               let base64 = decodePartsEnvelopeToBase64(envelope),
-               envelopeHasVendorGemini(envelope) {
+                let base64 = decodePartsEnvelopeToBase64(envelope),
+                envelopeHasVendorGemini(envelope)
+            {
                 payload["message_parts"] = base64
             }
 

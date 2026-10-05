@@ -67,9 +67,12 @@ class DocumentAttachment: Identifiable, ObservableObject {
 
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self = self, let url = self.url else { return }
-
             do {
-                guard self.originalFileType.conforms(to: .pdf) else {
+
+                guard self.originalFileType.conforms(to: .pdf)
+                    || self.originalFileType.conforms(to: .audio)
+                    || self.mimeType.hasPrefix("audio/")
+                else {
                     throw NSError(
                         domain: "DocumentAttachment",
                         code: 1,
@@ -88,8 +91,10 @@ class DocumentAttachment: Identifiable, ObservableObject {
 
                 self.fileData = data
                 self.saveToEntity(fileData: data)
-                self.generateThumbnail(from: data)
-                self.preparePreviewURLIfNeeded(using: data)
+                if self.originalFileType.conforms(to: .pdf) {
+                    self.generateThumbnail(from: data)
+                    self.preparePreviewURLIfNeeded(using: data)
+                }
 
                 DispatchQueue.main.async {
                     self.fileSize = data.count
@@ -128,7 +133,7 @@ class DocumentAttachment: Identifiable, ObservableObject {
             DispatchQueue.global(qos: .userInitiated).async { [weak self] in
                 guard let self else { return }
 
-                if let data {
+                if let data, self.originalFileType.conforms(to: .pdf) {
                     self.generateThumbnail(from: data)
                     self.preparePreviewURLIfNeeded(using: data)
                 }

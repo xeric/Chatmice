@@ -85,6 +85,7 @@ struct ChatBubbleView: View, Equatable {
     var body: some View {
         let prefetchedElements = prefetchedElementsIfNeeded(from: content.message)
         let attachments = prefetchedElements.map(extractAttachments) ?? []
+        let hasBodyContent = prefetchedElements.map(hasRenderableBodyContent) ?? true
 
         VStack {
             HStack {
@@ -102,11 +103,13 @@ struct ChatBubbleView: View, Equatable {
                         attachmentRow(attachments: attachments)
                     }
 
-                    bubbleContent(prefetchedElements: prefetchedElements)
-                        .frame(
-                            maxWidth: content.own ? nil : ChatTypography.assistantContentMaxWidth,
-                            alignment: content.own ? .trailing : .leading
-                        )
+                    if hasBodyContent || (content.waitingForResponse ?? false) || content.errorMessage != nil {
+                        bubbleContent(prefetchedElements: prefetchedElements)
+                            .frame(
+                                maxWidth: content.own ? nil : ChatTypography.assistantContentMaxWidth,
+                                alignment: content.own ? .trailing : .leading
+                            )
+                    }
                 }
 
                 if !content.own {
@@ -271,29 +274,61 @@ struct ChatBubbleView: View, Equatable {
         }
     }
 
+    private func hasRenderableBodyContent(_ elements: [MessageElements]) -> Bool {
+        elements.contains { element in
+            switch element {
+            case .image, .file:
+                return false
+            case .text(let text):
+                return !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            default:
+                return true
+            }
+        }
+    }
+
     @ViewBuilder
     private func attachmentRow(attachments: [MessageElements]) -> some View {
         let tileSize: CGFloat = 160
         let spacing: CGFloat = 8
-        let previewRequests = attachmentPreviewRequests(from: attachments)
+        let squareAttachments = attachments.filter { !isAudioAttachment($0) }
+        let audioAttachments = attachments.filter(isAudioAttachment)
+        let previewRequests = attachmentPreviewRequests(from: squareAttachments)
         let previewIndexById = previewRequests.enumerated().reduce(into: [UUID: Int]()) { result, entry in
             result[entry.element.id] = entry.offset
         }
-        TrailingAttachmentFlowLayout(
-            itemSize: CGSize(width: tileSize, height: tileSize),
-            spacing: spacing
-        ) {
-            ForEach(attachments.indices, id: \.self) { index in
-                let attachment = attachments[index]
-                attachmentTileView(
-                    attachment: attachment,
-                    tileSize: tileSize,
-                    previewIndexById: previewIndexById,
-                    previewRequests: previewRequests
-                )
+
+        VStack(alignment: .trailing, spacing: spacing) {
+            if !squareAttachments.isEmpty {
+                TrailingAttachmentFlowLayout(
+                    itemSize: CGSize(width: tileSize, height: tileSize),
+                    spacing: spacing
+                ) {
+                    ForEach(squareAttachments.indices, id: \.self) { index in
+                        attachmentTileView(
+                            attachment: squareAttachments[index],
+                            tileSize: tileSize,
+                            previewIndexById: previewIndexById,
+                            previewRequests: previewRequests
+                        )
+                    }
+                }
+            }
+
+            ForEach(audioAttachments.indices, id: \.self) { index in
+                if case .file(let fileInfo) = audioAttachments[index] {
+                    AudioAttachmentPlayerView(id: fileInfo.id, filename: fileInfo.filename)
+                }
             }
         }
         .frame(maxWidth: .infinity, alignment: .trailing)
+    }
+
+    private func isAudioAttachment(_ element: MessageElements) -> Bool {
+        if case .file(let fileInfo) = element {
+            return fileInfo.mimeType?.hasPrefix("audio/") == true
+        }
+        return false
     }
 
     @ViewBuilder
@@ -315,15 +350,19 @@ struct ChatBubbleView: View, Equatable {
                 }
             )
         case .file(let fileInfo):
-            PDFAttachmentTileView(
-                fileInfo: fileInfo,
-                size: tileSize,
-                onPreview: {
-                    if let index = previewIndexById[fileInfo.id] {
-                        QuickLookPreviewer.shared.preview(requests: previewRequests, selectedIndex: index)
+            if fileInfo.mimeType?.hasPrefix("audio/") == true {
+                AudioAttachmentPlayerView(id: fileInfo.id, filename: fileInfo.filename, width: tileSize)
+            } else {
+                PDFAttachmentTileView(
+                    fileInfo: fileInfo,
+                    size: tileSize,
+                    onPreview: {
+                        if let index = previewIndexById[fileInfo.id] {
+                            QuickLookPreviewer.shared.preview(requests: previewRequests, selectedIndex: index)
+                        }
                     }
-                }
-            )
+                )
+            }
         default:
             EmptyView()
         }
