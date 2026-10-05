@@ -3,8 +3,8 @@
 </div>
 <h2 align="center">Chatmice</h2>
 
-<a href="#"><img alt="GitHub top language" src="https://img.shields.io/github/languages/top/Renset/macai"></a> <a href="#"><img alt="GitHub code size in bytes" src="https://img.shields.io/github/languages/code-size/Renset/macai"></a> <a href="https://github.com/Renset/macai/actions/workflows/swift-xcode.yml"><img alt="GitHub Workflow Status" src="https://img.shields.io/github/actions/workflow/status/Renset/macai/swift-xcode.yml"></a> <a href="https://github.com/Renset/macai/blob/main/LICENSE.md"><img alt="GitHub" src="https://img.shields.io/github/license/Renset/macai"></a>
-<a href="https://github.com/Renset/macai/releases/latest"><img alt="GitHub all releases" src="https://img.shields.io/github/downloads/Renset/macai/total"></a>
+<a href="#"><img alt="GitHub top language" src="https://img.shields.io/github/languages/top/xeric/Chatmice"></a> <a href="#"><img alt="GitHub code size in bytes" src="https://img.shields.io/github/languages/code-size/xeric/Chatmice"></a> <a href="https://github.com/xeric/Chatmice/actions/workflows/swift-xcode.yml"><img alt="GitHub Workflow Status" src="https://img.shields.io/github/actions/workflow/status/xeric/Chatmice/swift-xcode.yml"></a> <a href="https://github.com/xeric/Chatmice/blob/main/LICENSE.md"><img alt="GitHub" src="https://img.shields.io/github/license/xeric/Chatmice"></a>
+<a href="https://github.com/xeric/Chatmice/releases/latest"><img alt="GitHub all releases" src="https://img.shields.io/github/downloads/xeric/Chatmice/total"></a>
 
 Chatmice is a simple yet powerful native macOS AI chat client that supports most AI providers: ChatGPT, Claude, xAI (Grok), Google Gemini, Perplexity, Ollama, OpenRouter, and almost any OpenAI-compatible APIs.
 
@@ -13,7 +13,6 @@ Chatmice is a simple yet powerful native macOS AI chat client that supports most
 ## Table of Contents
 - [Downloads](#downloads)
   - [Manual](#manual)
-  - [Homebrew](#homebrew)
 - [Contributions](#contributions)
 - [Why Chatmice](#why-chatmice)
 - [Run with ChatGPT, Claude, xAI or Google Gemini](#run-with-chatgpt-claude-xai-or-google-gemini)
@@ -26,19 +25,13 @@ Chatmice is a simple yet powerful native macOS AI chat client that supports most
 
 ## Downloads
 
-### Manual
-Download [latest universal binary](https://github.com/Renset/macai/releases), notarized by Apple.
-
-### Homebrew
-Install the upstream macai cask with Homebrew:
-`brew install --cask macai`
+Download builds from the [Chatmice releases page](https://github.com/xeric/Chatmice/releases). Until the first signed release is published, build the app from source using the instructions below.
 
 
 ## Contributions
-Contributions are welcome. Take a look at [Issues page](https://github.com/Renset/macai/issues) to see already added features/bugs before creating new one. 
-You can also support the upstream project by funding. This support is very important and allows its maintainers to focus on development.
+Contributions are welcome. Check the [Chatmice issues](https://github.com/xeric/Chatmice/issues) before opening a new issue or pull request.
 
-<a href="https://www.buymeacoffee.com/renset1" target="_blank"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" style="height: 60px !important;width: 217px !important;" ></a>
+Chatmice is derived from [macai](https://github.com/Renset/macai), created by Renat Notfullin and its contributors. Chatmice retains the upstream Apache-2.0 license and attribution while developing an independent product direction.
 
 
 ## Why Chatmice
@@ -84,7 +77,7 @@ Project is in the active development phase.
 
 If you have an Apple Developer account and want to build with iCloud Sync support:
 
-1. Clone the repository: `git clone https://github.com/Renset/macai.git Chatmice`
+1. Clone the repository: `git clone https://github.com/xeric/Chatmice.git`
 2. Open `Chatmice.xcodeproj` in Xcode
 3. Select your team in Signing & Capabilities
 4. *(Optional)* To enable iCloud Sync in Debug builds, remove `DISABLE_ICLOUD` from Build Settings → Swift Compiler → Active Compilation Conditions
@@ -97,7 +90,7 @@ If you have an Apple Developer account and want to build with iCloud Sync suppor
 If you don't have an Apple Developer account, you can still build and run the app without iCloud Sync:
 
 **Using Xcode:**
-1. Clone the repository: `git clone https://github.com/Renset/macai.git Chatmice`
+1. Clone the repository: `git clone https://github.com/xeric/Chatmice.git`
 2. Open `Chatmice.xcodeproj` in Xcode
 3. Select the `Chatmice` target → Build Settings tab
 4. Search for `CODE_SIGN_ENTITLEMENTS`
@@ -107,7 +100,7 @@ If you don't have an Apple Developer account, you can still build and run the ap
 
 **Using Command Line:**
 ```bash
-git clone https://github.com/Renset/macai.git Chatmice
+git clone https://github.com/xeric/Chatmice.git
 cd Chatmice
 xcodebuild -scheme Chatmice \
   -configuration Debug \
@@ -132,9 +125,9 @@ iCloud Sync is **disabled by default** in Debug builds via the `DISABLE_ICLOUD` 
 3. Remove `DISABLE_ICLOUD` from the value (leaving just `DEBUG`)
 4. Ensure you have proper entitlements and signing configured (see below)
 
-#### For Forks / Custom Builds
+#### For Custom Builds
 
-If you want iCloud Sync to work in a fork or custom build, you must use your own CloudKit container:
+If you want iCloud Sync to work in a custom build, you must use your own CloudKit container:
 
 1. Create a CloudKit container in your Apple Developer account
 2. Enable the iCloud capability for the Chatmice target in Xcode, and add your container
@@ -145,4 +138,4 @@ If you want iCloud Sync to work in a fork or custom build, you must use your own
 If `CloudKitContainerIdentifier` is missing, the app falls back to the default container.
 
 ## License
-[Apache-2.0](https://github.com/Renset/macai/blob/main/LICENSE.md)
+[Apache-2.0](https://github.com/xeric/Chatmice/blob/main/LICENSE.md). Chatmice is derived from [macai](https://github.com/Renset/macai); original copyright and attribution notices are retained.
