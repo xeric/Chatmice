@@ -95,7 +95,7 @@ jobs:
           test -f dist/SHA256SUMS
           xcrun stapler validate "dist/Chatmice-${GITHUB_REF_NAME#v}.dmg"
 
-      - name: Publish GitHub release
+      - name: Create draft GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -107,34 +107,8 @@ jobs:
             dist/release-info.txt \
             --verify-tag \
             --generate-notes \
+            --draft \
             --title "Chatmice ${GITHUB_REF_NAME#v}"
-
-      - name: Publish Sparkle appcast
-        shell: bash
-        env:
-          SPARKLE_PRIVATE_KEY_FILE: ${{ runner.temp }}/sparkle-private-key
-        run: |
-          set -euo pipefail
-          APPCAST_DIR="$RUNNER_TEMP/appcast"
-          mkdir -p "$APPCAST_DIR"
-          cp appcast.xml "$APPCAST_DIR/appcast.xml"
-          cp "dist/Chatmice-${GITHUB_REF_NAME#v}.zip" "$APPCAST_DIR/"
-          "$RUNNER_TEMP/sparkle/bin/generate_appcast" \
-            --ed-key-file "$SPARKLE_PRIVATE_KEY_FILE" \
-            --download-url-prefix "https://github.com/xeric/Chatmice/releases/download/$GITHUB_REF_NAME/" \
-            --link "https://github.com/xeric/Chatmice/releases/tag/$GITHUB_REF_NAME" \
-            --maximum-versions 10 \
-            -o "$APPCAST_DIR/appcast.xml" \
-            "$APPCAST_DIR"
-          git clone --branch main --single-branch "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" "$RUNNER_TEMP/repository"
-          cp "$APPCAST_DIR/appcast.xml" "$RUNNER_TEMP/repository/appcast.xml"
-          cd "$RUNNER_TEMP/repository"
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add appcast.xml
-          git diff --cached --quiet && exit 0
-          git commit -m "release: update appcast for $GITHUB_REF_NAME"
-          git push origin main
 
       - name: Remove temporary credentials
         if: always()
