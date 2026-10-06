@@ -203,12 +203,6 @@ hdiutil create \
     -ov \
     "$DMG_PATH"
 
-if [[ "$SHOULD_NOTARIZE" == "1" ]]; then
-    echo "==> Notarizing DMG"
-    xcrun notarytool submit "$DMG_PATH" "${notary_args[@]}" --wait --timeout "$NOTARY_TIMEOUT"
-    xcrun stapler staple "$DMG_PATH"
-    xcrun stapler validate "$DMG_PATH"
-fi
 
 if [[ -z "$SPARKLE_SIGN_UPDATE" ]] && command -v sign_update >/dev/null 2>&1; then
     SPARKLE_SIGN_UPDATE="$(command -v sign_update)"

@@ -97,7 +97,6 @@ jobs:
           test -f "dist/Chatmice-${GITHUB_REF_NAME#v}.zip"
           test -s "dist/Chatmice-${GITHUB_REF_NAME#v}.zip.sparkle-signature.txt"
           test -f dist/SHA256SUMS
-          xcrun stapler validate "dist/Chatmice-${GITHUB_REF_NAME#v}.dmg"
 
       - name: Create draft GitHub release
         env:
