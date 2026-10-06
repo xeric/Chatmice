@@ -12,11 +12,14 @@ jobs:
   release:
     name: Sign, notarize, and publish
     if: github.repository == 'xeric/Chatmice'
-    runs-on: macos-15
+    runs-on: macos-latest
     environment: production
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Verify Swift toolchain
+        run: swift --version
 
       - name: Validate tag version
         shell: bash
