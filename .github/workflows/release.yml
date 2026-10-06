@@ -14,6 +14,7 @@ jobs:
     if: github.repository == 'xeric/Chatmice'
     runs-on: macos-latest
     environment: production
+    timeout-minutes: 45
     steps:
       - name: Checkout
         uses: actions/checkout@v4

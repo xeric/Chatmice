@@ -15,6 +15,7 @@ NOTARY_KEY="${NOTARY_KEY:-}"
 NOTARY_KEY_ID="${NOTARY_KEY_ID:-}"
 NOTARY_ISSUER_ID="${NOTARY_ISSUER_ID:-}"
 NOTARIZE="${NOTARIZE:-ask}"
+NOTARY_TIMEOUT="${NOTARY_TIMEOUT:-15m}"
 SIGN_RETRIES="${SIGN_RETRIES:-5}"
 SPARKLE_SIGN_UPDATE="${SPARKLE_SIGN_UPDATE:-}"
 SPARKLE_PRIVATE_KEY_FILE="${SPARKLE_PRIVATE_KEY_FILE:-}"
@@ -183,7 +184,7 @@ fi
 if [[ "$SHOULD_NOTARIZE" == "1" ]]; then
     echo "==> Notarizing application"
     ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" "$NOTARY_ZIP"
-    xcrun notarytool submit "$NOTARY_ZIP" "${notary_args[@]}" --wait
+    xcrun notarytool submit "$NOTARY_ZIP" "${notary_args[@]}" --wait --timeout "$NOTARY_TIMEOUT"
     xcrun stapler staple "$APP_PATH"
     xcrun stapler validate "$APP_PATH"
 fi
@@ -204,7 +205,7 @@ hdiutil create \
 
 if [[ "$SHOULD_NOTARIZE" == "1" ]]; then
     echo "==> Notarizing DMG"
-    xcrun notarytool submit "$DMG_PATH" "${notary_args[@]}" --wait
+    xcrun notarytool submit "$DMG_PATH" "${notary_args[@]}" --wait --timeout "$NOTARY_TIMEOUT"
     xcrun stapler staple "$DMG_PATH"
     xcrun stapler validate "$DMG_PATH"
 fi
