@@ -1,0 +1,143 @@
+name: Release Chatmice
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Sign, notarize, and publish
+    if: github.repository == 'xeric/Chatmice'
+    runs-on: macos-15
+    environment: production
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate tag version
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          PROJECT_VERSION="$(xcodebuild -project Chatmice.xcodeproj -scheme Chatmice -configuration Release -showBuildSettings | sed -n 's/^[[:space:]]*MARKETING_VERSION = //p' | tail -1)"
+          if [[ "$TAG_VERSION" != "$PROJECT_VERSION" ]]; then
+            echo "Tag $GITHUB_REF_NAME does not match MARKETING_VERSION $PROJECT_VERSION" >&2
+            exit 1
+          fi
+
+      - name: Import Developer ID certificate
+        shell: bash
+        env:
+          CERTIFICATE_BASE64: ${{ secrets.DEVELOPER_ID_P12_BASE64 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.DEVELOPER_ID_P12_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.CI_KEYCHAIN_PASSWORD }}
+        run: |
+          set -euo pipefail
+          CERTIFICATE_PATH="$RUNNER_TEMP/developer-id.p12"
+          KEYCHAIN_PATH="$RUNNER_TEMP/chatmice-signing.keychain-db"
+          printf '%s' "$CERTIFICATE_BASE64" | base64 -D > "$CERTIFICATE_PATH"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$CERTIFICATE_PATH" -P "$CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security list-keychains -d user -s "$KEYCHAIN_PATH"
+          rm -f "$CERTIFICATE_PATH"
+
+      - name: Prepare notarization and Sparkle credentials
+        shell: bash
+        env:
+          APP_STORE_CONNECT_PRIVATE_KEY: ${{ secrets.APP_STORE_CONNECT_PRIVATE_KEY }}
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$APP_STORE_CONNECT_PRIVATE_KEY" > "$RUNNER_TEMP/AuthKey.p8"
+          printf '%s' "$SPARKLE_PRIVATE_KEY" > "$RUNNER_TEMP/sparkle-private-key"
+          chmod 600 "$RUNNER_TEMP/AuthKey.p8" "$RUNNER_TEMP/sparkle-private-key"
+
+      - name: Download Sparkle 2.6.4 tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 \
+            --output "$RUNNER_TEMP/Sparkle-2.6.4.tar.xz" \
+            "https://github.com/sparkle-project/Sparkle/releases/download/2.6.4/Sparkle-2.6.4.tar.xz"
+          mkdir -p "$RUNNER_TEMP/sparkle"
+          tar -xJf "$RUNNER_TEMP/Sparkle-2.6.4.tar.xz" -C "$RUNNER_TEMP/sparkle"
+          test -x "$RUNNER_TEMP/sparkle/bin/sign_update"
+          test -x "$RUNNER_TEMP/sparkle/bin/generate_appcast"
+
+      - name: Build, sign, notarize, and package
+        shell: bash
+        env:
+          CODE_SIGN_IDENTITY: ${{ secrets.DEVELOPER_ID_APPLICATION }}
+          NOTARIZE: auto
+          NOTARY_KEY: ${{ runner.temp }}/AuthKey.p8
+          NOTARY_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          NOTARY_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          SPARKLE_SIGN_UPDATE: ${{ runner.temp }}/sparkle/bin/sign_update
+          SPARKLE_PRIVATE_KEY_FILE: ${{ runner.temp }}/sparkle-private-key
+          REQUIRE_SPARKLE_SIGNATURE: "1"
+          KEEP_WORK_DIR_ON_FAILURE: "0"
+        run: ./release.sh
+
+      - name: Verify release artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f "dist/Chatmice-${GITHUB_REF_NAME#v}.dmg"
+          test -f "dist/Chatmice-${GITHUB_REF_NAME#v}.zip"
+          test -s "dist/Chatmice-${GITHUB_REF_NAME#v}.zip.sparkle-signature.txt"
+          test -f dist/SHA256SUMS
+          xcrun stapler validate "dist/Chatmice-${GITHUB_REF_NAME#v}.dmg"
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            dist/Chatmice-*.dmg \
+            dist/Chatmice-*.zip \
+            dist/Chatmice-*.zip.sparkle-signature.txt \
+            dist/SHA256SUMS \
+            dist/release-info.txt \
+            --verify-tag \
+            --generate-notes \
+            --title "Chatmice ${GITHUB_REF_NAME#v}"
+
+      - name: Publish Sparkle appcast
+        shell: bash
+        env:
+          SPARKLE_PRIVATE_KEY_FILE: ${{ runner.temp }}/sparkle-private-key
+        run: |
+          set -euo pipefail
+          APPCAST_DIR="$RUNNER_TEMP/appcast"
+          mkdir -p "$APPCAST_DIR"
+          cp appcast.xml "$APPCAST_DIR/appcast.xml"
+          cp "dist/Chatmice-${GITHUB_REF_NAME#v}.zip" "$APPCAST_DIR/"
+          "$RUNNER_TEMP/sparkle/bin/generate_appcast" \
+            --ed-key-file "$SPARKLE_PRIVATE_KEY_FILE" \
+            --download-url-prefix "https://github.com/xeric/Chatmice/releases/download/$GITHUB_REF_NAME/" \
+            --link "https://github.com/xeric/Chatmice/releases/tag/$GITHUB_REF_NAME" \
+            --maximum-versions 10 \
+            -o "$APPCAST_DIR/appcast.xml" \
+            "$APPCAST_DIR"
+          git clone --branch main --single-branch "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" "$RUNNER_TEMP/repository"
+          cp "$APPCAST_DIR/appcast.xml" "$RUNNER_TEMP/repository/appcast.xml"
+          cd "$RUNNER_TEMP/repository"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add appcast.xml
+          git diff --cached --quiet && exit 0
+          git commit -m "release: update appcast for $GITHUB_REF_NAME"
+          git push origin main
+
+      - name: Remove temporary credentials
+        if: always()
+        run: |
+          rm -f "$RUNNER_TEMP/AuthKey.p8" "$RUNNER_TEMP/sparkle-private-key"
+          security delete-keychain "$RUNNER_TEMP/chatmice-signing.keychain-db" 2>/dev/null || true

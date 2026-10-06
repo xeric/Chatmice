@@ -11,9 +11,13 @@ SKIP_CODE_SIGNING="${SKIP_CODE_SIGNING:-0}"
 CODE_SIGN_IDENTITY="${CODE_SIGN_IDENTITY:-Developer ID Application: Juan Zhang (KJ5KHP7B96)}"
 RELEASE_ENTITLEMENTS="${RELEASE_ENTITLEMENTS:-$ROOT_DIR/Chatmice/Chatmice-no-icloud.entitlements}"
 NOTARY_PROFILE="${NOTARY_PROFILE:-notarytool-profile}"
+NOTARY_KEY="${NOTARY_KEY:-}"
+NOTARY_KEY_ID="${NOTARY_KEY_ID:-}"
+NOTARY_ISSUER_ID="${NOTARY_ISSUER_ID:-}"
 NOTARIZE="${NOTARIZE:-ask}"
 SIGN_RETRIES="${SIGN_RETRIES:-5}"
 SPARKLE_SIGN_UPDATE="${SPARKLE_SIGN_UPDATE:-}"
+SPARKLE_PRIVATE_KEY_FILE="${SPARKLE_PRIVATE_KEY_FILE:-}"
 REQUIRE_SPARKLE_SIGNATURE="${REQUIRE_SPARKLE_SIGNATURE:-0}"
 KEEP_WORK_DIR_ON_FAILURE="${KEEP_WORK_DIR_ON_FAILURE:-1}"
 
@@ -45,13 +49,27 @@ case "$NOTARIZE" in
         ;;
 esac
 
+notary_args=()
 if [[ "$SHOULD_NOTARIZE" == "1" ]]; then
     if [[ "$SKIP_CODE_SIGNING" == "1" ]]; then
         echo "error: notarization requires code signing" >&2
         exit 1
     fi
-    if ! notary_check_output="$(xcrun notarytool history --keychain-profile "$NOTARY_PROFILE" 2>&1)"; then
-        echo "error: notarization profile validation failed: $NOTARY_PROFILE" >&2
+    if [[ -n "$NOTARY_KEY" || -n "$NOTARY_KEY_ID" || -n "$NOTARY_ISSUER_ID" ]]; then
+        if [[ -z "$NOTARY_KEY" || -z "$NOTARY_KEY_ID" || -z "$NOTARY_ISSUER_ID" ]]; then
+            echo "error: NOTARY_KEY, NOTARY_KEY_ID, and NOTARY_ISSUER_ID must all be set" >&2
+            exit 1
+        fi
+        if [[ ! -f "$NOTARY_KEY" ]]; then
+            echo "error: notarization key not found: $NOTARY_KEY" >&2
+            exit 1
+        fi
+        notary_args=(--key "$NOTARY_KEY" --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER_ID")
+    else
+        notary_args=(--keychain-profile "$NOTARY_PROFILE")
+    fi
+    if ! notary_check_output="$(xcrun notarytool history "${notary_args[@]}" 2>&1)"; then
+        echo "error: notarization credentials are invalid" >&2
         printf '%s\n' "$notary_check_output" >&2
         exit 1
     fi
@@ -165,7 +183,7 @@ fi
 if [[ "$SHOULD_NOTARIZE" == "1" ]]; then
     echo "==> Notarizing application"
     ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" "$NOTARY_ZIP"
-    xcrun notarytool submit "$NOTARY_ZIP" --keychain-profile "$NOTARY_PROFILE" --wait
+    xcrun notarytool submit "$NOTARY_ZIP" "${notary_args[@]}" --wait
     xcrun stapler staple "$APP_PATH"
     xcrun stapler validate "$APP_PATH"
 fi
@@ -186,7 +204,7 @@ hdiutil create \
 
 if [[ "$SHOULD_NOTARIZE" == "1" ]]; then
     echo "==> Notarizing DMG"
-    xcrun notarytool submit "$DMG_PATH" --keychain-profile "$NOTARY_PROFILE" --wait
+    xcrun notarytool submit "$DMG_PATH" "${notary_args[@]}" --wait
     xcrun stapler staple "$DMG_PATH"
     xcrun stapler validate "$DMG_PATH"
 fi
@@ -201,7 +219,9 @@ if [[ -n "$SPARKLE_SIGN_UPDATE" ]]; then
         exit 1
     fi
     echo "==> Signing Sparkle update"
-    "$SPARKLE_SIGN_UPDATE" "$ZIP_PATH" | tee "$DIST_DIR/$ZIP_NAME.sparkle-signature.txt"
+    sparkle_sign_args=()
+    [[ -n "$SPARKLE_PRIVATE_KEY_FILE" ]] && sparkle_sign_args+=(--ed-key-file "$SPARKLE_PRIVATE_KEY_FILE")
+    "$SPARKLE_SIGN_UPDATE" "${sparkle_sign_args[@]}" "$ZIP_PATH" | tee "$DIST_DIR/$ZIP_NAME.sparkle-signature.txt"
 elif [[ "$REQUIRE_SPARKLE_SIGNATURE" == "1" ]]; then
     echo "error: sign_update not found; set SPARKLE_SIGN_UPDATE to Sparkle's sign_update binary" >&2
     exit 1

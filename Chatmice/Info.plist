@@ -24,6 +24,8 @@
 	<true/>
 	<key>SUFeedURL</key>
 	<string>https://raw.githubusercontent.com/xeric/Chatmice/main/appcast.xml</string>
+	<key>SUPublicEDKey</key>
+	<string>sTJhoFw49zX4LzNS2MlosMyG2E7vkJCHYLz7oBkYrLk=</string>
 	<key>SUScheduledCheckInterval</key>
 	<integer>7200</integer>
 	<key>UIAppFonts</key>
