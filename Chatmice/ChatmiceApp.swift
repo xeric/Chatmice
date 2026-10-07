@@ -790,7 +790,7 @@ struct ChatmiceApp: App {
     }
 
     var body: some Scene {
-        WindowGroup(id: "main") {
+        Window("Chatmice", id: "main") {
             Group {
                 switch persistenceController.loadState {
                 case .loading:
@@ -875,14 +875,6 @@ struct ChatmiceApp: App {
                 }
                 .keyboardShortcut("n", modifiers: .command)
 
-                Button("New Window") {
-                    NSApplication.shared.sendAction(
-                        #selector(NSWindowController.newWindowForTab(_:)),
-                        to: nil,
-                        from: nil
-                    )
-                }
-                .keyboardShortcut("n", modifiers: [.command, .option])
             }
 
             CommandGroup(after: .sidebar) {
