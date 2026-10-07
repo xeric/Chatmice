@@ -56,7 +56,7 @@ final class V3UpdateCoordinator: NSObject, ObservableObject {
     func checkForUpdates() {
         guard updater.canCheckForUpdates else { return }
         userRequestedCheck = true
-        updater.checkForUpdatesInBackground()
+        updaterController.checkForUpdates(nil)
     }
 
     func checkForUpdatesInBackground() {
@@ -227,15 +227,7 @@ extension V3UpdateCoordinator: @preconcurrency SPUUpdaterDelegate {
     }
 
     func updaterDidNotFindUpdate(_ updater: SPUUpdater, error: Error) {
-        guard userRequestedCheck else { return }
         userRequestedCheck = false
-
-        let alert = NSAlert()
-        alert.messageText = "You're up to date"
-        alert.informativeText = "This Mac is running the newest available version of Chatmice."
-        alert.alertStyle = .informational
-        alert.addButton(withTitle: "OK")
-        alert.runModal()
     }
 }
 
