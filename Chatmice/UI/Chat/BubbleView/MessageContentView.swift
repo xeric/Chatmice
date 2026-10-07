@@ -1335,7 +1335,7 @@ struct ToolActivityView: View {
                         .padding(.vertical, 3)
                         .background(state.accentColor.opacity(0.12), in: Capsule())
 
-                    if state.canExpand {
+                    if state.canExpand && storedImage == nil {
                         Image(systemName: "chevron.right")
                             .font(.system(size: 10, weight: .semibold))
                             .foregroundStyle(.secondary)
@@ -1347,27 +1347,22 @@ struct ToolActivityView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .allowsHitTesting(state.canExpand)
+            .allowsHitTesting(state.canExpand && storedImage == nil)
 
-            if isExpanded && state.canExpand {
+            if let image = storedImage {
                 Divider()
                     .opacity(0.6)
 
                 VStack(alignment: .leading, spacing: 8) {
                     HStack {
-                        Text(storedImage == nil ? "OUTPUT" : "SCREENSHOT")
+                        Text("SCREENSHOT")
                             .font(.system(size: 9, weight: .bold))
                             .tracking(0.8)
                             .foregroundStyle(.secondary)
                         Spacer()
                         Button {
                             NSPasteboard.general.clearContents()
-                            if let image = storedImage {
-                                NSPasteboard.general.writeObjects([image])
-                            }
-                            else {
-                                NSPasteboard.general.setString(activity.output, forType: .string)
-                            }
+                            NSPasteboard.general.writeObjects([image])
                             copied = true
                             DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
                                 copied = false
@@ -1380,23 +1375,49 @@ struct ToolActivityView: View {
                         .foregroundStyle(.secondary)
                     }
 
-                    if let image = storedImage {
-                        Image(nsImage: image)
-                            .resizable()
-                            .scaledToFit()
-                            .frame(maxWidth: 520, maxHeight: 360)
-                            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-                    }
-                    else {
-                        ScrollView(.vertical) {
-                            Text(activity.output)
-                                .font(.system(size: 11, design: .monospaced))
-                                .foregroundStyle(.primary.opacity(0.88))
-                                .textSelection(.enabled)
-                                .frame(maxWidth: .infinity, alignment: .leading)
+                    Image(nsImage: image)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(maxWidth: 520, maxHeight: 360)
+                        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                }
+                .padding(10)
+                .background(Color.black.opacity(0.08))
+            }
+            else if isExpanded && state.canExpand {
+                Divider()
+                    .opacity(0.6)
+
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Text("OUTPUT")
+                            .font(.system(size: 9, weight: .bold))
+                            .tracking(0.8)
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Button {
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(activity.output, forType: .string)
+                            copied = true
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                                copied = false
+                            }
+                        } label: {
+                            Label(copied ? "Copied" : "Copy", systemImage: copied ? "checkmark" : "doc.on.doc")
+                                .font(.system(size: 10, weight: .medium))
                         }
-                        .frame(maxHeight: 220)
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.secondary)
                     }
+
+                    ScrollView(.vertical) {
+                        Text(activity.output)
+                            .font(.system(size: 11, design: .monospaced))
+                            .foregroundStyle(.primary.opacity(0.88))
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .frame(maxHeight: 220)
                 }
                 .padding(10)
                 .background(Color.black.opacity(0.08))
