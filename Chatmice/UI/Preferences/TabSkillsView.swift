@@ -15,6 +15,9 @@ struct TabToolsView: View {
     @AppStorage("chatmiceSkillsEnabled") private var skillsEnabled = true
     @AppStorage("chatmiceComputerEnabled") private var computerEnabled = false
     @AppStorage("chatmiceBashApprovalMode") private var bashApprovalMode = BashApprovalMode.alwaysAsk
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var screenRecordingGranted = false
+    @State private var accessibilityGranted = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -22,9 +25,11 @@ struct TabToolsView: View {
                 VStack(alignment: .leading, spacing: 6) {
                     Toggle("Enable Agent Tools", isOn: $toolsEnabled)
                         .toggleStyle(.switch)
-                    Text("Allows the assistant to call enabled tools while answering. Turn this off to run every chat as model-only conversation.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    Text(
+                        "Allows the assistant to call enabled tools while answering. Turn this off to run every chat as model-only conversation."
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 }
                 .padding(8)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -34,9 +39,11 @@ struct TabToolsView: View {
                 VStack(alignment: .leading, spacing: 6) {
                     Toggle("Enable File Tool", isOn: $fileToolsEnabled)
                         .toggleStyle(.switch)
-                    Text("Lets the agent inspect files and folders you select, including reading file contents and listing directory entries.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    Text(
+                        "Lets the agent inspect files and folders you select, including reading file contents and listing directory entries."
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 }
                 .padding(8)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -47,9 +54,11 @@ struct TabToolsView: View {
                 VStack(alignment: .leading, spacing: 10) {
                     Toggle("Enable Bash and Sandboxed Python", isOn: $bashEnabled)
                         .toggleStyle(.switch)
-                    Text("Runs shell commands and isolated Python code for calculations, repository inspection, builds, and command-line tasks.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    Text(
+                        "Runs shell commands and isolated Python code for calculations, repository inspection, builds, and command-line tasks."
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                     Divider()
                     Text("Execution Approval")
                         .font(.subheadline.weight(.medium))
@@ -70,17 +79,61 @@ struct TabToolsView: View {
             .disabled(!toolsEnabled)
 
             GroupBox("Computer Use") {
-                VStack(alignment: .leading, spacing: 6) {
+                VStack(alignment: .leading, spacing: 10) {
                     Toggle("Enable Screen, Mouse, and Keyboard Control", isOn: $computerEnabled)
                         .toggleStyle(.switch)
-                    Text("Lets the agent capture the screen and operate apps with mouse and keyboard events. macOS may request Screen Recording and Accessibility permissions.")
+                        .disabled(!toolsEnabled)
+                    Text("Lets the agent capture the screen and operate apps with mouse and keyboard events.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+
+                    Divider()
+
+                    Text("System Permissions")
+                        .font(.subheadline.weight(.medium))
+                    permissionRow(
+                        title: "Screen Recording",
+                        detail: "Required to capture the contents of your displays.",
+                        symbol: "rectangle.inset.filled.and.person.filled",
+                        granted: screenRecordingGranted,
+                        request: requestScreenRecording,
+                        openSettings: ComputerUsePermissions.openScreenRecordingSettings
+                    )
+                    if !screenRecordingGranted {
+                        Label(
+                            "Restart Chatmice after granting Screen Recording access for the permission to take effect.",
+                            systemImage: "arrow.clockwise"
+                        )
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .padding(.leading, 30)
+                    }
+                    permissionRow(
+                        title: "Accessibility",
+                        detail: "Required to control the mouse and keyboard.",
+                        symbol: "accessibility",
+                        granted: accessibilityGranted,
+                        request: requestAccessibility,
+                        openSettings: ComputerUsePermissions.openAccessibilitySettings
+                    )
+
+                    if !accessibilityGranted {
+                        Divider()
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Manual Accessibility Setup")
+                                .font(.subheadline.weight(.medium))
+                            Text(
+                                "If Chatmice does not appear automatically, open Accessibility settings and drag this app into the applications list."
+                            )
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            DraggableApplicationPermissionView()
+                        }
+                    }
                 }
                 .padding(8)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .disabled(!toolsEnabled)
 
             DefaultToolListSettingsView(
                 fileToolsEnabled: fileToolsEnabled,
@@ -90,6 +143,157 @@ struct TabToolsView: View {
             )
         }
         .frame(minHeight: 340)
+        .onAppear(perform: refreshPermissions)
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { refreshPermissions() }
+        }
+    }
+
+    private func permissionRow(
+        title: String,
+        detail: String,
+        symbol: String,
+        granted: Bool,
+        request: @escaping () -> Void,
+        openSettings: @escaping () -> Void
+    ) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: symbol)
+                .frame(width: 20)
+                .foregroundStyle(granted ? Color.green : Color.orange)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.callout.weight(.medium))
+                Text(detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            Label(
+                granted ? "Granted" : "Required",
+                systemImage: granted ? "checkmark.circle.fill" : "exclamationmark.triangle.fill"
+            )
+            .font(.caption.weight(.medium))
+            .foregroundStyle(granted ? Color.green : Color.orange)
+            if !granted {
+                Button("Request Access", action: request)
+                    .buttonStyle(.borderedProminent)
+            }
+            Button("Open Settings", action: openSettings)
+                .buttonStyle(.bordered)
+        }
+        .controlSize(.small)
+        .padding(.vertical, 2)
+    }
+
+    private func refreshPermissions() {
+        screenRecordingGranted = ComputerUsePermissions.canRecordScreen
+        accessibilityGranted = ComputerUsePermissions.canControlComputer
+    }
+
+    private func requestScreenRecording() {
+        _ = ComputerUsePermissions.requestScreenRecording()
+        refreshPermissions()
+    }
+
+    private func requestAccessibility() {
+        _ = ComputerUsePermissions.requestAccessibility()
+        refreshPermissions()
+    }
+}
+
+private struct DraggableApplicationPermissionView: View {
+    private let appName =
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String
+        ?? Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String
+        ?? "Chatmice"
+
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .fill(Color.primary.opacity(0.055))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 9, style: .continuous)
+                        .strokeBorder(style: StrokeStyle(lineWidth: 1, dash: [5, 4]))
+                        .foregroundStyle(Color.secondary.opacity(0.45))
+                }
+
+            HStack(spacing: 10) {
+                Image(nsImage: NSWorkspace.shared.icon(forFile: Bundle.main.bundlePath))
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 38, height: 38)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(appName)
+                        .font(.callout.weight(.semibold))
+                    Text("Drag into the Accessibility applications list")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Image(systemName: "arrow.up.left.and.arrow.down.right")
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 12)
+
+            ApplicationBundleDragSource()
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .frame(height: 62)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Drag \(appName) into the Accessibility applications list")
+        .help("Drag this item into System Settings > Privacy & Security > Accessibility")
+    }
+}
+
+private struct ApplicationBundleDragSource: NSViewRepresentable {
+    func makeNSView(context: Context) -> ApplicationBundleDragSourceView {
+        ApplicationBundleDragSourceView()
+    }
+
+    func updateNSView(_ nsView: ApplicationBundleDragSourceView, context: Context) {}
+}
+
+private final class ApplicationBundleDragSourceView: NSView, NSDraggingSource {
+    private var initialMouseEvent: NSEvent?
+
+    override func resetCursorRects() {
+        addCursorRect(bounds, cursor: .openHand)
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        initialMouseEvent = event
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard let initialMouseEvent else { return }
+        self.initialMouseEvent = nil
+
+        let pasteboardItem = NSPasteboardItem()
+        pasteboardItem.setString(Bundle.main.bundleURL.absoluteString, forType: .fileURL)
+        let draggingItem = NSDraggingItem(pasteboardWriter: pasteboardItem)
+        let icon = NSWorkspace.shared.icon(forFile: Bundle.main.bundlePath)
+        let location = convert(initialMouseEvent.locationInWindow, from: nil)
+        draggingItem.setDraggingFrame(
+            NSRect(x: location.x - 24, y: location.y - 24, width: 48, height: 48),
+            contents: icon
+        )
+        beginDraggingSession(with: [draggingItem], event: event, source: self)
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        initialMouseEvent = nil
+    }
+
+    func draggingSession(
+        _ session: NSDraggingSession,
+        sourceOperationMaskFor context: NSDraggingContext
+    ) -> NSDragOperation {
+        .copy
+    }
+
+    func ignoreModifierKeys(for session: NSDraggingSession) -> Bool {
+        true
     }
 }
 
@@ -117,9 +321,11 @@ struct TabSkillsView: View {
                             .buttonStyle(.bordered)
                             .controlSize(.small)
                     }
-                    Text("Skills are SKILL.md instruction bundles loaded on demand by the agent. Disable individual skills without deleting their files.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    Text(
+                        "Skills are SKILL.md instruction bundles loaded on demand by the agent. Disable individual skills without deleting their files."
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 }
                 .padding(8)
             }
@@ -130,10 +336,13 @@ struct TabSkillsView: View {
                         ContentUnavailableView(
                             "No Skills Installed",
                             systemImage: "puzzlepiece.extension",
-                            description: Text("Install a skill from the Store below or place a SKILL.md folder in the Chatmice skills directory.")
+                            description: Text(
+                                "Install a skill from the Store below or place a SKILL.md folder in the Chatmice skills directory."
+                            )
                         )
                         .frame(maxWidth: .infinity, minHeight: 110)
-                    } else {
+                    }
+                    else {
                         ForEach(installedSkills) { skill in
                             installedSkillRow(skill)
                             if skill.id != installedSkills.last?.id { Divider() }
@@ -174,7 +383,9 @@ struct TabSkillsView: View {
                             TextField("Search skills by name or description", text: $storeSearchText)
                                 .textFieldStyle(.plain)
                             if !storeSearchText.isEmpty {
-                                Button { storeSearchText = "" } label: {
+                                Button {
+                                    storeSearchText = ""
+                                } label: {
                                     Image(systemName: "xmark.circle.fill")
                                 }
                                 .buttonStyle(.plain)
@@ -198,7 +409,8 @@ struct TabSkillsView: View {
                     if filteredStoreItems.isEmpty {
                         ContentUnavailableView.search(text: storeSearchText)
                             .frame(maxWidth: .infinity, minHeight: 120)
-                    } else {
+                    }
+                    else {
                         LazyVGrid(columns: [GridItem(.adaptive(minimum: 250), spacing: 10)], spacing: 10) {
                             ForEach(filteredStoreItems) { item in
                                 storeCard(item)
@@ -240,7 +452,8 @@ struct TabSkillsView: View {
             case .installed: matchesFilter = installed
             case .available: matchesFilter = !installed
             }
-            let matchesQuery = query.isEmpty || item.name.lowercased().contains(query)
+            let matchesQuery =
+                query.isEmpty || item.name.lowercased().contains(query)
                 || item.description.lowercased().contains(query)
                 || item.id.lowercased().contains(query)
             return matchesFilter && matchesQuery
@@ -262,14 +475,22 @@ struct TabSkillsView: View {
                     .lineLimit(2)
             }
             Spacer()
-            Toggle("", isOn: Binding(
-                get: { enabled },
-                set: { SkillEnablementStore.setEnabled($0, identifier: identifier); Task { await refreshSkills() } }
-            ))
+            Toggle(
+                "",
+                isOn: Binding(
+                    get: { enabled },
+                    set: {
+                        SkillEnablementStore.setEnabled($0, identifier: identifier)
+                        Task { await refreshSkills() }
+                    }
+                )
+            )
             .labelsHidden()
             .toggleStyle(.switch)
             .controlSize(.mini)
-            Button(role: .destructive) { removeSkill(identifier) } label: {
+            Button(role: .destructive) {
+                removeSkill(identifier)
+            } label: {
                 Image(systemName: "trash")
             }
             .buttonStyle(.borderless)
@@ -324,7 +545,8 @@ struct TabSkillsView: View {
             do {
                 try await installer.install(item)
                 await refreshSkills()
-            } catch {
+            }
+            catch {
                 errorMessage = error.localizedDescription
             }
             busySkillIDs.remove(item.id)
@@ -339,7 +561,8 @@ struct TabSkillsView: View {
                 try await installer.uninstall(identifier: identifier)
                 SkillEnablementStore.setEnabled(true, identifier: identifier)
                 await refreshSkills()
-            } catch {
+            }
+            catch {
                 errorMessage = error.localizedDescription
             }
             busySkillIDs.remove(identifier)
@@ -357,7 +580,8 @@ struct TabSkillsView: View {
         defer { isLoadingStore = false }
         do {
             storeItems = try await installer.catalog(source: selectedStore)
-        } catch {
+        }
+        catch {
             if storeItems.isEmpty { errorMessage = error.localizedDescription }
         }
     }
@@ -369,7 +593,8 @@ struct TabSkillsView: View {
     }
 
     private func isManaged(_ skill: SkillInfo) -> Bool {
-        skill.directory.deletingLastPathComponent().standardizedFileURL == SkillMarketplaceInstaller.skillsDirectory.standardizedFileURL
+        skill.directory.deletingLastPathComponent().standardizedFileURL
+            == SkillMarketplaceInstaller.skillsDirectory.standardizedFileURL
     }
 }
 
@@ -391,12 +616,30 @@ private struct SkillStoreSource: Identifiable, Sendable {
 
     var sourceURL: URL { URL(string: "https://github.com/\(repository)")! }
 
-    static let anthropic = Self(id: "anthropic", name: "Anthropic", repository: "anthropics/skills", branch: "main", rootPath: "skills")
+    static let anthropic = Self(
+        id: "anthropic",
+        name: "Anthropic",
+        repository: "anthropics/skills",
+        branch: "main",
+        rootPath: "skills"
+    )
     static let all: [Self] = [
         anthropic,
-        .init(id: "huggingface", name: "Hugging Face", repository: "huggingface/skills", branch: "main", rootPath: "skills"),
+        .init(
+            id: "huggingface",
+            name: "Hugging Face",
+            repository: "huggingface/skills",
+            branch: "main",
+            rootPath: "skills"
+        ),
         .init(id: "vercel", name: "Vercel", repository: "vercel-labs/agent-skills", branch: "main", rootPath: "skills"),
-        .init(id: "superpowers", name: "Superpowers", repository: "obra/superpowers", branch: "main", rootPath: "skills")
+        .init(
+            id: "superpowers",
+            name: "Superpowers",
+            repository: "obra/superpowers",
+            branch: "main",
+            rootPath: "skills"
+        ),
     ]
 }
 
@@ -416,10 +659,50 @@ private struct GitHubSkillCatalogItem: Identifiable, Sendable {
     }
 
     static let curated: [Self] = [
-        .init(id: "academy-guide", name: "Academy Guide", description: "Build structured learning guides and educational material.", symbol: "graduationcap", sourceID: "anthropic", publisher: "Anthropic", repository: "anthropics/skills", branch: "main", path: "skills/academy-guide"),
-        .init(id: "algorithmic-art", name: "Algorithmic Art", description: "Create generative artwork with deterministic, reusable workflows.", symbol: "paintbrush.pointed", sourceID: "anthropic", publisher: "Anthropic", repository: "anthropics/skills", branch: "main", path: "skills/algorithmic-art"),
-        .init(id: "brand-guidelines", name: "Brand Guidelines", description: "Apply consistent brand colors, typography, and visual language.", symbol: "swatchpalette", sourceID: "anthropic", publisher: "Anthropic", repository: "anthropics/skills", branch: "main", path: "skills/brand-guidelines"),
-        .init(id: "canvas-design", name: "Canvas Design", description: "Create polished visual designs with bundled templates and fonts.", symbol: "rectangle.on.rectangle.angled", sourceID: "anthropic", publisher: "Anthropic", repository: "anthropics/skills", branch: "main", path: "skills/canvas-design")
+        .init(
+            id: "academy-guide",
+            name: "Academy Guide",
+            description: "Build structured learning guides and educational material.",
+            symbol: "graduationcap",
+            sourceID: "anthropic",
+            publisher: "Anthropic",
+            repository: "anthropics/skills",
+            branch: "main",
+            path: "skills/academy-guide"
+        ),
+        .init(
+            id: "algorithmic-art",
+            name: "Algorithmic Art",
+            description: "Create generative artwork with deterministic, reusable workflows.",
+            symbol: "paintbrush.pointed",
+            sourceID: "anthropic",
+            publisher: "Anthropic",
+            repository: "anthropics/skills",
+            branch: "main",
+            path: "skills/algorithmic-art"
+        ),
+        .init(
+            id: "brand-guidelines",
+            name: "Brand Guidelines",
+            description: "Apply consistent brand colors, typography, and visual language.",
+            symbol: "swatchpalette",
+            sourceID: "anthropic",
+            publisher: "Anthropic",
+            repository: "anthropics/skills",
+            branch: "main",
+            path: "skills/brand-guidelines"
+        ),
+        .init(
+            id: "canvas-design",
+            name: "Canvas Design",
+            description: "Create polished visual designs with bundled templates and fonts.",
+            symbol: "rectangle.on.rectangle.angled",
+            sourceID: "anthropic",
+            publisher: "Anthropic",
+            repository: "anthropics/skills",
+            branch: "main",
+            path: "skills/canvas-design"
+        ),
     ]
 }
 private actor SkillMarketplaceInstaller {
@@ -455,7 +738,9 @@ private actor SkillMarketplaceInstaller {
     }
 
     func catalog(source: SkillStoreSource) async throws -> [GitHubSkillCatalogItem] {
-        var components = URLComponents(string: "https://api.github.com/repos/\(source.repository)/contents/\(source.rootPath)")!
+        var components = URLComponents(
+            string: "https://api.github.com/repos/\(source.repository)/contents/\(source.rootPath)"
+        )!
         components.queryItems = [URLQueryItem(name: "ref", value: source.branch)]
         let entries = try await fetchEntries(from: components.url!)
         let directories = entries.filter { $0.type == "dir" }
@@ -463,14 +748,18 @@ private actor SkillMarketplaceInstaller {
         return await withTaskGroup(of: GitHubSkillCatalogItem?.self) { group in
             for entry in directories {
                 group.addTask {
-                    let manifestURL = URL(string: "https://raw.githubusercontent.com/\(source.repository)/\(source.branch)/\(source.rootPath)/\(entry.name)/SKILL.md")!
+                    let manifestURL = URL(
+                        string:
+                            "https://raw.githubusercontent.com/\(source.repository)/\(source.branch)/\(source.rootPath)/\(entry.name)/SKILL.md"
+                    )!
                     guard let (data, response) = try? await URLSession.shared.data(from: manifestURL),
-                          let http = response as? HTTPURLResponse,
-                          (200...299).contains(http.statusCode),
-                          let raw = String(data: data, encoding: .utf8)
+                        let http = response as? HTTPURLResponse,
+                        (200...299).contains(http.statusCode),
+                        let raw = String(data: data, encoding: .utf8)
                     else { return nil }
                     let metadata = SkillStore.parseFrontmatter(raw).meta
-                    let displayName = metadata["name"]?.replacingOccurrences(of: "-", with: " ").capitalized
+                    let displayName =
+                        metadata["name"]?.replacingOccurrences(of: "-", with: " ").capitalized
                         ?? entry.name.replacingOccurrences(of: "-", with: " ").capitalized
                     return GitHubSkillCatalogItem(
                         id: entry.name,
@@ -515,7 +804,9 @@ private actor SkillMarketplaceInstaller {
         try fm.createDirectory(at: staging, withIntermediateDirectories: true)
 
         do {
-            var components = URLComponents(string: "https://api.github.com/repos/\(item.repository)/contents/\(item.path)")!
+            var components = URLComponents(
+                string: "https://api.github.com/repos/\(item.repository)/contents/\(item.path)"
+            )!
             components.queryItems = [URLQueryItem(name: "ref", value: item.branch)]
             try await downloadDirectory(apiURL: components.url!, destination: staging)
             guard fm.fileExists(atPath: staging.appendingPathComponent("SKILL.md").path) else {
@@ -527,13 +818,15 @@ private actor SkillMarketplaceInstaller {
             do {
                 try fm.moveItem(at: staging, to: destination)
                 try? fm.removeItem(at: backup)
-            } catch {
+            }
+            catch {
                 if fm.fileExists(atPath: backup.path) {
                     try? fm.moveItem(at: backup, to: destination)
                 }
                 throw error
             }
-        } catch {
+        }
+        catch {
             try? fm.removeItem(at: staging)
             throw error
         }
@@ -544,7 +837,8 @@ private actor SkillMarketplaceInstaller {
             throw InstallError.invalidEntry(identifier)
         }
         let destination = Self.skillsDirectory.appendingPathComponent(identifier, isDirectory: true)
-        guard destination.standardizedFileURL.deletingLastPathComponent() == Self.skillsDirectory.standardizedFileURL else {
+        guard destination.standardizedFileURL.deletingLastPathComponent() == Self.skillsDirectory.standardizedFileURL
+        else {
             throw InstallError.invalidEntry(identifier)
         }
         if FileManager.default.fileExists(atPath: destination.path) {
@@ -569,7 +863,8 @@ private actor SkillMarketplaceInstaller {
             if entry.type == "dir" {
                 try FileManager.default.createDirectory(at: target, withIntermediateDirectories: true)
                 try await downloadDirectory(apiURL: entry.url, destination: target)
-            } else if entry.type == "file", let downloadURL = entry.downloadURL {
+            }
+            else if entry.type == "file", let downloadURL = entry.downloadURL {
                 let (fileData, fileResponse) = try await URLSession.shared.data(from: downloadURL)
                 guard let http = fileResponse as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
                     throw InstallError.invalidResponse

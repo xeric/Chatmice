@@ -19,6 +19,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
     case tools = "Tools"
     case backup = "Backup & Restore"
     case dangerZone = "Danger Zone"
+    case about = "About"
 
     var id: String { rawValue }
     var title: String { rawValue }
@@ -45,6 +46,8 @@ enum SettingsPage: String, CaseIterable, Identifiable {
             return "Export and restore Chatmice database and chat history."
         case .dangerZone:
             return "Purge application data and reset system configurations."
+        case .about:
+            return "Version information, software updates, and project details."
         }
     }
 
@@ -60,6 +63,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         case .tools: return "wrench.and.screwdriver"
         case .backup: return "externaldrive"
         case .dangerZone: return "flame"
+        case .about: return "info.circle"
         }
     }
 }
@@ -71,31 +75,8 @@ struct PreferencesView: View {
     var body: some View {
         NavigationSplitView {
             List(SettingsPage.allCases, selection: $selectedPage) { page in
-                HStack(spacing: 10) {
-                    ZStack {
-                        RoundedRectangle(cornerRadius: 6, style: .continuous)
-                            .fill(
-                                page == selectedPage
-                                    ? Color.white.opacity(0.18)
-                                    : Color.primary.opacity(0.08)
-                            )
-                            .frame(width: 24, height: 24)
-
-                        Image(systemName: page.symbol)
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundStyle(
-                                page == selectedPage
-                                    ? Color.white
-                                    : Color.primary.opacity(0.78)
-                            )
-                    }
-
-                    Text(page.title)
-                        .font(.system(size: 13))
-
-                    Spacer()
-                }
-                .tag(page)
+                settingsRow(for: page)
+                    .tag(page)
             }
             .listStyle(.sidebar)
             .navigationSplitViewColumnWidth(min: 200, ideal: 215, max: 240)
@@ -126,6 +107,30 @@ struct PreferencesView: View {
         UserDefaults.standard.removeObject(forKey: "requestedSettingsPage")
     }
 
+    private func settingsRow(for page: SettingsPage) -> some View {
+        HStack(spacing: 10) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(
+                        page == selectedPage
+                            ? Color.white.opacity(0.18)
+                            : Color.primary.opacity(0.08)
+                    )
+                    .frame(width: 24, height: 24)
+
+                Image(systemName: page.symbol)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(page == selectedPage ? Color.white : Color.primary.opacity(0.78))
+            }
+
+            Text(page.title)
+                .font(.system(size: 13))
+                .foregroundStyle(page == selectedPage ? Color.white : Color.primary)
+
+            Spacer()
+        }
+    }
+
     // MARK: - Detail Content
 
     @ViewBuilder
@@ -147,14 +152,21 @@ struct PreferencesView: View {
 
     private func heroCard(for page: SettingsPage) -> some View {
         VStack(spacing: 8) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(Color.accentColor.opacity(0.14))
-                    .frame(width: 52, height: 52)
+            if page == .about {
+                Image(nsImage: NSApp.applicationIconImage ?? NSImage(named: NSImage.applicationIconName) ?? NSImage())
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 58, height: 58)
+            } else {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .fill(Color.accentColor.opacity(0.14))
+                        .frame(width: 52, height: 52)
 
-                Image(systemName: page.symbol)
-                    .font(.system(size: 24, weight: .medium))
-                    .foregroundStyle(Color.accentColor)
+                    Image(systemName: page.symbol)
+                        .font(.system(size: 24, weight: .medium))
+                        .foregroundStyle(Color.accentColor)
+                }
             }
 
             Text(page.title)
@@ -212,6 +224,9 @@ struct PreferencesView: View {
 
         case .dangerZone:
             DangerZoneView(store: store)
-        }
+
+        case .about:
+            TabAboutView()
     }
+}
 }

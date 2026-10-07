@@ -67,7 +67,7 @@ class ChatStore: ObservableObject {
         let request = NSFetchRequest<APIServiceEntity>(entityName: "APIServiceEntity")
         let allServices = (try? viewContext.fetch(request)) ?? []
 
-        var openAIService = allServices.first(where: { $0.name == "CPA OpenAI" || $0.type == "chatgpt" })
+        var openAIService = allServices.first(where: { $0.type == "chatgpt" || $0.type == "openai-responses" })
         var googleService = allServices.first(where: { $0.name == "Google AI" || $0.type == "gemini" })
 
         if let service = openAIService {
@@ -77,10 +77,10 @@ class ChatStore: ObservableObject {
         } else {
             let service = APIServiceEntity(context: viewContext)
             service.id = UUID()
-            service.name = "CPA OpenAI"
-            service.type = "chatgpt"
-            service.url = URL(string: "http://127.0.0.1:9988/openai/v1")
-            service.model = "gpt-5.6-luna"
+            service.name = "OpenAI"
+            service.type = "openai-responses"
+            service.url = URL(string: "https://api.openai.com/v1")
+            service.model = "gpt-4o"
             service.contextSize = 20
             service.useStreamResponse = true
             service.generateChatNames = true
@@ -88,9 +88,6 @@ class ChatStore: ObservableObject {
             service.imageUploadsAllowed = true
             service.pdfUploadsAllowed = true
             service.tokenIdentifier = service.id?.uuidString
-            if let tokenID = service.tokenIdentifier, !key.isEmpty {
-                try? TokenManager.setToken(key, for: tokenID)
-            }
             service.defaultPersona = persona
             openAIService = service
         }
@@ -131,7 +128,7 @@ class ChatStore: ObservableObject {
             for c in chats {
                 if c.persona == nil { c.persona = persona }
                 if c.apiService == nil { c.apiService = fallbackService }
-                if c.gptModel.isEmpty { c.gptModel = fallbackService?.model ?? "gpt-5.6-luna" }
+                if c.gptModel.isEmpty { c.gptModel = fallbackService?.model ?? "gpt-4o" }
                 if c.systemMessage.isEmpty { c.systemMessage = persona.systemMessage ?? "You are a helpful assistant." }
             }
         }

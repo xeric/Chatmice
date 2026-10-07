@@ -20,9 +20,6 @@ struct ChatMessagesView: View {
     let reasoningDurations: [NSManagedObjectID: TimeInterval]
     let activeReasoningMessageID: NSManagedObjectID?
     @State private var scrollDebounceWorkItem: DispatchWorkItem?
-    @State private var codeBlocksRendered = false
-    @State private var pendingCodeBlocks = 0
-    @State private var isInitialLoad = true
     @ObservedObject private var activityStore = ChatActivityStore.shared
 
     private var activitySnapshot: ChatActivitySnapshot? {
@@ -40,7 +37,7 @@ struct ChatMessagesView: View {
     var body: some View {
         ScrollView {
             ScrollViewReader { scrollView in
-                VStack {
+                LazyVStack {
                     SystemMessageBubbleView(
                         message: chat.systemMessage,
                         color: chat.persona?.color,
@@ -105,14 +102,8 @@ struct ChatMessagesView: View {
                 }
                 .padding(24)
                 .onAppear {
-                    pendingCodeBlocks = chatViewModel.sortedMessages.reduce(0) { count, message in
-                        count + (message.body.components(separatedBy: "```").count - 1) / 2
-                    }
-                    isInitialLoad = true
-
-                    if pendingCodeBlocks == 0 {
-                        codeBlocksRendered = true
-                        isInitialLoad = false
+                    DispatchQueue.main.async {
+                        scrollView.scrollTo(bottomAnchorID, anchor: .bottom)
                     }
                 }
                 .onSwipe { event in
@@ -163,20 +154,6 @@ struct ChatMessagesView: View {
                         DispatchQueue.main.async {
                             if !userIsScrolling {
                                 withAnimation(.easeOut(duration: 0.5)) {
-                                    scrollView.scrollTo(bottomAnchorID, anchor: .bottom)
-                                }
-                            }
-                        }
-                    }
-                }
-                .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("CodeBlockRendered"))) { _ in
-                    if pendingCodeBlocks > 0 {
-                        pendingCodeBlocks -= 1
-                        if pendingCodeBlocks == 0 {
-                            codeBlocksRendered = true
-                            if isInitialLoad {
-                                isInitialLoad = false
-                                DispatchQueue.main.async {
                                     scrollView.scrollTo(bottomAnchorID, anchor: .bottom)
                                 }
                             }

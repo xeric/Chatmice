@@ -6,20 +6,21 @@
 //
 
 import AppKit
+import ServiceManagement
 import SwiftUI
 
 struct TabGeneralSettingsView: View {
-    @AppStorage("autoCheckForUpdates") var autoCheckForUpdates = true
     @AppStorage(PersistenceController.iCloudSyncEnabledKey) private var iCloudSyncEnabled: Bool = false
     @AppStorage(SettingsIndicatorKeys.generalSeen) private var generalSettingsSeen: Bool = false
     @ObservedObject private var presentationController = AppPresentationController.shared
     @StateObject private var cloudSyncManager = CloudSyncManager.shared
-    @ObservedObject private var updateCoordinator = V3UpdateCoordinator.shared
     @State private var showRestartAlert: Bool = false
     @State private var pendingSyncState: Bool = false
     @State private var showSyncDebugLog: Bool = false
     @State private var isPurgingCloudData: Bool = false
     @State private var purgeError: String?
+    @State private var launchAtLoginEnabled = SMAppService.mainApp.status == .enabled
+    @State private var launchAtLoginError: String?
 
     private var selectedPresentationMode: AppPresentationMode {
         presentationController.mode
@@ -37,6 +38,32 @@ struct TabGeneralSettingsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
+            GroupBox {
+                HStack(alignment: .center, spacing: 16) {
+                    Image(systemName: "power")
+                        .foregroundStyle(Color.accentColor)
+
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Launch at Login")
+                            .fontWeight(.medium)
+                        Text("Open Chatmice automatically when you sign in to this Mac.")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Spacer(minLength: 20)
+
+                    Toggle("Launch at Login", isOn: Binding(
+                        get: { launchAtLoginEnabled },
+                        set: setLaunchAtLogin
+                    ))
+                    .labelsHidden()
+                    .toggleStyle(.switch)
+                }
+                .padding(8)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
             // Use a plain VStack instead of Form so sections stretch to the full
             // available width (macOS Form tends to hug intrinsic content).
             GroupBox {
@@ -164,54 +191,6 @@ struct TabGeneralSettingsView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                 #endif
 
-            HStack {
-                Toggle("Automatically check for updates", isOn: $autoCheckForUpdates)
-                    .onChange(of: autoCheckForUpdates) {
-                        updateCoordinator.updater.automaticallyChecksForUpdates = autoCheckForUpdates
-                    }
-
-                Spacer()
-
-                Button("Check for Updates Now") {
-                    updateCoordinator.checkForUpdates()
-                }
-            }
-
-            if let version = updateCoordinator.availableV3Version {
-                HStack(spacing: 12) {
-                    Image(systemName: "sparkles")
-                        .font(.title2)
-                        .foregroundStyle(.blue)
-
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Chatmice \(version) is available")
-                            .font(.headline)
-                        Text("AI Assistants and API Services work together differently in Chatmice 3.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-
-                    Spacer()
-
-                    Button("See What’s Changing…") {
-                        updateCoordinator.showAvailableV3Upgrade()
-                    }
-                    .buttonStyle(.borderedProminent)
-                }
-                .padding(12)
-                .background(.blue.opacity(0.07), in: .rect(cornerRadius: 12))
-            }
-
-            #if DEBUG
-                HStack {
-                    Spacer()
-                    Button("Preview Chatmice 3 Upgrade Notice") {
-                        updateCoordinator.previewV3UpgradeNotice()
-                    }
-                    .buttonStyle(.link)
-                    .help("Opens the upgrade notice without marking it as shown.")
-                }
-            #endif
 
         }
         .padding()
@@ -219,6 +198,14 @@ struct TabGeneralSettingsView: View {
             DispatchQueue.main.asyncAfter(deadline: .now() + 5) {
                 generalSettingsSeen = true
             }
+        }
+        .alert("Launch at Login", isPresented: Binding(
+            get: { launchAtLoginError != nil },
+            set: { if !$0 { launchAtLoginError = nil } }
+        )) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(launchAtLoginError ?? "Unable to update the login item.")
         }
         .alert("Restart Required", isPresented: $showRestartAlert) {
             Button("Cancel", role: .cancel) {}
@@ -341,6 +328,20 @@ struct TabGeneralSettingsView: View {
         // Terminate the current instance
         NSApplication.shared.terminate(nil)
     }
+    private func setLaunchAtLogin(_ enabled: Bool) {
+        do {
+            if enabled {
+                try SMAppService.mainApp.register()
+            } else {
+                try SMAppService.mainApp.unregister()
+            }
+            launchAtLoginEnabled = SMAppService.mainApp.status == .enabled
+        } catch {
+            launchAtLoginEnabled = SMAppService.mainApp.status == .enabled
+            launchAtLoginError = error.localizedDescription
+        }
+    }
+
 }
 
 // MARK: - Sync Debug Log View

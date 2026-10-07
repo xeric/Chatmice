@@ -8,7 +8,6 @@
 
 import Foundation
 
-
 enum SearchMode: String, Codable, CaseIterable, Sendable {
     case off
     case native
@@ -38,13 +37,16 @@ enum SearchModeStore {
 
     private static func load() -> [String: String] {
         guard let data = UserDefaults.standard.data(forKey: storageKey),
-              let modes = try? JSONDecoder().decode([String: String].self, from: data) else { return [:] }
+            let modes = try? JSONDecoder().decode([String: String].self, from: data)
+        else { return [:] }
         return modes
     }
 }
 
 enum WebSearchProviderID: String, CaseIterable, Codable, Identifiable, Sendable {
-    case zhipu, tavily, searxng, exa, exaMCP = "exa-mcp", bocha, querit, fetch, jina, firecrawl, parallel, serply
+    case zhipu, tavily, searxng, exa
+    case exaMCP = "exa-mcp"
+    case bocha, querit, fetch, jina, firecrawl, parallel, serply
 
     var id: String { rawValue }
     var name: String {
@@ -64,7 +66,7 @@ enum WebSearchProviderID: String, CaseIterable, Codable, Identifiable, Sendable 
         }
     }
     var supportsSearch: Bool { self != .fetch && self != .exaMCP }
-    var supportsFetch: Bool { [.fetch, .jina, .firecrawl, .exaMCP].contains(self) }
+    var supportsFetch: Bool { [.fetch, .jina, .firecrawl].contains(self) }
     var requiresAPIKey: Bool { ![.searxng, .fetch, .exaMCP].contains(self) }
     var defaultHost: String {
         switch self {
@@ -125,7 +127,8 @@ struct WebSearchSettings: Codable, Equatable, Sendable {
 
     static func load() -> Self {
         guard let data = UserDefaults.standard.data(forKey: storageKey),
-              let value = try? JSONDecoder().decode(Self.self, from: data) else { return Self() }
+            let value = try? JSONDecoder().decode(Self.self, from: data)
+        else { return Self() }
         return value
     }
 
@@ -143,8 +146,12 @@ struct WebSearchSettings: Codable, Equatable, Sendable {
     }
 
     static func setAPIKey(_ key: String, for id: WebSearchProviderID) throws {
-        if key.isEmpty { try TokenManager.deleteToken(for: "web-search", identifier: id.rawValue) }
-        else { try TokenManager.setToken(key, for: "web-search", identifier: id.rawValue) }
+        if key.isEmpty {
+            try TokenManager.deleteToken(for: "web-search", identifier: id.rawValue)
+        }
+        else {
+            try TokenManager.setToken(key, for: "web-search", identifier: id.rawValue)
+        }
     }
 
     static func password(for id: WebSearchProviderID) -> String {
@@ -152,8 +159,12 @@ struct WebSearchSettings: Codable, Equatable, Sendable {
     }
 
     static func setPassword(_ password: String, for id: WebSearchProviderID) throws {
-        if password.isEmpty { try TokenManager.deleteToken(for: "web-search-password", identifier: id.rawValue) }
-        else { try TokenManager.setToken(password, for: "web-search-password", identifier: id.rawValue) }
+        if password.isEmpty {
+            try TokenManager.deleteToken(for: "web-search-password", identifier: id.rawValue)
+        }
+        else {
+            try TokenManager.setToken(password, for: "web-search-password", identifier: id.rawValue)
+        }
     }
 }
 
@@ -181,7 +192,8 @@ struct WebFetchTool: AgentTool {
 
     func call(arguments: String, context: ToolContext) async throws -> String {
         guard let value = ToolArguments.string("url", in: arguments), let url = URL(string: value),
-              ["http", "https"].contains(url.scheme?.lowercased() ?? "") else {
+            ["http", "https"].contains(url.scheme?.lowercased() ?? "")
+        else {
             throw ToolError.invalidArguments("web_fetch requires a public http(s) url")
         }
         return try await WebSearchClient().fetch(url: url, settings: .load())
@@ -191,7 +203,8 @@ struct WebFetchTool: AgentTool {
 private enum ToolArguments {
     static func string(_ key: String, in arguments: String) -> String? {
         guard let data = arguments.data(using: .utf8),
-              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return nil }
         return object[key] as? String
     }
 }
@@ -210,7 +223,12 @@ struct WebSearchClient: Sendable {
         if provider.requiresAPIKey && WebSearchSettings.apiKey(for: provider).isEmpty {
             throw ToolError.executionFailed("Add an API key for \(provider.name) in Settings > Web Search")
         }
-        let request = try makeSearchRequest(provider: provider, config: config, query: query, limit: settings.maxResults)
+        let request = try makeSearchRequest(
+            provider: provider,
+            config: config,
+            query: query,
+            limit: settings.maxResults
+        )
         let data = try await perform(request)
         return try formatSearchResponse(data, provider: provider, limit: settings.maxResults)
     }
@@ -224,24 +242,38 @@ struct WebSearchClient: Sendable {
         var request: URLRequest
         switch provider {
         case .jina:
-            guard let endpoint = URL(string: normalizedHost(config, fallback: provider.defaultHost) + "/" + url.absoluteString) else {
+            guard
+                let endpoint = URL(
+                    string: normalizedHost(config, fallback: provider.defaultHost) + "/" + url.absoluteString
+                )
+            else {
                 throw ToolError.executionFailed("Invalid Jina API host")
             }
             request = URLRequest(url: endpoint)
             addBearer(&request, provider: provider)
             request.setValue("text/plain", forHTTPHeaderField: "Accept")
         case .firecrawl:
-            request = try postRequest(url: endpoint(config, suffix: "/scrape"), provider: provider, body: ["url": url.absoluteString, "formats": ["markdown"]])
+            request = try postRequest(
+                url: endpoint(config, suffix: "/scrape"),
+                provider: provider,
+                body: ["url": url.absoluteString, "formats": ["markdown"]]
+            )
         case .fetch:
             request = URLRequest(url: url)
             request.setValue("text/html, text/plain, application/json", forHTTPHeaderField: "Accept")
         case .exaMCP:
-            throw ToolError.executionFailed("Exa MCP is exposed through MCP Servers; select Jina, Firecrawl, or Fetch for web_fetch")
+            throw ToolError.executionFailed(
+                "Exa MCP is exposed through MCP Servers; select Jina, Firecrawl, or Fetch for web_fetch"
+            )
         default:
             throw ToolError.executionFailed("\(provider.name) does not retrieve URLs")
         }
         let data = try await perform(request)
-        if provider == .firecrawl, let object = jsonObject(data), let body = (object["data"] as? [String: Any])?["markdown"] as? String { return capped(body) }
+        if provider == .firecrawl, let object = jsonObject(data),
+            let body = (object["data"] as? [String: Any])?["markdown"] as? String
+        {
+            return capped(body)
+        }
         return capped(String(decoding: data, as: UTF8.self))
     }
 
@@ -249,11 +281,14 @@ struct WebSearchClient: Sendable {
         if provider == .fetch {
             guard let url = URL(string: "https://example.com") else { return }
             _ = try await perform(URLRequest(url: url))
-        } else if provider == .exaMCP {
+        }
+        else if provider == .exaMCP {
             guard let url = URL(string: config.apiHost) else { throw ToolError.executionFailed("Invalid endpoint URL") }
-            var request = URLRequest(url: url); request.httpMethod = "GET"
+            var request = URLRequest(url: url)
+            request.httpMethod = "GET"
             _ = try await perform(request, accept: 200...499)
-        } else if provider.supportsSearch {
+        }
+        else if provider.supportsSearch {
             var settings = WebSearchSettings()
             settings.enabled = true
             settings.defaultSearchProvider = provider
@@ -263,15 +298,35 @@ struct WebSearchClient: Sendable {
         }
     }
 
-    private func makeSearchRequest(provider: WebSearchProviderID, config: WebSearchProviderConfig, query: String, limit: Int) throws -> URLRequest {
+    private func makeSearchRequest(
+        provider: WebSearchProviderID,
+        config: WebSearchProviderConfig,
+        query: String,
+        limit: Int
+    ) throws -> URLRequest {
         switch provider {
         case .tavily:
-            return try postRequest(url: endpoint(config), provider: provider, body: ["api_key": WebSearchSettings.apiKey(for: provider), "query": query, "max_results": limit, "include_answer": false])
+            return try postRequest(
+                url: endpoint(config),
+                provider: provider,
+                body: [
+                    "api_key": WebSearchSettings.apiKey(for: provider), "query": query, "max_results": limit,
+                    "include_answer": false,
+                ]
+            )
         case .exa:
-            return try postRequest(url: endpoint(config, suffix: "/search"), provider: provider, body: ["query": query, "numResults": limit, "contents": ["text": ["maxCharacters": 2000]]], apiKeyHeader: "x-api-key")
+            return try postRequest(
+                url: endpoint(config, suffix: "/search"),
+                provider: provider,
+                body: ["query": query, "numResults": limit, "contents": ["text": ["maxCharacters": 2000]]],
+                apiKeyHeader: "x-api-key"
+            )
         case .searxng:
             var components = URLComponents(url: try endpoint(config, suffix: "/search"), resolvingAgainstBaseURL: false)
-            components?.queryItems = [URLQueryItem(name: "q", value: query), URLQueryItem(name: "format", value: "json"), URLQueryItem(name: "pageno", value: "1")]
+            components?.queryItems = [
+                URLQueryItem(name: "q", value: query), URLQueryItem(name: "format", value: "json"),
+                URLQueryItem(name: "pageno", value: "1"),
+            ]
             guard let url = components?.url else { throw ToolError.executionFailed("Invalid SearXNG URL") }
             var request = URLRequest(url: url)
             let username = config.username
@@ -283,28 +338,60 @@ struct WebSearchClient: Sendable {
         case .jina:
             return try postRequest(url: endpoint(config), provider: provider, body: ["q": query, "count": limit])
         case .firecrawl:
-            return try postRequest(url: endpoint(config, suffix: "/search"), provider: provider, body: ["query": query, "limit": limit])
+            return try postRequest(
+                url: endpoint(config, suffix: "/search"),
+                provider: provider,
+                body: ["query": query, "limit": limit]
+            )
         case .zhipu:
-            return try postRequest(url: endpoint(config), provider: provider, body: ["search_query": query, "search_engine": "search_std", "count": limit])
+            return try postRequest(
+                url: endpoint(config),
+                provider: provider,
+                body: ["search_query": query, "search_engine": "search_std", "count": limit]
+            )
         case .bocha:
-            return try postRequest(url: endpoint(config), provider: provider, body: ["query": query, "count": limit, "summary": true])
+            return try postRequest(
+                url: endpoint(config),
+                provider: provider,
+                body: ["query": query, "count": limit, "summary": true]
+            )
         case .parallel:
-            return try postRequest(url: endpoint(config), provider: provider, body: ["objective": query, "search_queries": [query], "max_results": limit], apiKeyHeader: "x-api-key")
+            return try postRequest(
+                url: endpoint(config),
+                provider: provider,
+                body: ["objective": query, "search_queries": [query], "max_results": limit],
+                apiKeyHeader: "x-api-key"
+            )
         case .serply:
-            return try postRequest(url: endpoint(config), provider: provider, body: ["q": query, "num": limit], apiKeyHeader: "X-Api-Key")
+            return try postRequest(
+                url: endpoint(config),
+                provider: provider,
+                body: ["q": query, "num": limit],
+                apiKeyHeader: "X-Api-Key"
+            )
         case .querit:
-            return try postRequest(url: endpoint(config, suffix: "/search"), provider: provider, body: ["query": query, "limit": limit])
+            return try postRequest(
+                url: endpoint(config, suffix: "/search"),
+                provider: provider,
+                body: ["query": query, "limit": limit]
+            )
         case .fetch, .exaMCP:
             throw ToolError.executionFailed("\(provider.name) is not a direct search provider")
         }
     }
 
-    private func postRequest(url: URL, provider: WebSearchProviderID, body: [String: Any], apiKeyHeader: String? = nil) throws -> URLRequest {
+    private func postRequest(url: URL, provider: WebSearchProviderID, body: [String: Any], apiKeyHeader: String? = nil)
+        throws -> URLRequest
+    {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        if let apiKeyHeader { request.setValue(WebSearchSettings.apiKey(for: provider), forHTTPHeaderField: apiKeyHeader) }
-        else if provider != .tavily { addBearer(&request, provider: provider) }
+        if let apiKeyHeader {
+            request.setValue(WebSearchSettings.apiKey(for: provider), forHTTPHeaderField: apiKeyHeader)
+        }
+        else if provider != .tavily {
+            addBearer(&request, provider: provider)
+        }
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
         return request
     }
@@ -316,7 +403,9 @@ struct WebSearchClient: Sendable {
 
     private func endpoint(_ config: WebSearchProviderConfig, suffix: String = "") throws -> URL {
         let base = normalizedHost(config, fallback: config.id.defaultHost)
-        guard let url = URL(string: base + suffix) else { throw ToolError.executionFailed("Invalid \(config.id.name) API host") }
+        guard let url = URL(string: base + suffix) else {
+            throw ToolError.executionFailed("Invalid \(config.id.name) API host")
+        }
         return url
     }
 
@@ -360,10 +449,17 @@ struct WebSearchClient: Sendable {
             return "\(index + 1). \(title)\n\(url)\n\(content)"
         }
         if !lines.isEmpty { return capped(lines.joined(separator: "\n\n")) }
-        return capped(String(decoding: try JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys]), as: UTF8.self))
+        return capped(
+            String(
+                decoding: try JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys]),
+                as: UTF8.self
+            )
+        )
     }
 
-    private func jsonObject(_ data: Data) -> [String: Any]? { try? JSONSerialization.jsonObject(with: data) as? [String: Any] }
+    private func jsonObject(_ data: Data) -> [String: Any]? {
+        try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+    }
     private func string(_ object: [String: Any], keys: [String]) -> String? {
         for key in keys { if let value = object[key] as? String, !value.isEmpty { return value } }
         return nil

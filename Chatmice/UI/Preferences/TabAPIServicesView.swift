@@ -39,19 +39,6 @@ struct TabAPIServicesView: View {
                 // Toolbar at bottom of card
                 HStack {
                     Menu {
-                        Button("CPA OpenAI") {
-                            presentAddSheet(preset: ProviderPresetItem(
-                                name: "CPA OpenAI", type: "chatgpt", defaultURL: "http://127.0.0.1:8899/v1", defaultModel: "gpt-5.6-terra",
-                                subtitle: "OpenAI-compatible local endpoint"
-                            ))
-                        }
-                        Button("CPA Anthropic") {
-                            presentAddSheet(preset: ProviderPresetItem(
-                                name: "CPA Anthropic", type: "claude", defaultURL: "http://127.0.0.1:8899/v1", defaultModel: "anthropic--claude-4.8-opus",
-                                subtitle: "Claude local endpoint"
-                            ))
-                        }
-                        Divider()
                         Button("OpenAI") {
                             presentAddSheet(preset: ProviderPresetItem(
                                 name: "OpenAI", type: "openai-responses", defaultURL: "https://api.openai.com/v1", defaultModel: "gpt-4o",
@@ -245,16 +232,15 @@ struct TabAPIServicesView: View {
     }
 
     private func populateRoster() {
-        let proxyKey = ProcessInfo.processInfo.environment["LOCAL_SAP_AI_CORE_PROXY_KEY"] ?? ""
-        let cpa = createRosterEntity(
-            name: "CPA OpenAI", type: "chatgpt", url: "http://127.0.0.1:8899/v1", model: "gpt-5.6-terra",
-            apiKey: proxyKey, isDefault: true,
+        let openAI = createRosterEntity(
+            name: "OpenAI", type: "openai-responses", url: "https://api.openai.com/v1", model: "gpt-4o",
+            isDefault: true,
             models: []
         )
         _ = createRosterEntity(name: "SAP Anthropic", type: "claude", url: "http://127.0.0.1:8899/v1", model: "anthropic--claude-4.8-opus", models: [])
         _ = createRosterEntity(name: "SAP Gemini", type: "gemini", url: "https://generativelanguage.googleapis.com/v1beta", model: "gemini-2.5-flash", models: [])
         _ = createRosterEntity(name: "SAP OpenAI", type: "chatgpt", url: "http://127.0.0.1:9988/openai/v1", model: "qwen3.8-27b-dev-preview", models: [])
-        _ = cpa
+        _ = openAI
     }
 
     private func createRosterEntity(name: String, type: String, url: String, model: String, apiKey: String = "", isDefault: Bool = false, models: [ServiceModelRow] = []) -> APIServiceEntity {
@@ -364,6 +350,23 @@ struct ProviderEditorSheet: View {
 
     var isEditing: Bool { service != nil }
 
+    private var apiBaseURLPrompt: String {
+        switch typeText {
+        case "claude":
+            return "https://api.anthropic.com/v1"
+        case "gemini":
+            return "https://generativelanguage.googleapis.com/v1beta"
+        case "ollama":
+            return "http://localhost:11434/v1"
+        case "openrouter":
+            return "https://openrouter.ai/api/v1"
+        case "deepseek":
+            return "https://api.deepseek.com/v1"
+        default:
+            return "https://api.openai.com/v1"
+        }
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             // Header
@@ -421,7 +424,7 @@ struct ProviderEditorSheet: View {
                                     .frame(width: 110, alignment: .trailing)
 
                                 VStack(alignment: .leading, spacing: 3) {
-                                    TextField("", text: $urlText, prompt: Text("http://127.0.0.1:8899/v1"))
+                                    TextField("", text: $urlText, prompt: Text(apiBaseURLPrompt))
                                         .textFieldStyle(.roundedBorder)
 
                                     Text("Do not include /chat/completions in the URL")
@@ -612,28 +615,26 @@ struct ProviderEditorSheet: View {
                             if !presets.isEmpty {
                                 Divider()
 
-                                HStack(alignment: .center, spacing: 8) {
-                                    Text("Popular:")
+                                VStack(alignment: .leading, spacing: 8) {
+                                    Text("Popular")
                                         .font(.caption)
                                         .foregroundStyle(Color.secondary)
 
-                                    ScrollView(.horizontal, showsIndicators: false) {
-                                        HStack(spacing: 6) {
-                                            ForEach(presets, id: \.self) { preset in
-                                                Button(action: {
-                                                    if !modelsList.contains(where: { $0.modelID == preset }) {
-                                                        modelsList.append(ServiceModelRow(nickname: "", modelID: preset))
-                                                    }
-                                                }) {
-                                                    Text("+ \(preset)")
-                                                        .font(.system(size: 11, design: .monospaced))
-                                                        .padding(.horizontal, 6)
-                                                        .padding(.vertical, 2)
-                                                        .background(Capsule().fill(Color(NSColor.controlBackgroundColor)))
-                                                        .foregroundStyle(Color.secondary)
+                                    ModelPresetFlowLayout(spacing: 6) {
+                                        ForEach(presets, id: \.self) { preset in
+                                            Button(action: {
+                                                if !modelsList.contains(where: { $0.modelID == preset }) {
+                                                    modelsList.append(ServiceModelRow(nickname: "", modelID: preset))
                                                 }
-                                                .buttonStyle(.plain)
+                                            }) {
+                                                Text("+ \(preset)")
+                                                    .font(.system(size: 11, design: .monospaced))
+                                                    .padding(.horizontal, 7)
+                                                    .padding(.vertical, 3)
+                                                    .background(Capsule().fill(Color(NSColor.controlBackgroundColor)))
+                                                    .foregroundStyle(Color.secondary)
                                             }
+                                            .buttonStyle(.plain)
                                         }
                                     }
                                 }
@@ -1156,19 +1157,79 @@ struct ProviderEditorSheet: View {
     private func recommendedModels(for type: String) -> [String] {
         switch type {
         case "chatgpt":
-            return ["gpt-5.6-terra", "gpt-5.6-luna", "gpt-4o", "gpt-4o-mini", "qwen3.8-27b-dev-preview"]
+            return ["gpt-4o", "gpt-4o-mini", "o3", "o3-mini"]
         case "openai-responses":
             return ["gpt-4o", "gpt-4o-mini", "o1", "o3-mini"]
         case "claude":
-            return ["claude-3-5-sonnet-latest", "claude-3-5-haiku-latest", "anthropic--claude-4.8-opus"]
+            return ["claude-sonnet-4-5", "claude-haiku-4-5", "claude-opus-4-1"]
         case "gemini":
-            return ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-3.8-flash"]
+            return ["gemini-2.5-flash", "gemini-2.5-pro"]
         case "deepseek":
             return ["deepseek-chat", "deepseek-reasoner"]
         case "ollama":
             return ["llama3.1", "qwen2.5:7b", "mistral"]
         default:
             return ["gpt-4o", "claude-3-5-sonnet-latest"]
+        }
+    }
+}
+
+private struct ModelPresetFlowLayout: Layout {
+    let spacing: CGFloat
+
+    func sizeThatFits(
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout ()
+    ) -> CGSize {
+        let maxWidth = proposal.width ?? .infinity
+        var position = CGPoint.zero
+        var rowHeight: CGFloat = 0
+        var contentWidth: CGFloat = 0
+
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            let nextX = position.x == 0 ? 0 : position.x + spacing
+            if nextX + size.width > maxWidth, position.x > 0 {
+                position.x = 0
+                position.y += rowHeight + spacing
+                rowHeight = 0
+            } else {
+                position.x = nextX
+            }
+            contentWidth = max(contentWidth, position.x + size.width)
+            position.x += size.width
+            rowHeight = max(rowHeight, size.height)
+        }
+
+        return CGSize(
+            width: proposal.width ?? contentWidth,
+            height: subviews.isEmpty ? 0 : position.y + rowHeight
+        )
+    }
+
+    func placeSubviews(
+        in bounds: CGRect,
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout ()
+    ) {
+        var position = CGPoint(x: bounds.minX, y: bounds.minY)
+        var rowHeight: CGFloat = 0
+
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            let nextX = position.x == bounds.minX ? bounds.minX : position.x + spacing
+            if nextX + size.width > bounds.maxX, position.x > bounds.minX {
+                position.x = bounds.minX
+                position.y += rowHeight + spacing
+                rowHeight = 0
+            } else {
+                position.x = nextX
+            }
+            subview.place(at: position, proposal: ProposedViewSize(size))
+            position.x += size.width
+            rowHeight = max(rowHeight, size.height)
         }
     }
 }

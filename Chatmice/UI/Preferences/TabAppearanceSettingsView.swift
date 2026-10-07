@@ -126,7 +126,8 @@ struct TabAppearanceSettingsView: View {
                 HStack(alignment: .center, spacing: 28) {
                     Text("Theme")
                         .font(.headline)
-                        .frame(width: 150, alignment: .leading)
+
+                    Spacer(minLength: 24)
 
                     HStack(spacing: 14) {
                         ThemeButton(
@@ -153,80 +154,11 @@ struct TabAppearanceSettingsView: View {
                             preferredColorScheme.wrappedValue = .dark
                         }
                     }
-
-                    Spacer(minLength: 0)
                 }
                 .padding(.horizontal, 8)
                 .padding(.vertical, 16)
 
                 Divider()
-            }
-
-            GroupBox {
-                Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 14) {
-                    GridRow {
-                        Text("Text Size")
-                            .frame(width: 110, alignment: .leading)
-
-                        HStack(spacing: 10) {
-                            Text("A")
-                                .font(.system(size: 12))
-                                .foregroundStyle(.secondary)
-                            Slider(value: $chatFontSize, in: 10...24, step: 1)
-                                .frame(maxWidth: 260)
-                            Text("A")
-                                .font(.system(size: 20))
-                                .foregroundStyle(.secondary)
-                            Text("\(Int(chatFontSize)) pt")
-                                .font(.caption.monospacedDigit())
-                                .foregroundStyle(.secondary)
-                                .frame(width: 42, alignment: .trailing)
-                        }
-                    }
-
-                    Divider()
-
-                    GridRow {
-                        Text("Text Weight")
-                            .frame(width: 110, alignment: .leading)
-
-                        Picker("Text Weight", selection: $chatFontWeight) {
-                            ForEach(ChatFontWeightPreference.allCases) { weight in
-                                Text(weight.title).tag(weight.rawValue)
-                            }
-                        }
-                        .labelsHidden()
-                        .pickerStyle(.segmented)
-                        .frame(maxWidth: 280)
-                    }
-
-                    Divider()
-
-                    GridRow {
-                        Text("Code Font")
-                            .frame(width: 110, alignment: .leading)
-
-                        Picker("Code Font", selection: $codeFont) {
-                            Text("Fira Code").tag(AppConstants.firaCode)
-                            Text("PT Mono").tag(AppConstants.ptMono)
-                        }
-                        .labelsHidden()
-                        .pickerStyle(.segmented)
-                        .frame(maxWidth: 280)
-                    }
-                }
-                .padding(8)
-            } label: {
-                Label("Typography", systemImage: "textformat")
-            }
-
-            GroupBox {
-                Toggle("Show assistant name in the sidebar", isOn: $showAssistantNameInSidebar)
-                    .toggleStyle(.switch)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(8)
-            } label: {
-                Label("Layout", systemImage: "sidebar.left")
             }
 
             GroupBox {
@@ -250,6 +182,77 @@ struct TabAppearanceSettingsView: View {
                         .foregroundStyle(.secondary)
                 }
             }
+            GroupBox {
+                VStack(spacing: 0) {
+                    HStack(spacing: 16) {
+                        Text("Text Size")
+                        Spacer(minLength: 24)
+                        HStack(spacing: 10) {
+                            Text("A")
+                                .font(.system(size: 12))
+                                .foregroundStyle(.secondary)
+                            Slider(value: $chatFontSize, in: 10...24, step: 1)
+                                .frame(width: 260)
+                            Text("A")
+                                .font(.system(size: 20))
+                                .foregroundStyle(.secondary)
+                            Text("\(Int(chatFontSize)) pt")
+                                .font(.caption.monospacedDigit())
+                                .foregroundStyle(.secondary)
+                                .frame(width: 42, alignment: .trailing)
+                        }
+                    }
+                    .padding(.vertical, 12)
+
+                    Divider()
+
+                    HStack(spacing: 16) {
+                        Text("Text Weight")
+                        Spacer(minLength: 24)
+                        Picker("Text Weight", selection: $chatFontWeight) {
+                            ForEach(ChatFontWeightPreference.allCases) { weight in
+                                Text(weight.title).tag(weight.rawValue)
+                            }
+                        }
+                        .labelsHidden()
+                        .pickerStyle(.segmented)
+                        .frame(width: 280)
+                    }
+                    .padding(.vertical, 12)
+
+                    Divider()
+
+                    HStack(spacing: 16) {
+                        Text("Code Font")
+                        Spacer(minLength: 24)
+                        Picker("Code Font", selection: $codeFont) {
+                            Text("Fira Code").tag(AppConstants.firaCode)
+                            Text("PT Mono").tag(AppConstants.ptMono)
+                        }
+                        .labelsHidden()
+                        .pickerStyle(.segmented)
+                        .frame(width: 280)
+                    }
+                    .padding(.vertical, 12)
+                }
+                .padding(.horizontal, 8)
+            } label: {
+                Label("Typography", systemImage: "textformat")
+            }
+
+            GroupBox {
+                HStack(spacing: 16) {
+                    Text("Show assistant name in the sidebar")
+                    Spacer(minLength: 24)
+                    Toggle("Show assistant name in the sidebar", isOn: $showAssistantNameInSidebar)
+                        .labelsHidden()
+                        .toggleStyle(.switch)
+                }
+                .padding(8)
+            } label: {
+                Label("Layout", systemImage: "sidebar.left")
+            }
+
         }
         .padding()
         .onAppear {

@@ -10,6 +10,7 @@ ARCHS="${ARCHS:-arm64 x86_64}"
 SKIP_CODE_SIGNING="${SKIP_CODE_SIGNING:-0}"
 CODE_SIGN_IDENTITY="${CODE_SIGN_IDENTITY:-Developer ID Application: Juan Zhang (KJ5KHP7B96)}"
 RELEASE_ENTITLEMENTS="${RELEASE_ENTITLEMENTS:-$ROOT_DIR/Chatmice/Chatmice-no-icloud.entitlements}"
+DMG_BACKGROUND="${DMG_BACKGROUND:-$ROOT_DIR/Chatmice/Resources/DMGBackground.png}"
 NOTARY_PROFILE="${NOTARY_PROFILE:-notarytool-profile}"
 NOTARY_KEY="${NOTARY_KEY:-}"
 NOTARY_KEY_ID="${NOTARY_KEY_ID:-}"
@@ -21,6 +22,44 @@ SPARKLE_SIGN_UPDATE="${SPARKLE_SIGN_UPDATE:-}"
 SPARKLE_PRIVATE_KEY_FILE="${SPARKLE_PRIVATE_KEY_FILE:-}"
 REQUIRE_SPARKLE_SIGNATURE="${REQUIRE_SPARKLE_SIGNATURE:-0}"
 KEEP_WORK_DIR_ON_FAILURE="${KEEP_WORK_DIR_ON_FAILURE:-1}"
+
+LOCAL_RELEASE=0
+
+usage() {
+    cat <<'EOF'
+Usage: ./release.sh [--local] [--help]
+
+  --local  Build a Release archive, sign it with Developer ID, and notarize it.
+           Notarization uses NOTARY_KEY/NOTARY_KEY_ID/NOTARY_ISSUER_ID when set,
+           otherwise the keychain profile named by NOTARY_PROFILE.
+  --help   Show this help text.
+EOF
+}
+
+while (( $# > 0 )); do
+    case "$1" in
+        --local)
+            LOCAL_RELEASE=1
+            ;;
+        --help|-h)
+            usage
+            exit 0
+            ;;
+        *)
+            echo "error: unknown argument: $1" >&2
+            usage >&2
+            exit 2
+            ;;
+    esac
+    shift
+done
+
+if [[ "$LOCAL_RELEASE" == "1" ]]; then
+    CONFIGURATION=Release
+    SKIP_CODE_SIGNING=0
+    NOTARIZE=1
+    echo "==> Local release mode: Developer ID signing and notarization enabled"
+fi
 
 for command in xcodebuild ditto hdiutil plutil shasum; do
     if ! command -v "$command" >/dev/null 2>&1; then
@@ -92,6 +131,11 @@ if [[ "$SKIP_CODE_SIGNING" != "1" && ! -f "$RELEASE_ENTITLEMENTS" ]]; then
     exit 1
 fi
 
+if [[ ! -f "$DMG_BACKGROUND" ]]; then
+    echo "error: DMG background not found: $DMG_BACKGROUND" >&2
+    exit 1
+fi
+
 sign_with_retry() {
     local target="$1"
     local attempt=1
@@ -114,10 +158,15 @@ WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/chatmice-release.XXXXXX")"
 ARCHIVE_PATH="$WORK_DIR/Chatmice.xcarchive"
 DERIVED_DATA_PATH="$WORK_DIR/DerivedData"
 DMG_ROOT="$WORK_DIR/dmg-root"
+DMG_RW_IMAGE="$WORK_DIR/Chatmice-rw.dmg"
+DMG_MOUNT_POINT="$WORK_DIR/dmg-mount"
 NOTARY_ZIP="$WORK_DIR/notarization.zip"
 
 cleanup() {
     local status=$?
+    if [[ -d "$DMG_MOUNT_POINT" ]]; then
+        hdiutil detach "$DMG_MOUNT_POINT" -quiet -force >/dev/null 2>&1 || true
+    fi
     if [[ "$status" != "0" && "$KEEP_WORK_DIR_ON_FAILURE" == "1" ]]; then
         echo "error: release workspace retained for diagnostics: $WORK_DIR" >&2
         return
@@ -192,16 +241,84 @@ fi
 echo "==> Creating Sparkle ZIP"
 ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" "$ZIP_PATH"
 
-echo "==> Creating DMG"
-mkdir -p "$DMG_ROOT"
+echo "==> Creating styled DMG"
+mkdir -p "$DMG_ROOT" "$DMG_MOUNT_POINT"
 ditto "$APP_PATH" "$DMG_ROOT/Chatmice.app"
 ln -s /Applications "$DMG_ROOT/Applications"
-hdiutil create \
+
+for mounted_volume in "/Volumes/Chatmice $VERSION" "/Volumes/Chatmice $VERSION "*; do
+    if [[ -d "$mounted_volume" ]]; then
+        hdiutil detach "$mounted_volume" -quiet -force
+    fi
+done
+
+hdiutil create -quiet \
     -volname "Chatmice $VERSION" \
     -srcfolder "$DMG_ROOT" \
-    -format UDZO \
     -ov \
-    "$DMG_PATH"
+    -format UDRW \
+    -fs HFS+ \
+    "$DMG_RW_IMAGE"
+
+hdiutil attach "$DMG_RW_IMAGE" -quiet -readwrite -noverify -noautoopen -mountpoint "$DMG_MOUNT_POINT"
+
+osascript - "$DMG_MOUNT_POINT" <<'APPLESCRIPT'
+on run argv
+    set mountPoint to item 1 of argv
+    set backgroundFile to POSIX file (mountPoint & "/Chatmice.app/Contents/Resources/DMGBackground.png") as alias
+    tell application "Finder"
+        set diskFolder to POSIX file mountPoint as alias
+        open diskFolder
+        delay 1
+        set theWindow to container window of diskFolder
+        set current view of theWindow to icon view
+        tell theWindow
+            try
+                set toolbar visible to false
+            end try
+            try
+                set statusbar visible to false
+            end try
+            try
+                set pathbar visible to false
+            end try
+        end tell
+        set bounds of theWindow to {120, 120, 888, 632}
+        set theViewOptions to icon view options of theWindow
+        set arrangement of theViewOptions to not arranged
+        set icon size of theViewOptions to 128
+        set text size of theViewOptions to 14
+        set background picture of theViewOptions to backgroundFile
+        set position of item "Chatmice.app" of diskFolder to {190, 260}
+        set position of item "Applications" of diskFolder to {578, 260}
+        update diskFolder without registering applications
+        delay 3
+        try
+            close theWindow
+        end try
+        delay 1
+    end tell
+end run
+APPLESCRIPT
+
+if [[ ! -s "$DMG_MOUNT_POINT/.DS_Store" ]]; then
+    echo "error: Finder did not persist the DMG window layout" >&2
+    exit 1
+fi
+
+rm -rf "$DMG_MOUNT_POINT/.fseventsd" "$DMG_MOUNT_POINT/.Trashes"
+sync
+hdiutil detach "$DMG_MOUNT_POINT" -quiet
+rm -rf "$DMG_MOUNT_POINT"
+hdiutil convert "$DMG_RW_IMAGE" -quiet -format UDZO -imagekey zlib-level=9 -o "$DMG_PATH"
+
+if [[ "$SKIP_CODE_SIGNING" != "1" ]]; then
+    echo "==> Signing DMG"
+    codesign --force --timestamp --sign "$CODE_SIGN_IDENTITY" "$DMG_PATH"
+    codesign --verify --strict --verbose=2 "$DMG_PATH"
+fi
+
+hdiutil verify "$DMG_PATH"
 
 
 if [[ -z "$SPARKLE_SIGN_UPDATE" ]] && command -v sign_update >/dev/null 2>&1; then
@@ -236,6 +353,7 @@ configuration=$CONFIGURATION
 architectures=$ARCHS
 code_signed=$([[ "$SKIP_CODE_SIGNING" == "1" ]] && echo false || echo true)
 notarized=$([[ "$SHOULD_NOTARIZE" == "1" ]] && echo true || echo false)
+local_release=$([[ "$LOCAL_RELEASE" == "1" ]] && echo true || echo false)
 EOF
 
 printf '\nRelease artifacts:\n'

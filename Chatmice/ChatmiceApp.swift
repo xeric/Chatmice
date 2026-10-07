@@ -5,8 +5,8 @@
 //  Created by Renat Notfullin on 11.03.2023.
 //
 
-import AppKit
 import AppIntents
+import AppKit
 import CloudKit
 import CoreData
 import Sparkle
@@ -52,7 +52,8 @@ private enum SandboxDataMigration {
     static func runIfNeeded() {
         let defaults = UserDefaults.standard
         guard defaults.integer(forKey: migrationVersionKey) < migrationVersion,
-              let bundleID = Bundle.main.bundleIdentifier else { return }
+            let bundleID = Bundle.main.bundleIdentifier
+        else { return }
 
         let fileManager = FileManager.default
         let home = fileManager.homeDirectoryForCurrentUser
@@ -65,11 +66,15 @@ private enum SandboxDataMigration {
         var migrationFailed = false
         var migratedApplicationData = false
 
-        if !fileManager.fileExists(atPath: currentAppSupport
-            .appendingPathComponent(applicationSupportFolder)
-            .appendingPathComponent(storeFilename).path) {
+        if !fileManager.fileExists(
+            atPath:
+                currentAppSupport
+                .appendingPathComponent(applicationSupportFolder)
+                .appendingPathComponent(storeFilename).path
+        ) {
             for containerID in containerIDs {
-                let source = home
+                let source =
+                    home
                     .appendingPathComponent("Library/Containers", isDirectory: true)
                     .appendingPathComponent(containerID, isDirectory: true)
                     .appendingPathComponent("Data/Library/Application Support", isDirectory: true)
@@ -83,7 +88,8 @@ private enum SandboxDataMigration {
                     try copyMissingContents(from: source, to: destination, fileManager: fileManager)
                     print("Migrated application data from the former sandbox container.")
                     migratedApplicationData = true
-                } catch {
+                }
+                catch {
                     migrationFailed = true
                     print("Failed to migrate former sandbox application data: \(error)")
                 }
@@ -93,7 +99,8 @@ private enum SandboxDataMigration {
 
         var currentDomain = defaults.persistentDomain(forName: bundleID) ?? [:]
         for containerID in containerIDs {
-            let preferencesURL = home
+            let preferencesURL =
+                home
                 .appendingPathComponent("Library/Containers", isDirectory: true)
                 .appendingPathComponent(containerID, isDirectory: true)
                 .appendingPathComponent("Data/Library/Preferences", isDirectory: true)
@@ -102,12 +109,15 @@ private enum SandboxDataMigration {
 
             do {
                 let data = try Data(contentsOf: preferencesURL)
-                guard let legacyDomain = try PropertyListSerialization.propertyList(from: data, format: nil)
-                    as? [String: Any] else { continue }
+                guard
+                    let legacyDomain = try PropertyListSerialization.propertyList(from: data, format: nil)
+                        as? [String: Any]
+                else { continue }
                 for (key, value) in legacyDomain where currentDomain[key] == nil {
                     currentDomain[key] = value
                 }
-            } catch {
+            }
+            catch {
                 migrationFailed = true
                 print("Failed to migrate former sandbox preferences: \(error)")
             }
@@ -143,8 +153,7 @@ private enum SandboxDataMigration {
     }
 }
 
-
-class PersistenceController {
+class PersistenceController: ObservableObject {
     static let shared = PersistenceController()
     static let iCloudSyncEnabledKey = "iCloudSyncEnabled"
     private static let historyTokenKey = "PersistentHistoryToken"
@@ -156,8 +165,16 @@ class PersistenceController {
 
     let container: NSPersistentContainer
     let isCloudKitEnabled: Bool
+    enum LoadState: Equatable {
+        case loading
+        case ready
+        case failed(String)
+    }
+
+    @Published private(set) var loadState: LoadState = .loading
     private(set) var isCloudKitActive: Bool = false
     private let migrator = ProgrammaticMigrator(containerName: "macaiDataModel")
+    private var startupStore: ChatStore?
     private let historyQueue = DispatchQueue(label: "com.chatmice.persistentHistory", qos: .utility)
     private var isProcessingHistory = false
     private var hasPendingHistoryProcess = false
@@ -176,20 +193,21 @@ class PersistenceController {
             iCloudEnabled = false
             print("iCloud sync disabled: configured container is missing from signed entitlements.")
         }
-        
+
         // CKContainer traps when the requested container is absent from the
         // signed app entitlements, so validate the effective signature first.
         #if DISABLE_ICLOUD
-        let canEnableCloudKit = false
+            let canEnableCloudKit = false
         #else
-        let canEnableCloudKit = iCloudEnabled && !inMemory && AppConstants.isCloudKitAvailable
+            let canEnableCloudKit = iCloudEnabled && !inMemory && AppConstants.isCloudKitAvailable
         #endif
-        
+
         self.isCloudKitEnabled = canEnableCloudKit
 
         if isCloudKitEnabled {
             container = NSPersistentCloudKitContainer(name: "macaiDataModel")
-        } else {
+        }
+        else {
             container = NSPersistentContainer(name: "macaiDataModel")
         }
 
@@ -200,6 +218,7 @@ class PersistenceController {
 
         for description in container.persistentStoreDescriptions {
             description.url = inMemory ? URL(fileURLWithPath: "/dev/null") : storeURL
+            description.shouldAddStoreAsynchronously = !inMemory
             description.shouldMigrateStoreAutomatically = true
             description.shouldInferMappingModelAutomatically = true
             description.setOption(true as NSNumber, forKey: NSPersistentHistoryTrackingKey)
@@ -217,100 +236,144 @@ class PersistenceController {
             description.setOption(true as NSNumber, forKey: NSPersistentStoreRemoteChangeNotificationPostOptionKey)
         }
 
-        // Programmatic migration (export/import) only
         let migrationState = migrator.prepareIfNeeded()
 
-        print("Starting to load persistent stores...")
-        let startTime = Date()
-        let semaphore = DispatchSemaphore(value: 0)
-        var loadError: Error?
-        var storeLoaded = false
+        if inMemory {
+            loadInMemoryStoreSynchronously(migrationState: migrationState)
+        }
+        else {
+            loadPersistentStore(migrationState: migrationState)
+        }
+    }
 
-        container.loadPersistentStores(completionHandler: { (storeDescription, error) in
-            let elapsed = Date().timeIntervalSince(startTime)
-            if let error = error {
-                print("Failed to load persistent store after \(elapsed)s: \(error)")
-                loadError = error
-            } else {
-                print("Successfully loaded persistent store in \(elapsed)s: \(storeDescription.url?.lastPathComponent ?? "unknown")")
-                
-                // Configure view context only after store is loaded
-                self.container.viewContext.automaticallyMergesChangesFromParent = true
-                self.container.viewContext.mergePolicy = NSMergeByPropertyObjectTrumpMergePolicy
-                self.isCloudKitActive = self.isCloudKitEnabled
-                storeLoaded = true
-                CoreDataBackupManager.clearMigrationRetrySkipBackupFlag()
+    private func loadInMemoryStoreSynchronously(migrationState: MigrationState) {
+        var result: Result<NSPersistentStoreDescription, Error>?
+        container.loadPersistentStores { description, error in
+            if let error {
+                result = .failure(error)
             }
-            semaphore.signal()
-        })
-
-        // Wait for persistent stores to load (with timeout)
-        _ = semaphore.wait(timeout: .now() + 10)
-
-        // Handle any store loading errors
-        if let error = loadError {
-            if isCloudKitEnabled {
-                // Avoid destructive recovery when iCloud is enabled; report error in Sync UI instead.
-                CloudSyncManager.shared.reportStoreLoadError(error)
-                print("Skipping destructive recovery because iCloud sync is enabled.")
-
-                // Fallback: try to load the same store without CloudKit so local data stays available.
-                if container.persistentStoreCoordinator.persistentStores.isEmpty {
-                    for description in container.persistentStoreDescriptions {
-                        description.cloudKitContainerOptions = nil
-                    }
-
-                    let fallbackSemaphore = DispatchSemaphore(value: 0)
-                    var fallbackError: Error?
-                    container.loadPersistentStores { storeDescription, error in
-                        if let error = error {
-                            fallbackError = error
-                            print("Fallback store load failed: \(error)")
-                        } else {
-                            print("Loaded local fallback store: \(storeDescription.url?.lastPathComponent ?? "unknown")")
-                            self.container.viewContext.automaticallyMergesChangesFromParent = true
-                            self.container.viewContext.mergePolicy = NSMergeByPropertyObjectTrumpMergePolicy
-                            self.isCloudKitActive = false
-                            storeLoaded = true
-                        }
-                        fallbackSemaphore.signal()
-                    }
-                    _ = fallbackSemaphore.wait(timeout: .now() + 10)
-
-                    if fallbackError != nil {
-                        return
-                    }
-                } else {
-                    return
-                }
-            } else if !migrator.recoverFromLoadFailure(container: container) {
-                migrator.handleStoreLoadError(error, state: migrationState)
-            } else {
-                loadError = nil
+            else {
+                result = .success(description)
             }
         }
 
-        guard storeLoaded else {
+        switch result {
+        case .success(let description):
+            finishStoreLoad(description: description, migrationState: migrationState, cloudKitActive: false)
+        case .failure(let error):
+            failStoreLoad(error)
+        case nil:
+            failStoreLoad(
+                NSError(
+                    domain: "Chatmice.Persistence",
+                    code: 1,
+                    userInfo: [NSLocalizedDescriptionKey: "Persistent store did not finish loading."]
+                )
+            )
+        }
+    }
+
+    private func loadPersistentStore(migrationState: MigrationState) {
+        let startTime = Date()
+        container.loadPersistentStores { [weak self] description, error in
+            guard let self else { return }
+            if let error {
+                self.handleStoreLoadFailure(error, migrationState: migrationState)
+                return
+            }
+
+            print(
+                "Successfully loaded persistent store in \(Date().timeIntervalSince(startTime))s: \(description.url?.lastPathComponent ?? "unknown")"
+            )
+            DispatchQueue.main.async {
+                self.finishStoreLoad(
+                    description: description,
+                    migrationState: migrationState,
+                    cloudKitActive: self.isCloudKitEnabled
+                )
+            }
+        }
+    }
+
+    private func handleStoreLoadFailure(_ error: Error, migrationState: MigrationState) {
+        print("Failed to load persistent store: \(error)")
+        guard isCloudKitEnabled else {
+            DispatchQueue.main.async {
+                if self.migrator.recoverFromLoadFailure(container: self.container) {
+                    let description =
+                        self.container.persistentStoreDescriptions.first
+                        ?? NSPersistentStoreDescription()
+                    self.finishStoreLoad(
+                        description: description,
+                        migrationState: migrationState,
+                        cloudKitActive: false
+                    )
+                }
+                else {
+                    self.migrator.handleStoreLoadError(error, state: migrationState)
+                    self.failStoreLoad(error)
+                }
+            }
             return
         }
 
-        // Import exported data if we have it (migration scenario)
+        CloudSyncManager.shared.reportStoreLoadError(error)
+        for description in container.persistentStoreDescriptions {
+            description.cloudKitContainerOptions = nil
+        }
+        container.loadPersistentStores { [weak self] description, fallbackError in
+            guard let self else { return }
+            DispatchQueue.main.async {
+                if let fallbackError {
+                    print("Fallback store load failed: \(fallbackError)")
+                    self.failStoreLoad(fallbackError)
+                }
+                else {
+                    print("Loaded local fallback store: \(description.url?.lastPathComponent ?? "unknown")")
+                    self.finishStoreLoad(
+                        description: description,
+                        migrationState: migrationState,
+                        cloudKitActive: false
+                    )
+                }
+            }
+        }
+    }
+
+    private func finishStoreLoad(
+        description: NSPersistentStoreDescription,
+        migrationState: MigrationState,
+        cloudKitActive: Bool
+    ) {
+        guard loadState == .loading else { return }
+
+        container.viewContext.automaticallyMergesChangesFromParent = true
+        container.viewContext.mergePolicy = NSMergeByPropertyObjectTrumpMergePolicy
+        isCloudKitActive = cloudKitActive
+        CoreDataBackupManager.clearMigrationRetrySkipBackupFlag()
         migrator.importIfNeeded(state: migrationState, into: container)
 
-        print("Initialization complete")
-
-        // Initialize CloudSyncManager if CloudKit is enabled
-        if isCloudKitActive, let cloudKitContainer = container as? NSPersistentCloudKitContainer {
+        if cloudKitActive, let cloudKitContainer = container as? NSPersistentCloudKitContainer {
             CloudSyncManager.shared.configure(with: cloudKitContainer)
         }
 
-        // Apply database patches and migrations after store is loaded
         DatabasePatcher.initializeDatabaseIfNeeded(context: container.viewContext, persistence: self)
         DatabasePatcher.applyPatches(context: container.viewContext, persistence: self)
         DatabasePatcher.migrateExistingConfiguration(context: container.viewContext, persistence: self)
+        if description.url?.path != "/dev/null" {
+            startupStore = ChatStore(persistenceController: self)
+        }
 
         processRemoteChanges(reason: "startup")
         prunePersistentHistoryIfNeeded(reason: "startup")
+        loadState = .ready
+        print("Initialization complete: \(description.url?.lastPathComponent ?? "unknown")")
+    }
+
+    private func failStoreLoad(_ error: Error) {
+        DispatchQueue.main.async {
+            self.loadState = .failed(error.localizedDescription)
+        }
     }
 
     func getMetadata(forKey key: String) -> Any? {
@@ -332,7 +395,7 @@ class PersistenceController {
         var metadata = container.persistentStoreCoordinator.metadata(for: store)
         metadata[key] = value
         container.persistentStoreCoordinator.setMetadata(metadata, for: store)
-        
+
         // Save the context to ensure metadata is persisted to disk if it was updated
         if container.viewContext.hasChanges {
             try? container.viewContext.save()
@@ -386,7 +449,8 @@ class PersistenceController {
             do {
                 let result = try backgroundContext.execute(request) as? NSPersistentHistoryResult
                 transactions = result?.result as? [NSPersistentHistoryTransaction] ?? []
-            } catch {
+            }
+            catch {
                 print("Persistent history fetch failed (\(reason)): \(error)")
                 let nsError = error as NSError
                 if nsError.domain == NSCocoaErrorDomain, nsError.code == NSPersistentHistoryTokenExpiredError {
@@ -421,7 +485,8 @@ class PersistenceController {
             do {
                 try backgroundContext.execute(request)
                 print("Persistent history pruned (\(reason)) before \(date).")
-            } catch {
+            }
+            catch {
                 print("Persistent history prune failed (\(reason)): \(error)")
             }
         }
@@ -501,8 +566,8 @@ enum AppPresentationMode: String, CaseIterable, Identifiable {
     }
 }
 
-private extension NSUserInterfaceItemIdentifier {
-    static let chatmiceMainWindow = NSUserInterfaceItemIdentifier("ChatmiceMainWindow")
+extension NSUserInterfaceItemIdentifier {
+    fileprivate static let chatmiceMainWindow = NSUserInterfaceItemIdentifier("ChatmiceMainWindow")
 }
 
 @MainActor
@@ -544,7 +609,8 @@ final class AppPresentationController: NSObject, ObservableObject {
 
     @objc private func mainWindowWillClose(_ notification: Notification) {
         guard let window = notification.object as? NSWindow,
-              window.identifier == .chatmiceMainWindow else { return }
+            window.identifier == .chatmiceMainWindow
+        else { return }
         DispatchQueue.main.async { [weak self] in
             self?.applyActivationPolicy()
         }
@@ -558,7 +624,8 @@ final class AppPresentationController: NSObject, ObservableObject {
 
     private func applyActivationPolicy(hasMainWindow: Bool? = nil) {
         let mainWindowIsOpen = hasMainWindow ?? self.hasMainWindow
-        let policy: NSApplication.ActivationPolicy = mode.showsDockIcon(hasMainWindow: mainWindowIsOpen)
+        let policy: NSApplication.ActivationPolicy =
+            mode.showsDockIcon(hasMainWindow: mainWindowIsOpen)
             ? .regular
             : .accessory
         guard NSApp.activationPolicy() != policy else { return }
@@ -594,55 +661,33 @@ private struct MainWindowTracker: NSViewRepresentable {
 
     func updateNSView(_ nsView: MainWindowTrackingView, context: Context) {}
 
-
     static func dismantleNSView(_ nsView: MainWindowTrackingView, coordinator: ()) {
         nsView.stopTracking()
     }
 }
-@MainActor
-private final class ThinScrollerController: NSObject {
-    static let shared = ThinScrollerController()
 
-    private override init() {
-        super.init()
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(windowDidBecomeKey(_:)),
-            name: NSWindow.didBecomeKeyNotification,
-            object: nil
+private struct PersistentStoreLoadingView: View {
+    var body: some View {
+        VStack(spacing: 12) {
+            ProgressView()
+                .controlSize(.large)
+            Text("Loading conversations…")
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+private struct PersistentStoreFailureView: View {
+    let message: String
+
+    var body: some View {
+        ContentUnavailableView(
+            "Unable to Load Conversations",
+            systemImage: "exclamationmark.triangle",
+            description: Text(message)
         )
-    }
-
-    func applyToExistingWindows() {
-        for window in NSApp.windows {
-            if let contentView = window.contentView {
-                configure(contentView)
-            }
-        }
-    }
-
-    @objc private func windowDidBecomeKey(_ notification: Notification) {
-        guard let window = notification.object as? NSWindow else { return }
-        for delay in [0.0, 0.25, 1.0] {
-            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self, weak window] in
-                guard let self, let contentView = window?.contentView else { return }
-                self.configure(contentView)
-            }
-        }
-    }
-
-    private func configure(_ view: NSView) {
-        if let scrollView = view as? NSScrollView {
-            scrollView.scrollerStyle = .overlay
-            scrollView.autohidesScrollers = true
-            scrollView.verticalScroller?.controlSize = .mini
-            scrollView.horizontalScroller?.controlSize = .mini
-        } else if let scroller = view as? NSScroller {
-            scroller.controlSize = .mini
-        }
-        for subview in view.subviews {
-            configure(subview)
-        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 
@@ -650,7 +695,7 @@ private final class ThinScrollerController: NSObject {
 struct ChatmiceApp: App {
     @AppStorage("gptModel") var gptModel: String = AppConstants.defaultPrimaryModel
     @AppStorage("preferredColorScheme") private var preferredColorSchemeRaw: Int = 0
-    @StateObject private var store = ChatStore(persistenceController: PersistenceController.shared)
+    @StateObject private var persistenceController = PersistenceController.shared
     @StateObject private var presentationController = AppPresentationController.shared
 
     var preferredColorScheme: ColorScheme? {
@@ -725,7 +770,6 @@ struct ChatmiceApp: App {
     }
 
     private let updateCoordinator = V3UpdateCoordinator.shared
-    let persistenceController = PersistenceController.shared
 
     init() {
 
@@ -738,7 +782,6 @@ struct ChatmiceApp: App {
         NotificationPresenter.shared.onAuthorizationGranted = {
             DatabasePatcher.deliverPendingGeminiMigrationNotificationIfNeeded()
         }
-        _ = ThinScrollerController.shared
         NotificationPresenter.shared.requestAuthorizationIfNeeded()
 
         // Enable badge for existing users who were authorized without .badge
@@ -748,19 +791,29 @@ struct ChatmiceApp: App {
 
     var body: some Scene {
         WindowGroup(id: "main") {
-            ContentView()
-                .environment(\.managedObjectContext, persistenceController.container.viewContext)
-                .preferredColorScheme(preferredColorScheme)
-                .background(MainWindowTracker(controller: presentationController))
-                .onAppear {
-                    updateDockIcon()
-                    if let data = UserDefaults.standard.string(forKey: "mcpServersJSON")?.data(using: .utf8),
-                       let servers = try? JSONDecoder().decode([MCPServerConfig].self, from: data) {
-                        Task {
-                            await MCPService.shared.sync(servers: servers)
-                        }
+            Group {
+                switch persistenceController.loadState {
+                case .loading:
+                    PersistentStoreLoadingView()
+                case .ready:
+                    ContentView()
+                        .environment(\.managedObjectContext, persistenceController.container.viewContext)
+                case .failed(let message):
+                    PersistentStoreFailureView(message: message)
+                }
+            }
+            .preferredColorScheme(preferredColorScheme)
+            .background(MainWindowTracker(controller: presentationController))
+            .onAppear {
+                updateDockIcon()
+                if let data = UserDefaults.standard.string(forKey: "mcpServersJSON")?.data(using: .utf8),
+                    let servers = try? JSONDecoder().decode([MCPServerConfig].self, from: data)
+                {
+                    Task {
+                        await MCPService.shared.sync(servers: servers)
                     }
                 }
+            }
         }
         .windowStyle(.hiddenTitleBar)
         .onChange(of: preferredColorSchemeRaw) {
@@ -779,9 +832,6 @@ struct ChatmiceApp: App {
                     showSettings()
                 }
                 .keyboardShortcut(",", modifiers: [.command])
-            }
-            CommandGroup(after: .appInfo) {
-                CheckForUpdatesView(updateCoordinator: updateCoordinator)
             }
 
             CommandMenu("Chat") {
@@ -826,7 +876,11 @@ struct ChatmiceApp: App {
                 .keyboardShortcut("n", modifiers: .command)
 
                 Button("New Window") {
-                    NSApplication.shared.sendAction(#selector(NSWindowController.newWindowForTab(_:)), to: nil, from: nil)
+                    NSApplication.shared.sendAction(
+                        #selector(NSWindowController.newWindowForTab(_:)),
+                        to: nil,
+                        from: nil
+                    )
                 }
                 .keyboardShortcut("n", modifiers: [.command, .option])
             }
@@ -869,9 +923,18 @@ struct ChatmiceApp: App {
         .menuBarExtraStyle(.menu)
 
         Window("Settings", id: "settings") {
-            PreferencesView()
-                .environment(\.managedObjectContext, persistenceController.container.viewContext)
-                .preferredColorScheme(preferredColorScheme)
+            Group {
+                switch persistenceController.loadState {
+                case .loading:
+                    PersistentStoreLoadingView()
+                case .ready:
+                    PreferencesView()
+                        .environment(\.managedObjectContext, persistenceController.container.viewContext)
+                case .failed(let message):
+                    PersistentStoreFailureView(message: message)
+                }
+            }
+            .preferredColorScheme(preferredColorScheme)
         }
         .windowStyle(.titleBar)
         .windowToolbarStyle(.unified(showsTitle: false))

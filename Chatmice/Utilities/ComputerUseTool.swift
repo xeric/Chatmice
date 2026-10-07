@@ -9,12 +9,54 @@ import AppKit
 import CoreGraphics
 import Foundation
 
+enum ComputerUsePermissions {
+    static var canRecordScreen: Bool {
+        CGPreflightScreenCaptureAccess()
+    }
+
+    static var canControlComputer: Bool {
+        AXIsProcessTrusted()
+    }
+
+    @discardableResult
+    static func requestScreenRecording() -> Bool {
+        CGRequestScreenCaptureAccess()
+    }
+
+    @discardableResult
+    static func requestAccessibility() -> Bool {
+        let options =
+            [
+                kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true
+            ] as CFDictionary
+        return AXIsProcessTrustedWithOptions(options)
+    }
+
+    static func openScreenRecordingSettings() {
+        openPrivacySettings(anchor: "Privacy_ScreenCapture")
+    }
+
+    static func openAccessibilitySettings() {
+        openPrivacySettings(anchor: "Privacy_Accessibility")
+    }
+
+    private static func openPrivacySettings(anchor: String) {
+        guard
+            let url = URL(
+                string: "x-apple.systempreferences:com.apple.preference.security?\(anchor)"
+            )
+        else { return }
+        NSWorkspace.shared.open(url)
+    }
+}
+
 public struct ScreenshotTool: AgentTool {
     public init() {}
 
     public let definition = ToolDefinition(
         name: "computer.screenshot",
-        description: "Captures a screenshot of the main display and returns a base64 PNG data URL. No parameters required.",
+        description:
+            "Captures a screenshot of the main display and returns a base64 PNG data URL. No parameters required.",
         parameters: .object(properties: [:], required: [], additionalProperties: nil)
     )
 
@@ -24,8 +66,12 @@ public struct ScreenshotTool: AgentTool {
             throw ToolError.confirmationDenied("User denied screen capture")
         }
 
-        guard let image = CGDisplayCreateImage(CGMainDisplayID()) else {
-            throw ToolError.executionFailed("Failed to capture screen (check Screen Recording permissions)")
+        guard ComputerUsePermissions.canRecordScreen,
+            let image = CGDisplayCreateImage(CGMainDisplayID())
+        else {
+            throw ToolError.executionFailed(
+                "Screen Recording permission is required in System Settings > Privacy & Security > Screen Recording"
+            )
         }
 
         let rep = NSBitmapImageRep(cgImage: image)
@@ -40,7 +86,7 @@ public struct ScreenshotTool: AgentTool {
 
 private enum ComputerInputSupport {
     static func requireAccessibility() throws {
-        guard AXIsProcessTrusted() else {
+        guard ComputerUsePermissions.canControlComputer else {
             throw ToolError.executionFailed(
                 "Accessibility permission is required in System Settings > Privacy & Security > Accessibility"
             )
@@ -49,7 +95,8 @@ private enum ComputerInputSupport {
 
     static func object(_ arguments: String) throws -> [String: Any] {
         guard let data = arguments.data(using: .utf8),
-              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else {
             throw ToolError.invalidArguments("arguments must be a JSON object")
         }
         return object
@@ -77,7 +124,8 @@ struct MouseClickTool: AgentTool {
     func call(arguments: String, context: ToolContext) async throws -> String {
         let object = try ComputerInputSupport.object(arguments)
         guard let x = (object["x"] as? NSNumber)?.doubleValue,
-              let y = (object["y"] as? NSNumber)?.doubleValue else {
+            let y = (object["y"] as? NSNumber)?.doubleValue
+        else {
             throw ToolError.invalidArguments("mouse_click requires numeric x and y")
         }
         let isRight = (object["button"] as? String)?.lowercased() == "right"
@@ -89,8 +137,12 @@ struct MouseClickTool: AgentTool {
         let button: CGMouseButton = isRight ? .right : .left
         let down: CGEventType = isRight ? .rightMouseDown : .leftMouseDown
         let up: CGEventType = isRight ? .rightMouseUp : .leftMouseUp
-        CGEvent(mouseEventSource: nil, mouseType: down, mouseCursorPosition: point, mouseButton: button)?.post(tap: .cghidEventTap)
-        CGEvent(mouseEventSource: nil, mouseType: up, mouseCursorPosition: point, mouseButton: button)?.post(tap: .cghidEventTap)
+        CGEvent(mouseEventSource: nil, mouseType: down, mouseCursorPosition: point, mouseButton: button)?.post(
+            tap: .cghidEventTap
+        )
+        CGEvent(mouseEventSource: nil, mouseType: up, mouseCursorPosition: point, mouseButton: button)?.post(
+            tap: .cghidEventTap
+        )
         return "Clicked at (\(Int(x)), \(Int(y)))"
     }
 }

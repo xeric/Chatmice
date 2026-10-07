@@ -49,6 +49,7 @@
 		4A2D3CEB2D5794B10082A262 /* ThemeMode.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A2D3CEA2D5794B00082A262 /* ThemeMode.swift */; };
 		4A315DB22C8CD8410095ABD1 /* TabAIPersonasView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A315DB12C8CD8410095ABD1 /* TabAIPersonasView.swift */; };
 		4A37B8552C2A399800F36CC4 /* Credits.rtf in Resources */ = {isa = PBXBuildFile; fileRef = 4A37B8542C2A399800F36CC4 /* Credits.rtf */; };
+		C0D6B0022F60000100C0D6B0 /* DMGBackground.png in Resources */ = {isa = PBXBuildFile; fileRef = C0D6B0012F60000100C0D6B0 /* DMGBackground.png */; };
 		4A399C9929BC8FEF00E98796 /* ChatmiceApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A399C9829BC8FEF00E98796 /* ChatmiceApp.swift */; };
 		4A399C9B29BC8FEF00E98796 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A399C9A29BC8FEF00E98796 /* ContentView.swift */; };
 		4A399C9D29BC8FF100E98796 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 4A399C9C29BC8FF100E98796 /* Assets.xcassets */; };
@@ -56,6 +57,7 @@
 		4A399CB529BC8FF200E98796 /* ChatmiceUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A399CB429BC8FF200E98796 /* ChatmiceUITests.swift */; };
 		4A399CB729BC8FF200E98796 /* ChatmiceUITestsLaunchTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A399CB629BC8FF200E98796 /* ChatmiceUITestsLaunchTests.swift */; };
 		4A399CC429BCE67800E98796 /* PreferencesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A399CC329BCE67800E98796 /* PreferencesView.swift */; };
+		C0AB00022F50000100C0AB02 /* TabAboutView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0AB00012F50000100C0AB01 /* TabAboutView.swift */; };
 		4A399CC629BCF02500E98796 /* ChatStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A399CC529BCF02500E98796 /* ChatStore.swift */; };
 		4A471B862C29C56800C66926 /* SwiftMath in Frameworks */ = {isa = PBXBuildFile; productRef = 4A471B852C29C56800C66926 /* SwiftMath */; };
 		4B0000022E00000100000002 /* MermaidRender in Frameworks */ = {isa = PBXBuildFile; productRef = 4B0000012E00000100000001 /* MermaidRender */; };
@@ -220,6 +222,8 @@
 		4A399CB429BC8FF200E98796 /* ChatmiceUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatmiceUITests.swift; sourceTree = "<group>"; };
 		4A399CB629BC8FF200E98796 /* ChatmiceUITestsLaunchTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatmiceUITestsLaunchTests.swift; sourceTree = "<group>"; };
 		4A399CC329BCE67800E98796 /* PreferencesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreferencesView.swift; sourceTree = "<group>"; };
+		C0AB00012F50000100C0AB01 /* TabAboutView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabAboutView.swift; sourceTree = "<group>"; };
+		C0D6B0012F60000100C0D6B0 /* DMGBackground.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = DMGBackground.png; sourceTree = "<group>"; };
 		4A399CC529BCF02500E98796 /* ChatStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatStore.swift; sourceTree = "<group>"; };
 		4A471B872C29CD3D00C66926 /* AdaptiveMathView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AdaptiveMathView.swift; sourceTree = "<group>"; };
 		4A4918772D9F3C54007EB4A2 /* MessageContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessageContentView.swift; sourceTree = "<group>"; };
@@ -426,6 +430,7 @@
 				4AFAC2012EF496C3004B125E /* SettingsIndicators.swift */,
 				A31F00002F20000100C0D3E5 /* V3UpgradeNotice.swift */,
 				4A8A78C72D4C41980057A6CC /* TabGeneralSettingsView.swift */,
+				C0AB00012F50000100C0AB01 /* TabAboutView.swift */,
 				A9A0E0002F40000100C0D3E5 /* TabAppearanceSettingsView.swift */,
 				4A164BB82C95CC450060ECFE /* TabAPIServices */,
 				4AE3CEB62C93A86F00A9CF4C /* TabAPIServicesView.swift */,
@@ -496,6 +501,7 @@
 		4A272A6F29F5CE5700F93D0D /* Resources */ = {
 			isa = PBXGroup;
 			children = (
+				C0D6B0012F60000100C0D6B0 /* DMGBackground.png */,
 			);
 			path = Resources;
 			sourceTree = "<group>";
@@ -766,6 +772,7 @@
 				4A399C9D29BC8FF100E98796 /* Assets.xcassets in Resources */,
 				4A4F204B2D62650800D1F57F /* FiraCode-VF.ttf in Resources */,
 				4A37B8552C2A399800F36CC4 /* Credits.rtf in Resources */,
+				C0D6B0022F60000100C0D6B0 /* DMGBackground.png in Resources */,
 				537028A45E2C4DD7A33DA2D2 /* APIServiceTemplates.json in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -887,6 +894,7 @@
 				16E55B88D2D449948BD6C60F /* APIServiceTemplate.swift in Sources */,
 				4ABB86792CFBDBD3004EC7B1 /* HighlightedText.swift in Sources */,
 				4A8A78C82D4C41A00057A6CC /* TabGeneralSettingsView.swift in Sources */,
+				C0AB00022F50000100C0AB02 /* TabAboutView.swift in Sources */,
 				A9A0E0012F40000100C0D3E5 /* TabAppearanceSettingsView.swift in Sources */,
 				A31F00012F20000100C0D3E5 /* V3UpgradeNotice.swift in Sources */,
 				4A1E16852E16DB4500E5CBA3 /* ChatInputView.swift in Sources */,
@@ -1063,7 +1071,7 @@
 				CODE_SIGN_IDENTITY = "Apple Development";
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 2;
 				DEVELOPMENT_TEAM = KJ5KHP7B96;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
@@ -1085,7 +1093,7 @@
 				LD_RUNPATH_SEARCH_PATHS = "@executable_path/Frameworks";
 				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = "@executable_path/../Frameworks";
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 1.0.0;
+				MARKETING_VERSION = 1.0.1;
 				ONLY_ACTIVE_ARCH = YES;
 				PRODUCT_BUNDLE_IDENTIFIER = xeric.com.chatmice;
 				PRODUCT_NAME = Chatmice;
@@ -1109,7 +1117,7 @@
 				CODE_SIGN_IDENTITY = "Developer ID Application";
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Developer ID Application";
 				CODE_SIGN_STYLE = Manual;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 2;
 				DEVELOPMENT_TEAM = KJ5KHP7B96;
 				ENABLE_HARDENED_RUNTIME = YES;
 				MOMC_NO_INVERSE_RELATIONSHIP_WARNINGS = YES;
@@ -1133,7 +1141,7 @@
 				LD_RUNPATH_SEARCH_PATHS = "@executable_path/Frameworks";
 				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = "@executable_path/../Frameworks";
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 1.0.0;
+				MARKETING_VERSION = 1.0.1;
 				ONLY_ACTIVE_ARCH = NO;
 				PRODUCT_BUNDLE_IDENTIFIER = xeric.com.chatmice;
 				PRODUCT_NAME = Chatmice;

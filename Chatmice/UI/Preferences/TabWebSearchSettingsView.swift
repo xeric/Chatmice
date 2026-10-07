@@ -18,27 +18,41 @@ struct TabWebSearchSettingsView: View {
         case failure(String)
     }
 
+    private var enabledSearchProviders: [WebSearchProviderID] {
+        WebSearchProviderID.allCases.filter {
+            $0.supportsSearch && settings.provider($0).enabled
+        }
+    }
+
+    private var enabledFetchProviders: [WebSearchProviderID] {
+        WebSearchProviderID.allCases.filter {
+            $0.supportsFetch && settings.provider($0).enabled
+        }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             GroupBox("Web Search Tools") {
                 VStack(alignment: .leading, spacing: 12) {
                     Toggle("Enable Web Search", isOn: binding(\.enabled))
                         .toggleStyle(.switch)
-                    Text("Makes web_search and web_fetch available to AI assistants. Provider credentials are stored in Apple Keychain.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    Text(
+                        "Makes web_search and web_fetch available to AI assistants. Provider credentials are stored in Apple Keychain."
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
 
                     if settings.enabled {
                         Divider()
                         providerPicker(
                             title: "Search provider",
                             selection: binding(\.defaultSearchProvider),
-                            providers: WebSearchProviderID.allCases.filter(\.supportsSearch)
+                            providers: enabledSearchProviders
                         )
                         providerPicker(
                             title: "URL retrieval provider",
                             selection: binding(\.defaultFetchProvider),
-                            providers: WebSearchProviderID.allCases.filter(\.supportsFetch)
+                            providers: enabledFetchProviders
                         )
                         HStack {
                             Text("Maximum search results")
@@ -46,12 +60,9 @@ struct TabWebSearchSettingsView: View {
                             Stepper(value: binding(\.maxResults), in: 1...100) {
                                 Text("\(settings.maxResults)")
                                     .monospacedDigit()
-                                    .frame(minWidth: 26, alignment: .trailing)
+                                    .frame(width: 28, alignment: .trailing)
                             }
-                            .labelsHidden()
-                            Text("\(settings.maxResults)")
-                                .monospacedDigit()
-                                .frame(width: 28, alignment: .trailing)
+                            .fixedSize()
                         }
                     }
                 }
@@ -60,6 +71,14 @@ struct TabWebSearchSettingsView: View {
 
             GroupBox("Search & Retrieval Providers") {
                 VStack(spacing: 0) {
+                    Text("Enable providers here. Only enabled providers appear in the selectors above.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.vertical, 10)
+
+                    Divider()
+
                     ForEach(WebSearchProviderID.allCases) { provider in
                         providerRow(provider)
                         if provider != WebSearchProviderID.allCases.last { Divider() }
@@ -68,7 +87,10 @@ struct TabWebSearchSettingsView: View {
                 .padding(.horizontal, 8)
             }
         }
-        .onAppear(perform: loadSecrets)
+        .onAppear {
+            loadSecrets()
+            normalizeProviderSelections()
+        }
     }
 
     private func providerPicker(
@@ -79,13 +101,21 @@ struct TabWebSearchSettingsView: View {
         HStack {
             Text(title)
             Spacer()
-            Picker(title, selection: selection) {
-                ForEach(providers) { provider in
-                    Text(provider.name).tag(provider)
-                }
+            if providers.isEmpty {
+                Text("No enabled providers")
+                    .font(.callout)
+                    .foregroundStyle(.red)
             }
-            .labelsHidden()
-            .frame(width: 190)
+            else {
+                Picker(title, selection: selection) {
+                    ForEach(providers) { provider in
+                        Text(provider.name).tag(provider)
+                    }
+                }
+                .labelsHidden()
+                .fixedSize()
+                .frame(width: 190, alignment: .trailing)
+            }
         }
     }
 
@@ -109,10 +139,21 @@ struct TabWebSearchSettingsView: View {
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
-                Toggle("Enabled", isOn: providerEnabledBinding(provider))
-                    .labelsHidden()
+                if provider == .exaMCP {
+                    Text("Managed in MCP Servers")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                else {
+                    Toggle(
+                        settings.provider(provider).enabled ? "Enabled" : "Disabled",
+                        isOn: providerEnabledBinding(provider)
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                     .toggleStyle(.switch)
-                    .disabled(provider == .exaMCP)
+                    .fixedSize()
+                }
                 Button {
                     withAnimation(.easeInOut(duration: 0.16)) {
                         expandedProvider = expandedProvider == provider ? nil : provider
@@ -137,9 +178,11 @@ struct TabWebSearchSettingsView: View {
     private func providerEditor(_ provider: WebSearchProviderID, config: WebSearchProviderConfig) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             if provider == .exaMCP {
-                Text("Add this endpoint as an HTTP MCP server under MCP Servers. Exa MCP tools will then appear automatically in assistant tool selection.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                Text(
+                    "Add this endpoint as an HTTP MCP server under MCP Servers. Exa MCP tools will then appear automatically in assistant tool selection."
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
             }
 
             if provider != .fetch {
@@ -222,7 +265,10 @@ struct TabWebSearchSettingsView: View {
     private func binding<Value>(_ keyPath: WritableKeyPath<WebSearchSettings, Value>) -> Binding<Value> {
         Binding(
             get: { settings[keyPath: keyPath] },
-            set: { settings[keyPath: keyPath] = $0; settings.save() }
+            set: {
+                settings[keyPath: keyPath] = $0
+                settings.save()
+            }
         )
     }
 
@@ -238,7 +284,8 @@ struct TabWebSearchSettingsView: View {
             set: { value in
                 let index = providerIndex(provider)
                 settings.providers[index].enabled = value
-                settings.save()
+                normalizeProviderSelections()
+                status[provider] = nil
             }
         )
     }
@@ -303,15 +350,35 @@ struct TabWebSearchSettingsView: View {
             do {
                 try await WebSearchClient().check(provider: provider, config: config)
                 await MainActor.run { status[provider] = .success }
-            } catch {
+            }
+            catch {
                 let message = error.localizedDescription
                 await MainActor.run { status[provider] = .failure(message) }
             }
         }
     }
 
+    private func normalizeProviderSelections() {
+        let searchProviders = enabledSearchProviders
+        if !searchProviders.contains(settings.defaultSearchProvider),
+            let fallback = searchProviders.first
+        {
+            settings.defaultSearchProvider = fallback
+        }
+
+        let fetchProviders = enabledFetchProviders
+        if !fetchProviders.contains(settings.defaultFetchProvider),
+            let fallback = fetchProviders.first
+        {
+            settings.defaultFetchProvider = fallback
+        }
+
+        settings.save()
+    }
+
     private func isActive(_ provider: WebSearchProviderID) -> Bool {
-        settings.enabled && (provider == settings.defaultSearchProvider || provider == settings.defaultFetchProvider)
+        settings.enabled && settings.provider(provider).enabled
+            && (provider == settings.defaultSearchProvider || provider == settings.defaultFetchProvider)
     }
 
     private func icon(for provider: WebSearchProviderID) -> String {
@@ -325,8 +392,8 @@ struct TabWebSearchSettingsView: View {
     }
 }
 
-private extension WebSearchProviderID {
-    var websiteURL: URL? {
+extension WebSearchProviderID {
+    fileprivate var websiteURL: URL? {
         let value: String
         switch self {
         case .zhipu: value = "https://bigmodel.cn"
@@ -344,7 +411,7 @@ private extension WebSearchProviderID {
         return URL(string: value)
     }
 
-    var apiKeyURL: URL? {
+    fileprivate var apiKeyURL: URL? {
         guard requiresAPIKey else { return nil }
         let value: String
         switch self {

@@ -8,6 +8,7 @@
 
 import AppKit
 import Foundation
+
 private actor BashApprovalSession {
     static let shared = BashApprovalSession()
     private var approved = false
@@ -36,7 +37,6 @@ private final class BashApprovalResponder: NSObject {
         NSApp.stopModal(withCode: .alertThirdButtonReturn)
     }
 }
-
 
 class ChatmiceEngine: APIService, AgentActivityReporting {
     let name: String
@@ -91,9 +91,11 @@ class ChatmiceEngine: APIService, AgentActivityReporting {
                 DispatchQueue.main.async {
                     completion(.success(accumulated))
                 }
-            } catch let err as APIError {
+            }
+            catch let err as APIError {
                 DispatchQueue.main.async { completion(.failure(err)) }
-            } catch {
+            }
+            catch {
                 DispatchQueue.main.async { completion(.failure(.requestFailed(error))) }
             }
         }
@@ -118,7 +120,8 @@ class ChatmiceEngine: APIService, AgentActivityReporting {
                         continuation: continuation
                     )
                     continuation.finish()
-                } catch {
+                }
+                catch {
                     continuation.finish(throwing: error)
                 }
             }
@@ -162,7 +165,8 @@ class ChatmiceEngine: APIService, AgentActivityReporting {
         alert.buttons[2].target = responder
         alert.buttons[2].action = #selector(BashApprovalResponder.deny)
 
-        let parentWindow = NSApp.keyWindow ?? NSApp.mainWindow
+        let parentWindow =
+            NSApp.keyWindow ?? NSApp.mainWindow
             ?? NSApp.windows.first(where: { $0 !== alert.window && $0.isVisible })
         let alertWindow = alert.window
         alertWindow.contentView?.layoutSubtreeIfNeeded()
@@ -171,10 +175,12 @@ class ChatmiceEngine: APIService, AgentActivityReporting {
         if let parentWindow {
             let parentFrame = parentWindow.frame
             let alertFrame = alertWindow.frame
-            alertWindow.setFrameOrigin(NSPoint(
-                x: parentFrame.midX - alertFrame.width / 2,
-                y: parentFrame.midY - alertFrame.height / 2
-            ))
+            alertWindow.setFrameOrigin(
+                NSPoint(
+                    x: parentFrame.midX - alertFrame.width / 2,
+                    y: parentFrame.midY - alertFrame.height / 2
+                )
+            )
         }
 
         let response = NSApp.runModal(for: alertWindow)
@@ -207,22 +213,29 @@ class ChatmiceEngine: APIService, AgentActivityReporting {
         let box = ToolBox()
         let defaults = UserDefaults.standard
         let disabledSources = ToolSelectionStore.disabledSourceIDs(for: chatID)
-        let fileToolsEnabled = (defaults.object(forKey: "chatmiceFileToolsEnabled") as? Bool ?? true)
+        let fileToolsEnabled =
+            (defaults.object(forKey: "chatmiceFileToolsEnabled") as? Bool ?? true)
             && !disabledSources.contains(ToolSourceID.fileTool)
-        let codeExecutionEnabled = (defaults.object(forKey: Self.bashEnabledKey) as? Bool ?? true)
+        let codeExecutionEnabled =
+            (defaults.object(forKey: Self.bashEnabledKey) as? Bool ?? true)
             && !disabledSources.contains(ToolSourceID.codeExecution)
-        let skillsEnabled = (defaults.object(forKey: Self.skillsEnabledKey) as? Bool ?? true)
+        let skillsEnabled =
+            (defaults.object(forKey: Self.skillsEnabledKey) as? Bool ?? true)
             && !disabledSources.contains(ToolSourceID.skills)
-        let computerEnabled = (defaults.object(forKey: Self.computerEnabledKey) as? Bool ?? false)
+        let computerEnabled =
+            (defaults.object(forKey: Self.computerEnabledKey) as? Bool ?? false)
             && !disabledSources.contains(ToolSourceID.computerUse)
         let webSearchSettings = WebSearchSettings.load()
-        let searchMode = chatID.map {
-            SearchModeStore.mode(for: $0)
-        } ?? .off
-        let webSearchEnabled = webSearchSettings.enabled && searchMode == .web
+        let searchMode =
+            chatID.map {
+                SearchModeStore.mode(for: $0)
+            } ?? .off
+        let webSearchEnabled =
+            webSearchSettings.enabled && searchMode == .web
             && !disabledSources.contains(ToolSourceID.webSearch)
         let disabledMCPServers = Set(disabledSources.compactMap(ToolSourceID.mcpServerName(from:)))
-        let approvalMode = BashApprovalMode(rawValue: defaults.string(forKey: Self.bashApprovalModeKey) ?? "")
+        let approvalMode =
+            BashApprovalMode(rawValue: defaults.string(forKey: Self.bashApprovalModeKey) ?? "")
             ?? (defaults.bool(forKey: Self.legacyBashAutoConfirmKey) ? .alwaysAllow : .alwaysAsk)
         let approvalSession = BashApprovalSession.shared
 
@@ -252,7 +265,8 @@ class ChatmiceEngine: APIService, AgentActivityReporting {
             if !globallyEnabledIdentifiers.subtracting(disabledSkillIdentifiers).isEmpty {
                 await box.register(SkillTool(catalog: skillStore))
             }
-        } else {
+        }
+        else {
             skillStore = SkillStore(allowedIdentifiers: [])
         }
         if computerEnabled {
@@ -315,7 +329,8 @@ class ChatmiceEngine: APIService, AgentActivityReporting {
             let combined = agentInstructions.joined(separator: "\n\n")
             if let idx = conversationHistory.firstIndex(where: { $0.isSystemText }) {
                 conversationHistory[idx].appendText("\n\n" + combined)
-            } else {
+            }
+            else {
                 conversationHistory.insert(.text(role: "system", content: combined), at: 0)
             }
         }
@@ -371,7 +386,8 @@ class ChatmiceEngine: APIService, AgentActivityReporting {
             if !rawResult.text.isEmpty {
                 if rawResult.textWasStreamed {
                     continuation.yield("\n")
-                } else {
+                }
+                else {
                     continuation.yield(rawResult.text + "\n")
                 }
             }
@@ -387,9 +403,14 @@ class ChatmiceEngine: APIService, AgentActivityReporting {
 
                 let result: ToolExecutionResult
                 do {
-                    let output = try await box.execute(name: registeredName, arguments: call.arguments, context: context)
+                    let output = try await box.execute(
+                        name: registeredName,
+                        arguments: call.arguments,
+                        context: context
+                    )
                     result = ToolExecutionResult(call: call, output: output, isError: false)
-                } catch {
+                }
+                catch {
                     result = ToolExecutionResult(
                         call: call,
                         output: "Error: \(error.localizedDescription)",
@@ -403,7 +424,7 @@ class ChatmiceEngine: APIService, AgentActivityReporting {
                     input: input,
                     output: result.output,
                     isError: result.isError
-                )
+                ).compactedForPersistence()
                 continuation.yield("\n\(activity.marker)\n")
                 reportActivity(.processingToolResult(tool: registeredName))
             }
@@ -440,13 +461,16 @@ class ChatmiceEngine: APIService, AgentActivityReporting {
     private func makeWireToolName(_ original: String, used: inout Set<String>) -> String {
         let allowed = CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-")
         let validInitial = CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz_")
-        var normalized = String(original.unicodeScalars.map { scalar in
-            allowed.contains(scalar) ? Character(String(scalar)) : "_"
-        })
+        var normalized = String(
+            original.unicodeScalars.map { scalar in
+                allowed.contains(scalar) ? Character(String(scalar)) : "_"
+            }
+        )
 
         if normalized.isEmpty {
             normalized = "_tool"
-        } else if let first = normalized.unicodeScalars.first, !validInitial.contains(first) {
+        }
+        else if let first = normalized.unicodeScalars.first, !validInitial.contains(first) {
             normalized = "_" + normalized
         }
 
@@ -497,8 +521,9 @@ class ChatmiceEngine: APIService, AgentActivityReporting {
     private var effectiveKey: String {
         if !config.apiKey.isEmpty { return config.apiKey }
         if let entity = config as? APIServiceEntity,
-           let id = entity.tokenIdentifier ?? entity.id?.uuidString,
-           let token = try? TokenManager.getToken(for: id), !token.isEmpty {
+            let id = entity.tokenIdentifier ?? entity.id?.uuidString,
+            let token = try? TokenManager.getToken(for: id), !token.isEmpty
+        {
             return token
         }
         return ProcessInfo.processInfo.environment["LOCAL_SAP_AI_CORE_PROXY_KEY"] ?? ""
@@ -518,14 +543,16 @@ class ChatmiceEngine: APIService, AgentActivityReporting {
                 temperature: temperature,
                 onText: onText
             )
-        } else if type == "claude" {
+        }
+        else if type == "claude" {
             return try await executeTurnClaude(
                 messages: messages,
                 tools: tools,
                 temperature: temperature,
                 onText: onText
             )
-        } else {
+        }
+        else {
             return try await executeTurnOpenAI(
                 messages: messages,
                 tools: tools,
@@ -554,24 +581,32 @@ class ChatmiceEngine: APIService, AgentActivityReporting {
         req.setValue("text/event-stream", forHTTPHeaderField: "Accept")
 
         let toolsPayload = tools.map { tool -> [String: Any] in
-            ["type": "function", "function": [
-                "name": tool.name,
-                "description": tool.description,
-                "parameters": tool.parameters.openAIWireDict
-            ]]
+            [
+                "type": "function",
+                "function": [
+                    "name": tool.name,
+                    "description": tool.description,
+                    "parameters": tool.parameters.openAIWireDict,
+                ],
+            ]
         }
         let wireMessages = messages.flatMap { message -> [[String: Any]] in
             switch message {
             case .text(let role, let content):
                 return [["role": role, "content": content]]
             case .assistant(let text, let calls):
-                return [[
-                    "role": "assistant",
-                    "content": text.isEmpty ? NSNull() : text,
-                    "tool_calls": calls.map { call in
-                        ["id": call.id, "type": "function", "function": ["name": call.name, "arguments": call.arguments]] as [String: Any]
-                    }
-                ]]
+                return [
+                    [
+                        "role": "assistant",
+                        "content": text.isEmpty ? NSNull() : text,
+                        "tool_calls": calls.map { call in
+                            [
+                                "id": call.id, "type": "function",
+                                "function": ["name": call.name, "arguments": call.arguments],
+                            ] as [String: Any]
+                        },
+                    ]
+                ]
             case .toolResults(let results):
                 return results.map { result in
                     ["role": "tool", "tool_call_id": result.call.id, "content": result.output]
@@ -583,13 +618,14 @@ class ChatmiceEngine: APIService, AgentActivityReporting {
             "model": config.model,
             "messages": wireMessages,
             "temperature": temperature,
-            "stream": true
+            "stream": true,
         ]
         if !toolsPayload.isEmpty { body["tools"] = toolsPayload }
         if nativeSearchEnabled {
             if serviceType == "openrouter" {
                 body["plugins"] = [["id": "web", "engine": "native"]]
-            } else if ["openai", "openai-responses"].contains(serviceType) {
+            }
+            else if ["openai", "openai-responses"].contains(serviceType) {
                 body["web_search_options"] = [String: Any]()
             }
         }
@@ -613,9 +649,10 @@ class ChatmiceEngine: APIService, AgentActivityReporting {
             let payload = line.dropFirst(5).trimmingCharacters(in: .whitespaces)
             if payload == "[DONE]" { break }
             guard let data = payload.data(using: .utf8),
-                  let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let choice = (object["choices"] as? [[String: Any]])?.first,
-                  let delta = choice["delta"] as? [String: Any] else { continue }
+                let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                let choice = (object["choices"] as? [[String: Any]])?.first,
+                let delta = choice["delta"] as? [String: Any]
+            else { continue }
 
             if let chunk = delta["content"] as? String, !chunk.isEmpty {
                 text += chunk
@@ -661,10 +698,12 @@ class ChatmiceEngine: APIService, AgentActivityReporting {
         if !urlString.contains(":streamGenerateContent") {
             if !urlString.contains("/models/") {
                 targetURL = targetURL.appendingPathComponent("models/\(config.model):streamGenerateContent")
-            } else {
+            }
+            else {
                 targetURL = targetURL.appendingPathComponent(":streamGenerateContent")
             }
-        } else if let streamingURL = URL(string: urlString) {
+        }
+        else if let streamingURL = URL(string: urlString) {
             targetURL = streamingURL
         }
         var components = URLComponents(url: targetURL, resolvingAgainstBaseURL: false)
@@ -693,35 +732,38 @@ class ChatmiceEngine: APIService, AgentActivityReporting {
                 guard role != "system", !content.isEmpty else { return nil }
                 return [
                     "role": role == "assistant" ? "model" : "user",
-                    "parts": [["text": content]]
+                    "parts": [["text": content]],
                 ]
             case .assistant(let text, let calls):
                 var parts: [[String: Any]] = []
                 if !text.isEmpty {
                     parts.append(["text": text])
                 }
-                parts.append(contentsOf: calls.map { call -> [String: Any] in
-                    var part: [String: Any] = [
-                        "functionCall": [
-                            "name": call.name,
-                            "args": call.argumentsJSON ?? [:]
+                parts.append(
+                    contentsOf: calls.map { call -> [String: Any] in
+                        var part: [String: Any] = [
+                            "functionCall": [
+                                "name": call.name,
+                                "args": call.argumentsJSON ?? [:],
+                            ]
                         ]
-                    ]
-                    if let signature = call.thoughtSignature {
-                        part["thoughtSignature"] = signature
+                        if let signature = call.thoughtSignature {
+                            part["thoughtSignature"] = signature
+                        }
+                        return part
                     }
-                    return part
-                })
+                )
                 return parts.isEmpty ? nil : ["role": "model", "parts": parts]
             case .toolResults(let results):
                 let parts = results.map { result -> [String: Any] in
-                    let response: [String: Any] = result.isError
+                    let response: [String: Any] =
+                        result.isError
                         ? ["error": result.output]
                         : ["result": result.output]
                     return [
                         "functionResponse": [
                             "name": result.call.name,
-                            "response": response
+                            "response": response,
                         ]
                     ]
                 }
@@ -736,7 +778,7 @@ class ChatmiceEngine: APIService, AgentActivityReporting {
                     [
                         "name": t.name,
                         "description": t.description,
-                        "parameters": t.parameters.openAIWireDict
+                        "parameters": t.parameters.openAIWireDict,
                     ]
                 }
             ])
@@ -750,12 +792,12 @@ class ChatmiceEngine: APIService, AgentActivityReporting {
             "tools": geminiTools,
             "generationConfig": [
                 "temperature": temperature
-            ]
+            ],
         ]
         if !systemText.isEmpty {
             body["systemInstruction"] = [
                 "role": "user",
-                "parts": [["text": systemText]]
+                "parts": [["text": systemText]],
             ]
         }
 
@@ -777,10 +819,11 @@ class ChatmiceEngine: APIService, AgentActivityReporting {
             guard line.hasPrefix("data:") else { continue }
             let payload = line.dropFirst(5).trimmingCharacters(in: .whitespaces)
             guard let data = payload.data(using: .utf8),
-                  let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let candidate = (object["candidates"] as? [[String: Any]])?.first,
-                  let content = candidate["content"] as? [String: Any],
-                  let parts = content["parts"] as? [[String: Any]] else { continue }
+                let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                let candidate = (object["candidates"] as? [[String: Any]])?.first,
+                let content = candidate["content"] as? [String: Any],
+                let parts = content["parts"] as? [[String: Any]]
+            else { continue }
 
             for part in parts {
                 if let chunk = part["text"] as? String, !chunk.isEmpty {
@@ -789,15 +832,18 @@ class ChatmiceEngine: APIService, AgentActivityReporting {
                     onText(chunk)
                 }
                 if let functionCall = part["functionCall"] as? [String: Any],
-                   let name = functionCall["name"] as? String {
+                    let name = functionCall["name"] as? String
+                {
                     let argumentsObject = functionCall["args"] as? [String: Any] ?? [:]
                     let argumentsData = try JSONSerialization.data(withJSONObject: argumentsObject)
-                    calls.append(ToolCall(
-                        id: UUID().uuidString,
-                        name: name,
-                        arguments: String(data: argumentsData, encoding: .utf8) ?? "{}",
-                        thoughtSignature: part["thoughtSignature"] as? String
-                    ))
+                    calls.append(
+                        ToolCall(
+                            id: UUID().uuidString,
+                            name: name,
+                            arguments: String(data: argumentsData, encoding: .utf8) ?? "{}",
+                            thoughtSignature: part["thoughtSignature"] as? String
+                        )
+                    )
                 }
             }
         }
@@ -842,21 +888,23 @@ class ChatmiceEngine: APIService, AgentActivityReporting {
                 guard role != "system", !content.isEmpty else { return nil }
                 return [
                     "role": role == "assistant" ? "assistant" : "user",
-                    "content": content
+                    "content": content,
                 ]
             case .assistant(let text, let calls):
                 var blocks: [[String: Any]] = []
                 if !text.isEmpty {
                     blocks.append(["type": "text", "text": text])
                 }
-                blocks.append(contentsOf: calls.map { call in
-                    [
-                        "type": "tool_use",
-                        "id": call.id,
-                        "name": call.name,
-                        "input": call.argumentsJSON ?? [:]
-                    ]
-                })
+                blocks.append(
+                    contentsOf: calls.map { call in
+                        [
+                            "type": "tool_use",
+                            "id": call.id,
+                            "name": call.name,
+                            "input": call.argumentsJSON ?? [:],
+                        ]
+                    }
+                )
                 return blocks.isEmpty ? nil : ["role": "assistant", "content": blocks]
             case .toolResults(let results):
                 let blocks = results.map { result in
@@ -864,7 +912,7 @@ class ChatmiceEngine: APIService, AgentActivityReporting {
                         "type": "tool_result",
                         "tool_use_id": result.call.id,
                         "content": result.output,
-                        "is_error": result.isError
+                        "is_error": result.isError,
                     ] as [String: Any]
                 }
                 return blocks.isEmpty ? nil : ["role": "user", "content": blocks]
@@ -875,13 +923,13 @@ class ChatmiceEngine: APIService, AgentActivityReporting {
             [
                 "name": t.name,
                 "description": t.description,
-                "input_schema": t.parameters.openAIWireDict
+                "input_schema": t.parameters.openAIWireDict,
             ]
         }
         if nativeSearchEnabled {
             claudeTools.append([
                 "type": "web_search_20250305",
-                "name": "web_search"
+                "name": "web_search",
             ])
         }
 
@@ -889,7 +937,7 @@ class ChatmiceEngine: APIService, AgentActivityReporting {
             "model": resolvedModel,
             "max_tokens": 4096,
             "messages": claudeMsgs,
-            "stream": true
+            "stream": true,
         ]
         if !claudeTools.isEmpty {
             body["tools"] = claudeTools
@@ -922,18 +970,22 @@ class ChatmiceEngine: APIService, AgentActivityReporting {
             guard line.hasPrefix("data:") else { continue }
             let payload = line.dropFirst(5).trimmingCharacters(in: .whitespaces)
             guard let data = payload.data(using: .utf8),
-                  let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let eventType = object["type"] as? String else { continue }
+                let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                let eventType = object["type"] as? String
+            else { continue }
 
             if eventType == "content_block_start",
-               let index = object["index"] as? Int,
-               let block = object["content_block"] as? [String: Any],
-               block["type"] as? String == "tool_use" {
+                let index = object["index"] as? Int,
+                let block = object["content_block"] as? [String: Any],
+                block["type"] as? String == "tool_use"
+            {
                 callIDs[index] = block["id"] as? String ?? UUID().uuidString
                 callNames[index] = block["name"] as? String ?? ""
-            } else if eventType == "content_block_delta",
-                      let index = object["index"] as? Int,
-                      let delta = object["delta"] as? [String: Any] {
+            }
+            else if eventType == "content_block_delta",
+                let index = object["index"] as? Int,
+                let delta = object["delta"] as? [String: Any]
+            {
                 switch delta["type"] as? String {
                 case "text_delta":
                     if let chunk = delta["text"] as? String, !chunk.isEmpty {
