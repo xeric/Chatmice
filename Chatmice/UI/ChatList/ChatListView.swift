@@ -64,7 +64,7 @@ struct ChatListView: View {
                 if first.isPinned != second.isPinned {
                     return first.isPinned && !second.isPinned
                 }
-                return first.updatedDate > second.updatedDate
+                return (first.updatedDate ?? .distantPast) > (second.updatedDate ?? .distantPast)
             }
         }
     }

@@ -5,6 +5,8 @@
 //  Core tool abstractions and registry for MCP, Bash, and Skills.
 //
 
+import AppKit
+import ImageIO
 import Foundation
 
 enum ToolSourceID {
@@ -191,7 +193,8 @@ enum ToolSelectionStore {
                     update(&disabled, sourceID: sourceID, enabled: enabled)
                 }
                 state.chatOverrides[key] = disabled
-            } else {
+            }
+            else {
                 for sourceID in sourceIDs {
                     update(&state.defaultDisabledSourceIDs, sourceID: sourceID, enabled: enabled)
                 }
@@ -208,7 +211,8 @@ enum ToolSelectionStore {
             for sourceID in sourceIDs {
                 if state.defaultDisabledSourceIDs.contains(sourceID) {
                     disabled.insert(sourceID)
-                } else {
+                }
+                else {
                     disabled.remove(sourceID)
                 }
             }
@@ -228,14 +232,16 @@ enum ToolSelectionStore {
     private static func update(_ disabled: inout Set<String>, sourceID: String, enabled: Bool) {
         if enabled {
             disabled.remove(sourceID)
-        } else {
+        }
+        else {
             disabled.insert(sourceID)
         }
     }
 
     private static func load() -> ToolSelectionState {
         guard let data = UserDefaults.standard.data(forKey: storageKey),
-              let state = try? JSONDecoder().decode(ToolSelectionState.self, from: data) else {
+            let state = try? JSONDecoder().decode(ToolSelectionState.self, from: data)
+        else {
             return ToolSelectionState()
         }
         return state
@@ -297,6 +303,44 @@ struct ToolActivityRecord: Codable, Hashable {
         return Self.openingTag + data.base64EncodedString() + Self.closingTag
     }
 
+    func compactedForPersistence() -> ToolActivityRecord {
+        let compactedOutput: String
+        if output.hasPrefix("data:image/") {
+            compactedOutput = ToolActivityImageStore.persist(dataURL: output)
+                ?? "Screenshot capture succeeded, but the image could not be stored."
+        }
+        else if output.count > 20_000 {
+            compactedOutput = String(output.prefix(20_000)) + "\n… [tool output truncated]"
+        }
+        else {
+            compactedOutput = output
+        }
+
+        guard compactedOutput != output else { return self }
+        return ToolActivityRecord(name: name, input: input, output: compactedOutput, isError: isError)
+    }
+
+    var storedImageURL: URL? {
+        ToolActivityImageStore.url(for: output)
+    }
+
+    var storedImage: NSImage? {
+        storedImageURL.flatMap(NSImage.init(contentsOf:))
+    }
+
+    static func compactingMarkersForPersistence(in content: String) -> String {
+        guard content.count > 20_000, content.contains(openingTag) else { return content }
+
+        return
+            content
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .map { line in
+                guard let activity = decode(markerLine: String(line)) else { return String(line) }
+                return activity.compactedForPersistence().marker
+            }
+            .joined(separator: "\n")
+    }
+
     static func decode(markerLine: String) -> ToolActivityRecord? {
         let trimmed = markerLine.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed.hasPrefix(openingTag), trimmed.hasSuffix(closingTag) else { return nil }
@@ -326,6 +370,48 @@ struct ToolActivityRecord: Codable, Hashable {
             .filter { decode(markerLine: String($0)) == nil }
             .joined(separator: "\n")
             .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}
+private enum ToolActivityImageStore {
+    private static let markerPrefix = "chatmice-tool-image:"
+    static func persist(dataURL: String) -> String? {
+        guard let comma = dataURL.firstIndex(of: ","),
+            dataURL[..<comma].hasSuffix(";base64"),
+            let data = Data(base64Encoded: String(dataURL[dataURL.index(after: comma)...])),
+            let source = CGImageSourceCreateWithData(data as CFData, nil),
+            let thumbnail = CGImageSourceCreateThumbnailAtIndex(
+                source,
+                0,
+                [
+                    kCGImageSourceCreateThumbnailFromImageAlways: true,
+                    kCGImageSourceCreateThumbnailWithTransform: true,
+                    kCGImageSourceThumbnailMaxPixelSize: 1_600,
+                ] as CFDictionary
+            ),
+            let previewData = NSBitmapImageRep(cgImage: thumbnail).representation(using: .png, properties: [:])
+        else { return nil }
+
+        let filename = UUID().uuidString + ".png"
+        let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("Chatmice/tool-images", isDirectory: true)
+        do {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            try previewData.write(to: directory.appendingPathComponent(filename), options: .atomic)
+            return markerPrefix + filename
+        }
+        catch {
+            return nil
+        }
+    }
+
+    static func url(for marker: String) -> URL? {
+        guard marker.hasPrefix(markerPrefix) else { return nil }
+        let filename = String(marker.dropFirst(markerPrefix.count))
+        guard !filename.isEmpty, filename == URL(fileURLWithPath: filename).lastPathComponent else { return nil }
+        let url = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("Chatmice/tool-images", isDirectory: true)
+            .appendingPathComponent(filename)
+        return FileManager.default.fileExists(atPath: url.path) ? url : nil
     }
 }
 

@@ -5,7 +5,9 @@
 //  Created by Renat Notfullin on 11.03.2023.
 //
 
+import AppKit
 import XCTest
+
 @testable import Chatmice
 
 final class ChatmiceTests: XCTestCase {
@@ -33,6 +35,7 @@ final class ChatmiceTests: XCTestCase {
     @MainActor
     func testStreamingMessageIsVisibleBeforeStreamCompletes() async {
         let persistence = PersistenceController(inMemory: true)
+        XCTAssertEqual(persistence.loadState, .ready)
         let context = persistence.container.viewContext
         let chat = ChatEntity(context: context)
         chat.id = UUID()
@@ -72,7 +75,6 @@ final class ChatmiceTests: XCTestCase {
         XCTAssertEqual(viewModel.sortedMessages.last?.body, "Hello world")
     }
 
-
     func testSkillStoreRestrictsCatalogPromptAndReads() async throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
@@ -98,7 +100,8 @@ final class ChatmiceTests: XCTestCase {
         do {
             _ = try await store.read(name: "Disabled Skill", path: nil)
             XCTFail("A chat-disabled Skill must not be readable")
-        } catch {
+        }
+        catch {
             XCTAssertTrue(error is ToolError)
         }
     }
@@ -110,7 +113,8 @@ final class ChatmiceTests: XCTestCase {
         defer {
             if let previousState {
                 defaults.set(previousState, forKey: storageKey)
-            } else {
+            }
+            else {
                 defaults.removeObject(forKey: storageKey)
             }
         }
@@ -127,6 +131,63 @@ final class ChatmiceTests: XCTestCase {
 
         ToolSelectionStore.resetSourcesToDefaults([sourceID], for: firstChat)
         XCTAssertFalse(ToolSelectionStore.disabledSourceIDs(for: firstChat).contains(sourceID))
+    }
+
+    func testScreenshotToolActivityPersistsRenderableImage() throws {
+        let source = try XCTUnwrap(
+            NSBitmapImageRep(
+                bitmapDataPlanes: nil,
+                pixelsWide: 3_440,
+                pixelsHigh: 1_440,
+                bitsPerSample: 8,
+                samplesPerPixel: 4,
+                hasAlpha: true,
+                isPlanar: false,
+                colorSpaceName: .deviceRGB,
+                bytesPerRow: 0,
+                bitsPerPixel: 0
+            )
+        )
+        let png = try XCTUnwrap(source.representation(using: .png, properties: [:]))
+        let activity = ToolActivityRecord(
+            name: "computer.screenshot",
+            input: "{}",
+            output: "data:image/png;base64,\(png.base64EncodedString())",
+            isError: false
+        ).compactedForPersistence()
+        let url = try XCTUnwrap(activity.storedImageURL)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let preview = try XCTUnwrap(activity.storedImage)
+
+        XCTAssertFalse(activity.output.contains("base64"))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: url.path))
+        XCTAssertLessThanOrEqual(max(preview.size.width, preview.size.height), 1_600)
+    }
+
+    @MainActor
+    func testMessageWithMissingTimestampRemainsRenderableForRetry() {
+        let persistence = PersistenceController(inMemory: true)
+        let context = persistence.container.viewContext
+        let chat = ChatEntity(context: context)
+        chat.id = UUID()
+        chat.name = "Retry regression"
+        chat.systemMessage = ""
+        chat.gptModel = "test"
+        chat.requestMessages = []
+
+        let message = MessageEntity(context: context)
+        message.id = 1
+        message.sequence = 1
+        message.name = "assistant"
+        message.body = "Failed response"
+        message.own = false
+        message.chat = chat
+        chat.addToMessages(message)
+        context.processPendingChanges()
+
+        let messages = ChatViewModel(chat: chat, viewContext: context).sortedMessages
+        XCTAssertEqual(messages.count, 1)
+        XCTAssertNil(messages[0].timestamp)
     }
 
 }

@@ -32,8 +32,8 @@ public class ChatEntity: NSManagedObject, Identifiable {
     @NSManaged public var draftMessage: String?
     @NSManaged public var draftImageIDs: String?
     @NSManaged public var draftFileIDs: String?
-    @NSManaged public var createdDate: Date
-    @NSManaged public var updatedDate: Date
+    @NSManaged public var createdDate: Date?
+    @NSManaged public var updatedDate: Date?
     @NSManaged public var systemMessage: String
     @NSManaged public var gptModel: String
     @NSManaged public var name: String
@@ -78,7 +78,7 @@ public class ChatEntity: NSManagedObject, Identifiable {
             let set = messages as? Set<MessageEntity> ?? []
             return set.sorted { lhs, rhs in
                 if supportsSequencing, lhs.sequence == rhs.sequence {
-                    return lhs.timestamp < rhs.timestamp
+                    return (lhs.timestamp ?? .distantPast) < (rhs.timestamp ?? .distantPast)
                 }
                 if supportsSequencing {
                     return lhs.sequence < rhs.sequence
@@ -86,7 +86,7 @@ public class ChatEntity: NSManagedObject, Identifiable {
                 if lhs.timestamp == rhs.timestamp {
                     return lhs.objectID.uriRepresentation().absoluteString < rhs.objectID.uriRepresentation().absoluteString
                 }
-                return lhs.timestamp < rhs.timestamp
+                return (lhs.timestamp ?? .distantPast) < (rhs.timestamp ?? .distantPast)
             }
         }
 
@@ -116,11 +116,11 @@ public class ChatEntity: NSManagedObject, Identifiable {
             return set.max { lhs, rhs in
                 if supportsSequencing {
                     if lhs.sequence == rhs.sequence {
-                        return lhs.timestamp < rhs.timestamp
+                        return (lhs.timestamp ?? .distantPast) < (rhs.timestamp ?? .distantPast)
                     }
                     return lhs.sequence < rhs.sequence
                 }
-                return lhs.timestamp < rhs.timestamp
+                return (lhs.timestamp ?? .distantPast) < (rhs.timestamp ?? .distantPast)
             }
         }
         
@@ -223,7 +223,7 @@ public class MessageEntity: NSManagedObject, Identifiable {
     @NSManaged public var id: Int64
     @NSManaged public var name: String
     @NSManaged public var body: String
-    @NSManaged public var timestamp: Date
+    @NSManaged public var timestamp: Date?
     @NSManaged public var own: Bool
     @NSManaged public var waitingForResponse: Bool
     @NSManaged public var messageParts: Data?
@@ -289,7 +289,7 @@ struct Message: Codable, Equatable {
         self.id = Int(messageEntity.id)
         self.name = messageEntity.name
         self.body = messageEntity.body
-        self.timestamp = messageEntity.timestamp
+        self.timestamp = messageEntity.timestamp ?? .distantPast
         self.own = messageEntity.own
         self.waitingForResponse = messageEntity.waitingForResponse
     }

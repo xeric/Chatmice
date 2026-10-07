@@ -1290,6 +1290,7 @@ struct ToolActivityView: View {
     }
 
     var body: some View {
+        let storedImage = activity.storedImage
         VStack(alignment: .leading, spacing: 0) {
             Button {
                 guard state.canExpand else { return }
@@ -1354,14 +1355,19 @@ struct ToolActivityView: View {
 
                 VStack(alignment: .leading, spacing: 8) {
                     HStack {
-                        Text("OUTPUT")
+                        Text(storedImage == nil ? "OUTPUT" : "SCREENSHOT")
                             .font(.system(size: 9, weight: .bold))
                             .tracking(0.8)
                             .foregroundStyle(.secondary)
                         Spacer()
                         Button {
                             NSPasteboard.general.clearContents()
-                            NSPasteboard.general.setString(activity.output, forType: .string)
+                            if let image = storedImage {
+                                NSPasteboard.general.writeObjects([image])
+                            }
+                            else {
+                                NSPasteboard.general.setString(activity.output, forType: .string)
+                            }
                             copied = true
                             DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
                                 copied = false
@@ -1374,14 +1380,23 @@ struct ToolActivityView: View {
                         .foregroundStyle(.secondary)
                     }
 
-                    ScrollView(.vertical) {
-                        Text(activity.output)
-                            .font(.system(size: 11, design: .monospaced))
-                            .foregroundStyle(.primary.opacity(0.88))
-                            .textSelection(.enabled)
-                            .frame(maxWidth: .infinity, alignment: .leading)
+                    if let image = storedImage {
+                        Image(nsImage: image)
+                            .resizable()
+                            .scaledToFit()
+                            .frame(maxWidth: 520, maxHeight: 360)
+                            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
                     }
-                    .frame(maxHeight: 220)
+                    else {
+                        ScrollView(.vertical) {
+                            Text(activity.output)
+                                .font(.system(size: 11, design: .monospaced))
+                                .foregroundStyle(.primary.opacity(0.88))
+                                .textSelection(.enabled)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        .frame(maxHeight: 220)
+                    }
                 }
                 .padding(10)
                 .background(Color.black.opacity(0.08))

@@ -24,7 +24,7 @@ class DatabasePatcher {
             AppConstants.openAiResponsesPdfUploadsPatchCompletedKey,
             AppConstants.geminiPdfUploadsPatchCompletedKey,
             AppConstants.openRouterUploadsPatchCompletedKey,
-            AppConstants.defaultApiServiceMigrationCompletedKey
+            AppConstants.defaultApiServiceMigrationCompletedKey,
         ]
 
         for key in keys {
@@ -49,7 +49,7 @@ class DatabasePatcher {
             AppConstants.personaOrderingPatchCompletedKey,
             AppConstants.imageUploadsPatchCompletedKey,
             AppConstants.imageGenerationPatchCompletedKey,
-            AppConstants.pdfUploadsPatchCompletedKey
+            AppConstants.pdfUploadsPatchCompletedKey,
         ]
 
         for key in patchKeys {
@@ -62,19 +62,20 @@ class DatabasePatcher {
     static func applyPatches(context: NSManagedObjectContext, persistence: PersistenceController) {
         addDefaultPersonasIfNeeded(context: context)
         patchMissingIDs(context: context, persistence: persistence)
-        
+        compactOversizedToolActivitiesIfNeeded(context: context, persistence: persistence)
+
         if persistence.getMetadata(forKey: AppConstants.personaOrderingPatchCompletedKey) as? Bool != true {
             if patchPersonaOrdering(context: context) {
                 persistence.setMetadata(value: true, forKey: AppConstants.personaOrderingPatchCompletedKey)
             }
         }
-        
+
         if persistence.getMetadata(forKey: AppConstants.imageUploadsPatchCompletedKey) as? Bool != true {
             if patchImageUploadsForAPIServices(context: context) {
                 persistence.setMetadata(value: true, forKey: AppConstants.imageUploadsPatchCompletedKey)
             }
         }
-        
+
         if persistence.getMetadata(forKey: AppConstants.imageGenerationPatchCompletedKey) as? Bool != true {
             if patchImageGenerationForAPIServices(context: context) {
                 persistence.setMetadata(value: true, forKey: AppConstants.imageGenerationPatchCompletedKey)
@@ -106,10 +107,38 @@ class DatabasePatcher {
         }
 
         migrateDefaultAPIServiceSelectionIfNeeded(context: context, persistence: persistence)
-        
+
         backfillMessageSequencesIfNeeded(context: context, persistence: persistence)
         patchGeminiLegacyEndpoint(context: context, persistence: persistence)
         patchChatGPTLegacyEndpoint(context: context, persistence: persistence)
+    }
+
+    private static func compactOversizedToolActivitiesIfNeeded(
+        context: NSManagedObjectContext,
+        persistence: PersistenceController
+    ) {
+        let metadataKey = "ToolActivityOutputCompactionV1"
+        guard persistence.getMetadata(forKey: metadataKey) as? Bool != true else { return }
+
+        let request = NSFetchRequest<MessageEntity>(entityName: "MessageEntity")
+        request.predicate = NSPredicate(format: "body CONTAINS %@", ToolActivityRecord.openingTag)
+        request.fetchBatchSize = 50
+
+        do {
+            for message in try context.fetch(request) {
+                let compacted = ToolActivityRecord.compactingMarkersForPersistence(in: message.body)
+                if compacted != message.body {
+                    message.body = compacted
+                }
+            }
+            if context.hasChanges {
+                try context.save()
+            }
+            persistence.setMetadata(value: true, forKey: metadataKey)
+        }
+        catch {
+            print("Failed to compact stored tool activities: \(error)")
+        }
     }
 
     static func initializeDatabaseIfNeeded(context: NSManagedObjectContext, persistence: PersistenceController) {
@@ -118,7 +147,7 @@ class DatabasePatcher {
         if persistence.getMetadata(forKey: initializationKey) as? Bool == true {
             return
         }
-        
+
         let entityNames = ["APIServiceEntity", "ChatEntity", "PersonaEntity", "MessageEntity"]
         var hasExistingData = false
         for entityName in entityNames {
@@ -129,13 +158,14 @@ class DatabasePatcher {
                     hasExistingData = true
                     break
                 }
-            } catch {
+            }
+            catch {
                 print("Error checking for existing \(entityName) data: \(error)")
                 hasExistingData = true
                 break
             }
         }
-        
+
         if !hasExistingData && persistence.getMetadata(forKey: "DB_VERSION") == nil {
             print("Fresh install detected, initializing migration flags in metadata.")
             // It's a fresh install - no need to run any legacy migrations or patches.
@@ -152,11 +182,11 @@ class DatabasePatcher {
             persistence.setMetadata(value: true, forKey: AppConstants.geminiPdfUploadsPatchCompletedKey)
             persistence.setMetadata(value: true, forKey: AppConstants.openRouterUploadsPatchCompletedKey)
             persistence.setMetadata(value: true, forKey: AppConstants.defaultApiServiceMigrationCompletedKey)
-            
+
             // Set latest DB version to skip all current and future patches that are already "included" in fresh DB
             persistence.setMetadata(value: latestVersion, forKey: "DB_VERSION")
             persistence.setMetadata(value: true, forKey: initializationKey)
-            
+
             // Still need to add default personas for new users
             addDefaultPersonasIfNeeded(context: context)
             return
@@ -172,7 +202,7 @@ class DatabasePatcher {
         if persistence.getMetadata(forKey: "DB_VERSION") == nil {
             persistence.setMetadata(value: latestVersion, forKey: "DB_VERSION")
         }
-        
+
         persistence.setMetadata(value: true, forKey: initializationKey)
     }
 
@@ -186,16 +216,17 @@ class DatabasePatcher {
 
         let defaults = UserDefaults.standard
         if let defaultServiceIDString = defaults.string(forKey: "defaultApiService"),
-           let url = URL(string: defaultServiceIDString),
-           let objectID = context.persistentStoreCoordinator?.managedObjectID(forURIRepresentation: url),
-           let defaultService = try? context.existingObject(with: objectID) as? APIServiceEntity
+            let url = URL(string: defaultServiceIDString),
+            let objectID = context.persistentStoreCoordinator?.managedObjectID(forURIRepresentation: url),
+            let defaultService = try? context.existingObject(with: objectID) as? APIServiceEntity
         {
             let fetchRequest = NSFetchRequest<APIServiceEntity>(entityName: "APIServiceEntity")
             if let services = try? context.fetch(fetchRequest) {
                 for service in services {
                     service.isDefault = (service.objectID == defaultService.objectID)
                 }
-            } else {
+            }
+            else {
                 defaultService.isDefault = true
             }
 
@@ -279,21 +310,22 @@ class DatabasePatcher {
     @discardableResult
     static func patchImageUploadsForAPIServices(context: NSManagedObjectContext) -> Bool {
         let fetchRequest = NSFetchRequest<APIServiceEntity>(entityName: "APIServiceEntity")
-        
+
         do {
             let apiServices = try context.fetch(fetchRequest)
             var needsSave = false
-            
+
             for service in apiServices {
-                if let type = service.type, 
-                   let config = AppConstants.defaultApiConfigurations[type], 
-                   config.imageUploadsSupported && !service.imageUploadsAllowed {
+                if let type = service.type,
+                    let config = AppConstants.defaultApiConfigurations[type],
+                    config.imageUploadsSupported && !service.imageUploadsAllowed
+                {
                     service.imageUploadsAllowed = true
                     needsSave = true
                     print("Enabled image uploads for API service: \(service.name ?? "Unnamed")")
                 }
             }
-            
+
             if needsSave {
                 try context.save()
             }
@@ -316,9 +348,10 @@ class DatabasePatcher {
 
             for service in apiServices {
                 guard let type = service.type,
-                      let config = AppConstants.defaultApiConfigurations[type],
-                      config.pdfUploadsSupported,
-                      service.pdfUploadsAllowed == false else {
+                    let config = AppConstants.defaultApiConfigurations[type],
+                    config.pdfUploadsSupported,
+                    service.pdfUploadsAllowed == false
+                else {
                     continue
                 }
 
@@ -404,7 +437,8 @@ class DatabasePatcher {
     @discardableResult
     static func patchOpenRouterUploadsForAPIServices(context: NSManagedObjectContext) -> Bool {
         guard let config = AppConstants.defaultApiConfigurations["openrouter"],
-              config.imageUploadsSupported || config.pdfUploadsSupported else {
+            config.imageUploadsSupported || config.pdfUploadsSupported
+        else {
             return true
         }
 
@@ -456,14 +490,15 @@ class DatabasePatcher {
 
             for service in apiServices {
                 guard let type = service.type,
-                      let config = AppConstants.defaultApiConfigurations[type] else {
+                    let config = AppConstants.defaultApiConfigurations[type]
+                else {
                     continue
                 }
 
                 let currentModel = service.model ?? config.defaultModel
                 if config.imageGenerationSupported,
-                   config.autoEnableImageGenerationModels.contains(currentModel),
-                   service.imageGenerationSupported == false
+                    config.autoEnableImageGenerationModels.contains(currentModel),
+                    service.imageGenerationSupported == false
                 {
                     service.imageGenerationSupported = true
                     needsSave = true
@@ -500,7 +535,7 @@ class DatabasePatcher {
         let fetchRequest = NSFetchRequest<APIServiceEntity>(entityName: "APIServiceEntity")
         fetchRequest.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [
             NSPredicate(format: "(type CONTAINS[cd] %@)", "gemini"),
-            NSPredicate(format: "(url CONTAINS[cd] %@)", "/chat/completions")
+            NSPredicate(format: "(url CONTAINS[cd] %@)", "/chat/completions"),
         ])
 
         let legacyServices: [APIServiceEntity]
@@ -545,7 +580,8 @@ class DatabasePatcher {
 
         guard updatedCount > 0 else { return }
 
-        let message = updatedCount == 1
+        let message =
+            updatedCount == 1
             ? "Updated 1 Gemini API service to the native API endpoint (vision and image generation are now supported)"
             : "Updated \(updatedCount) Gemini API services to the native API endpoint (vision and image generation are now supported)"
 
@@ -569,7 +605,7 @@ class DatabasePatcher {
         let fetchRequest = NSFetchRequest<APIServiceEntity>(entityName: "APIServiceEntity")
         fetchRequest.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [
             NSPredicate(format: "(type CONTAINS[cd] %@)", "chatgpt"),
-            NSPredicate(format: "(url CONTAINS[cd] %@)", "/chat/completions")
+            NSPredicate(format: "(url CONTAINS[cd] %@)", "/chat/completions"),
         ])
 
         let legacyServices: [APIServiceEntity]
@@ -594,7 +630,8 @@ class DatabasePatcher {
             return
         }
 
-        let defaultServiceName = AppConstants.defaultApiConfigurations[AppConstants.defaultApiType]?.name
+        let defaultServiceName =
+            AppConstants.defaultApiConfigurations[AppConstants.defaultApiType]?.name
             ?? "OpenAI"
 
         var updatedCount = 0
@@ -618,8 +655,9 @@ class DatabasePatcher {
                 }
 
                 if let currentName = service.name,
-                   ["Chat GPT", "ChatGPT", "OpenAI - Completions"]
-                   .contains(where: { currentName.caseInsensitiveCompare($0) == .orderedSame }) {
+                    ["Chat GPT", "ChatGPT", "OpenAI - Completions"]
+                        .contains(where: { currentName.caseInsensitiveCompare($0) == .orderedSame })
+                {
                     if currentName != defaultServiceName {
                         service.name = defaultServiceName
                         serviceUpdated = true
@@ -644,7 +682,8 @@ class DatabasePatcher {
             return
         }
 
-        let message = updatedCount == 1
+        let message =
+            updatedCount == 1
             ? "Updated 1 OpenAI Chat Completions API service to the Responses API (latest features enabled)."
             : "Updated \(updatedCount) OpenAI Chat Completions API services to the Responses API (latest features enabled)."
 
@@ -706,7 +745,7 @@ class DatabasePatcher {
             }
         }
     }
-    
+
     static func migrateExistingConfiguration(context: NSManagedObjectContext, persistence: PersistenceController) {
         let apiServiceManager = APIServiceManager(viewContext: context)
         if persistence.getMetadata(forKey: AppConstants.apiServiceMigrationCompletedKey) as? Bool == true {
@@ -718,7 +757,7 @@ class DatabasePatcher {
             persistence.setMetadata(value: true, forKey: AppConstants.apiServiceMigrationCompletedKey)
             return
         }
-        
+
         guard let apiUrl = defaults.string(forKey: "apiUrl"), apiUrl.isEmpty == false else {
             // No legacy config found, just mark migration as completed in metadata
             persistence.setMetadata(value: true, forKey: AppConstants.apiServiceMigrationCompletedKey)
@@ -758,8 +797,9 @@ class DatabasePatcher {
         )
 
         if let token = defaults.string(forKey: "gptToken"),
-           token.isEmpty == false,
-           let serviceId = apiService.id {
+            token.isEmpty == false,
+            let serviceId = apiService.id
+        {
             print("Token found: \(token)")
             try? TokenManager.setToken(token, for: serviceId.uuidString)
             defaults.set("", forKey: "gptToken")
@@ -876,7 +916,8 @@ class DatabasePatcher {
                     print("Error saving ID backfill: \(error)")
                     context.rollback()
                 }
-            } else {
+            }
+            else {
                 saveSucceeded = true
             }
         }
@@ -920,14 +961,14 @@ class DatabasePatcher {
                     let messageRequest = NSFetchRequest<MessageEntity>(entityName: "MessageEntity")
                     messageRequest.predicate = NSPredicate(format: "chat == %@", chat)
                     messageRequest.sortDescriptors = [
-                        NSSortDescriptor(key: "timestamp", ascending: true),
+                        NSSortDescriptor(key: "timestamp", ascending: true)
                     ]
 
                     let fetchedMessages = try context.fetch(messageRequest)
 
                     let messages = fetchedMessages.sorted { lhs, rhs in
-                        let lhsDate = lhs.timestamp
-                        let rhsDate = rhs.timestamp
+                        let lhsDate = lhs.timestamp ?? .distantPast
+                        let rhsDate = rhs.timestamp ?? .distantPast
                         if lhsDate == rhsDate {
                             return lhs.objectID.uriRepresentation().absoluteString
                                 < rhs.objectID.uriRepresentation().absoluteString
@@ -954,7 +995,7 @@ class DatabasePatcher {
                     }
 
                     if let lastAttr = chatEntityDesc?.attributesByName["lastSequence"],
-                       lastAttr.attributeType == .integer64AttributeType
+                        lastAttr.attributeType == .integer64AttributeType
                     {
                         let currentLast = (chat.value(forKey: "lastSequence") as? Int64) ?? 0
                         if currentLast != sequence {
