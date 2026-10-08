@@ -85,6 +85,23 @@ class OpenAIResponsesHandler: OpenAIHandlerBase, APIService {
                 defer { self.activeStreamTask = nil }
                 do {
                     let (stream, response) = try await session.bytes(for: request)
+                    if let httpResponse = response as? HTTPURLResponse,
+                        [404, 405].contains(httpResponse.statusCode)
+                    {
+                        do {
+                            let message = try await self.sendNonStreamingFallback(
+                                requestMessages: requestMessages,
+                                temperature: temperature
+                            )
+                            continuation.yield(message)
+                            continuation.finish()
+                        }
+                        catch {
+                            continuation.finish(throwing: error)
+                        }
+                        return
+                    }
+
                     let result = self.handleAPIResponse(response, data: nil, error: nil)
                     switch result {
                     case .failure(let error):
@@ -164,6 +181,30 @@ class OpenAIResponsesHandler: OpenAIHandlerBase, APIService {
             }
         }
     }
+    private func sendNonStreamingFallback(
+        requestMessages: [[String: String]],
+        temperature: Float
+    ) async throws -> String {
+        let request = prepareRequest(
+            requestMessages: requestMessages,
+            temperature: temperature,
+            stream: false,
+            includeTemperature: shouldSendTemperature()
+        )
+        let (data, response) = try await session.data(for: request)
+        switch handleAPIResponse(response, data: data, error: nil) {
+        case .success(let responseData):
+            guard let responseData,
+                let (message, _) = parseJSONResponse(data: responseData)
+            else {
+                throw APIError.decodingFailed("Failed to parse non-streaming fallback response")
+            }
+            return message
+        case .failure(let error):
+            throw error
+        }
+    }
+
 
     func fetchModels() async throws -> [AIModel] {
         var base = baseURL

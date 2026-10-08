@@ -190,6 +190,55 @@ final class ChatmiceTests: XCTestCase {
         XCTAssertNil(messages[0].timestamp)
     }
 
+    func testOpenAIResponsesFallsBackWhenStreamingIsUnsupported() async throws {
+        var requests: [Bool] = []
+        ResponsesFallbackURLProtocol.requestHandler = { request in
+            let body = try XCTUnwrap(request.httpBody)
+            let json = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+            let isStreaming = json["stream"] as? Bool == true
+            requests.append(isStreaming)
+
+            let status = isStreaming ? 404 : 200
+            let response = HTTPURLResponse(
+                url: try XCTUnwrap(request.url),
+                statusCode: status,
+                httpVersion: nil,
+                headerFields: ["Content-Type": "application/json"]
+            )!
+            let payload = isStreaming
+                ? #"{"error":{"message":"streaming unsupported"}}"#
+                : #"{"output_text":"pong"}"#
+            return (response, Data(payload.utf8))
+        }
+        defer { ResponsesFallbackURLProtocol.requestHandler = nil }
+
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [ResponsesFallbackURLProtocol.self]
+        let handler = OpenAIResponsesHandler(
+            config: APIServiceConfig(
+                name: "HAI OpenAI",
+                apiUrl: URL(string: "http://127.0.0.1:6655/openai/v1")!,
+                apiKey: "test-key",
+                model: "gpt-5.6-luna",
+                type: "openai-responses"
+            ),
+            session: URLSession(configuration: configuration),
+            imageGenerationSupported: false
+        )
+
+        let stream = try await handler.sendMessageStream(
+            [["role": "user", "content": "ping"]],
+            temperature: 0.7
+        )
+        var result = ""
+        for try await chunk in stream {
+            result += chunk
+        }
+
+        XCTAssertEqual(result, "pong")
+        XCTAssertEqual(requests, [true, false])
+    }
+
 }
 
 private final class DelayedStreamingAPIService: APIService {
@@ -220,4 +269,29 @@ private final class DelayedStreamingAPIService: APIService {
 
     func fetchModels() async throws -> [AIModel] { [] }
     func cancelCurrentRequest() {}
+}
+
+private final class ResponsesFallbackURLProtocol: URLProtocol {
+    static var requestHandler: ((URLRequest) throws -> (HTTPURLResponse, Data))?
+
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        guard let requestHandler = Self.requestHandler else {
+            client?.urlProtocol(self, didFailWithError: URLError(.badServerResponse))
+            return
+        }
+        do {
+            let (response, data) = try requestHandler(request)
+            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didLoad: data)
+            client?.urlProtocolDidFinishLoading(self)
+        }
+        catch {
+            client?.urlProtocol(self, didFailWithError: error)
+        }
+    }
+
+    override func stopLoading() {}
 }
