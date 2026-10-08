@@ -101,14 +101,20 @@ class ChatmiceEngine: APIService, AgentActivityReporting {
         }
     }
 
+    static func shouldUseAgentRequestPath(toolsEnabled: Bool, searchMode: SearchMode) -> Bool {
+        toolsEnabled || searchMode != .off
+    }
+
     func sendMessageStream(
         _ requestMessages: [[String: String]],
         temperature: Float
     ) async throws -> AsyncThrowingStream<String, Error> {
         let toolsEnabled = (UserDefaults.standard.object(forKey: Self.toolsEnabledKey) as? Bool) ?? true
+        let searchMode = activeSearchMode
 
-        // If tools disabled, route directly to base service
-        guard toolsEnabled else {
+        // Search is independent from general agent tools. Only bypass the agent
+        // request path when both capabilities are disabled.
+        guard Self.shouldUseAgentRequestPath(toolsEnabled: toolsEnabled, searchMode: searchMode) else {
             return try await baseService.sendMessageStream(requestMessages, temperature: temperature)
         }
         return AsyncThrowingStream { continuation in
@@ -212,18 +218,23 @@ class ChatmiceEngine: APIService, AgentActivityReporting {
         }
         let box = ToolBox()
         let defaults = UserDefaults.standard
+        let toolsEnabled = (defaults.object(forKey: Self.toolsEnabledKey) as? Bool) ?? true
         let disabledSources = ToolSelectionStore.disabledSourceIDs(for: chatID)
         let fileToolsEnabled =
-            (defaults.object(forKey: "chatmiceFileToolsEnabled") as? Bool ?? true)
+            toolsEnabled
+            && (defaults.object(forKey: "chatmiceFileToolsEnabled") as? Bool ?? true)
             && !disabledSources.contains(ToolSourceID.fileTool)
         let codeExecutionEnabled =
-            (defaults.object(forKey: Self.bashEnabledKey) as? Bool ?? true)
+            toolsEnabled
+            && (defaults.object(forKey: Self.bashEnabledKey) as? Bool ?? true)
             && !disabledSources.contains(ToolSourceID.codeExecution)
         let skillsEnabled =
-            (defaults.object(forKey: Self.skillsEnabledKey) as? Bool ?? true)
+            toolsEnabled
+            && (defaults.object(forKey: Self.skillsEnabledKey) as? Bool ?? true)
             && !disabledSources.contains(ToolSourceID.skills)
         let computerEnabled =
-            (defaults.object(forKey: Self.computerEnabledKey) as? Bool ?? false)
+            toolsEnabled
+            && (defaults.object(forKey: Self.computerEnabledKey) as? Bool ?? false)
             && !disabledSources.contains(ToolSourceID.computerUse)
         let webSearchSettings = WebSearchSettings.load()
         let searchMode =
@@ -279,12 +290,14 @@ class ChatmiceEngine: APIService, AgentActivityReporting {
             await box.register(WebSearchTool())
             await box.register(WebFetchTool())
         }
-        for tool in await MCPService.shared.allTools(excludingServers: disabledMCPServers) {
-            await box.register(tool)
+        if toolsEnabled {
+            for tool in await MCPService.shared.allTools(excludingServers: disabledMCPServers) {
+                await box.register(tool)
+            }
         }
 
         let registeredDefs = await box.definitions()
-        guard !registeredDefs.isEmpty else {
+        if registeredDefs.isEmpty && !nativeSearchEnabled {
             let stream = try await baseService.sendMessageStream(requestMessages, temperature: temperature)
             for try await chunk in stream {
                 continuation.yield(chunk)
@@ -509,9 +522,14 @@ class ChatmiceEngine: APIService, AgentActivityReporting {
         return "chatgpt"
     }
 
+    private var activeSearchMode: SearchMode {
+        guard let chatID else { return .off }
+        let mode = SearchModeStore.mode(for: chatID)
+        return isSonarModel && mode == .web ? .native : mode
+    }
+
     private var nativeSearchEnabled: Bool {
-        guard let chatID else { return false }
-        return SearchModeStore.mode(for: chatID) == .native
+        activeSearchMode == .native
     }
 
     private var isSonarModel: Bool {

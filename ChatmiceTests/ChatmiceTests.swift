@@ -239,6 +239,13 @@ final class ChatmiceTests: XCTestCase {
         XCTAssertEqual(requests, [true, false])
     }
 
+    func testSearchRoutingIsIndependentFromGeneralTools() {
+        XCTAssertFalse(ChatmiceEngine.shouldUseAgentRequestPath(toolsEnabled: false, searchMode: .off))
+        XCTAssertTrue(ChatmiceEngine.shouldUseAgentRequestPath(toolsEnabled: true, searchMode: .off))
+        XCTAssertTrue(ChatmiceEngine.shouldUseAgentRequestPath(toolsEnabled: false, searchMode: .native))
+        XCTAssertTrue(ChatmiceEngine.shouldUseAgentRequestPath(toolsEnabled: false, searchMode: .web))
+    }
+
 }
 
 private final class DelayedStreamingAPIService: APIService {

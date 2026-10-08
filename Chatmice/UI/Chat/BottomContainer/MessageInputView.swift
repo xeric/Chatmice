@@ -669,7 +669,7 @@ struct MessageInputView: View {
     private var isSearchActive: Bool {
         switch searchMode {
         case .native: return true
-        case .web: return toolsEnabled && isWebSearchConfigured
+        case .web: return isWebSearchConfigured
         case .off: return false
         }
     }
@@ -815,7 +815,6 @@ struct MessageInputView: View {
         guard let chat else { return }
         SearchModeStore.setMode(mode, for: chat.id)
         let externalEnabled = mode == .web
-        if externalEnabled { toolsEnabled = true }
         ToolSelectionStore.setSourceEnabled(externalEnabled, sourceID: ToolSourceID.webSearch, for: chat.id)
         toolSelectionRevision += 1
     }
