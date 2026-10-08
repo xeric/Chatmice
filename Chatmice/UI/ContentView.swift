@@ -42,6 +42,8 @@ struct ContentView: View {
     @AppStorage("lastOpenedChatId") var lastOpenedChatId = ""
     @AppStorage("apiUrl") var apiUrl = AppConstants.apiUrlOpenAIResponses
     @AppStorage(SettingsIndicatorKeys.generalSeen) private var generalSettingsSeen: Bool = false
+    @AppStorage("mainWindowBackgroundOpacity") private var mainWindowBackgroundOpacity: Double = 75
+    @AppStorage("mainWindowBlurLevel") private var mainWindowBlurLevel: Double = 10
     @StateObject private var previewStateManager = PreviewStateManager()
     @StateObject private var activityStore = ChatActivityStore.shared
 
@@ -99,8 +101,9 @@ struct ContentView: View {
                 }
                 .padding(.horizontal, 14)
                 .padding(.vertical, 10)
-                .background(Color(NSColor.controlBackgroundColor).opacity(0.4))
+                .background(Color.clear)
             }
+            .background(Color.clear)
             .navigationSplitViewColumnWidth(
                 min: 180,
                 ideal: 220,
@@ -117,6 +120,7 @@ struct ContentView: View {
                     }
                 }
             }
+            .background(Color.clear)
             .onSubmit(of: .search) {
                 // Handle Enter key in search field - go to next occurrence
                 NotificationCenter.default.post(
@@ -205,6 +209,13 @@ struct ContentView: View {
         }
         .navigationTitle("")
         .ignoresSafeArea(.container, edges: .top)
+        .background {
+            MainGlassBackground(
+                opacity: mainWindowBackgroundOpacity,
+                blurLevel: mainWindowBlurLevel
+            )
+                .ignoresSafeArea()
+        }
 
         .onChange(of: scenePhase) { _, phase in
             activityStore.updatePresentationContext(
@@ -302,7 +313,7 @@ struct ContentView: View {
         .padding(.leading, 18)
         .padding(.trailing, 8)
         .frame(height: 52)
-        .background(Color(NSColor.controlBackgroundColor))
+        .background(Color.clear)
     }
 
     @ViewBuilder
@@ -716,7 +727,7 @@ struct PreviewPane: View {
 
             HTMLPreviewView(htmlContent: stateManager.previewContent)
         }
-        .background(Color(NSColor.windowBackgroundColor))
+        .background(Color.clear)
         .gesture(
             DragGesture()
                 .onChanged { gesture in
@@ -732,6 +743,21 @@ struct PreviewPane: View {
         )
     }
 
+}
+
+private struct MainGlassBackground: View {
+    let opacity: Double
+    let blurLevel: Double
+
+    var body: some View {
+        ZStack {
+            Rectangle()
+                .fill(.regularMaterial)
+                .opacity(blurLevel / 10)
+            Color(NSColor.windowBackgroundColor)
+                .opacity(opacity / 100)
+        }
+    }
 }
 
 struct WindowAccessor: NSViewRepresentable {
@@ -758,6 +784,10 @@ struct WindowAccessor: NSViewRepresentable {
     private func configure(_ window: NSWindow) {
         window.styleMask.insert(.fullSizeContentView)
         window.titlebarAppearsTransparent = true
+        window.isOpaque = false
+        window.backgroundColor = .clear
+        window.contentView?.wantsLayer = true
+        window.contentView?.layer?.backgroundColor = NSColor.clear.cgColor
         window.isMovableByWindowBackground = false
         window.titleVisibility = .hidden
         window.contentView?.additionalSafeAreaInsets = NSEdgeInsets(top: -52, left: 0, bottom: 0, right: 0)

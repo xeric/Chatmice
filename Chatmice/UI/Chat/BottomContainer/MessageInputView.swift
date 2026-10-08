@@ -28,6 +28,12 @@ private func settingsShortcutButton(help: String, action: @escaping () -> Void) 
 private struct ToolSelectionPopover: View {
     let chat: ChatEntity
 
+    init(chat: ChatEntity, sources: [ToolSourceDescriptor], skills: [SkillInfo]) {
+        self.chat = chat
+        _sources = State(initialValue: sources)
+        _skills = State(initialValue: skills)
+    }
+
     private var chatID: UUID { chat.id }
 
     @AppStorage("chatmiceToolsEnabled") private var toolsEnabled = true
@@ -129,7 +135,6 @@ private struct ToolSelectionPopover: View {
         .foregroundStyle(Color.primary)
         .padding(12)
         .frame(width: 320)
-        .task { await reloadSources() }
         .onChange(of: mcpServersJSON) { _, _ in reloadSourcesLater() }
         .onChange(of: toolsEnabled) { _, _ in reloadSourcesLater() }
         .onChange(of: fileToolsEnabled) { _, _ in reloadSourcesLater() }
@@ -528,6 +533,9 @@ struct MessageInputView: View {
     @State private var photoPickerItems: [PhotosPickerItem] = []
     @State private var isShowingToolsPopover = false
     @State private var isShowingSearchPopover = false
+    @State private var toolPopoverSources: [ToolSourceDescriptor] = []
+    @State private var toolPopoverSkills: [SkillInfo] = []
+    @State private var isLoadingToolsPopover = false
     @AppStorage("chatmiceToolsEnabled") private var toolsEnabled = true
     @AppStorage(WebSearchSettings.storageKey) private var webSearchSettingsData = Data()
     @State private var toolSelectionRevision = 0
@@ -981,7 +989,7 @@ struct MessageInputView: View {
                 .fill(Color.primary.opacity(0.3))
                 .frame(width: 1, height: 14)
 
-            Button(action: { isShowingToolsPopover.toggle() }) {
+            Button(action: toggleToolsPopover) {
                 Image(systemName: "chevron.down")
                     .font(.system(size: 8, weight: .semibold))
                     .frame(width: 22, height: 22)
@@ -991,7 +999,11 @@ struct MessageInputView: View {
             .help("Choose tools for this chat")
             .popover(isPresented: $isShowingToolsPopover, arrowEdge: .bottom) {
                 if let chat {
-                    ToolSelectionPopover(chat: chat)
+                    ToolSelectionPopover(
+                        chat: chat,
+                        sources: toolPopoverSources,
+                        skills: toolPopoverSkills
+                    )
                 }
             }
         }
@@ -1006,6 +1018,27 @@ struct MessageInputView: View {
                 .overlay(Capsule().stroke(toolsEnabled ? Color.accentColor : Color.clear, lineWidth: 1))
         )
         .clipShape(Capsule())
+    }
+
+    private func toggleToolsPopover() {
+        if isShowingToolsPopover {
+            isShowingToolsPopover = false
+            return
+        }
+
+        guard !isLoadingToolsPopover else { return }
+        isLoadingToolsPopover = true
+
+        Task { @MainActor in
+            async let loadedSources = ToolSourceCatalog.load()
+            async let loadedSkills = SkillStore().allSkills()
+            let (sources, skills) = await (loadedSources, loadedSkills)
+
+            toolPopoverSources = sources
+            toolPopoverSkills = skills
+            isLoadingToolsPopover = false
+            isShowingToolsPopover = true
+        }
     }
 
     private var micButton: some View {

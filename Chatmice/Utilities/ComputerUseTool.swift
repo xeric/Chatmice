@@ -50,13 +50,82 @@ enum ComputerUsePermissions {
     }
 }
 
+struct EncodedScreenshot {
+    let data: Data
+    let width: Int
+    let height: Int
+    let quality: CGFloat
+}
+
+enum ScreenshotImageEncoder {
+    static let maximumDimension = 2_048
+    static let maximumBytes = 750 * 1_024
+
+    private static let minimumDimension = 768
+    private static let qualitySteps: [CGFloat] = [0.88, 0.80, 0.72, 0.64, 0.54, 0.44]
+
+    static func encode(_ image: CGImage) throws -> EncodedScreenshot {
+        var dimensionLimit = min(max(image.width, image.height), maximumDimension)
+
+        while true {
+            let resized = try resize(image, maximumDimension: dimensionLimit)
+            for quality in qualitySteps {
+                let rep = NSBitmapImageRep(cgImage: resized)
+                guard let data = rep.representation(using: .jpeg, properties: [.compressionFactor: quality]) else {
+                    continue
+                }
+                if data.count <= maximumBytes {
+                    return EncodedScreenshot(
+                        data: data,
+                        width: resized.width,
+                        height: resized.height,
+                        quality: quality
+                    )
+                }
+            }
+
+            guard dimensionLimit > minimumDimension else { break }
+            dimensionLimit = max(minimumDimension, Int((CGFloat(dimensionLimit) * 0.78).rounded(.down)))
+        }
+
+        throw ToolError.executionFailed(
+            "Screenshot could not be compressed below \(maximumBytes / 1_024) KB"
+        )
+    }
+
+    private static func resize(_ image: CGImage, maximumDimension: Int) throws -> CGImage {
+        let scale = min(1, CGFloat(maximumDimension) / CGFloat(max(image.width, image.height)))
+        let width = max(1, Int((CGFloat(image.width) * scale).rounded()))
+        let height = max(1, Int((CGFloat(image.height) * scale).rounded()))
+        guard width != image.width || height != image.height else { return image }
+
+        guard let bitmap = CGContext(
+            data: nil,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: 0,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue
+        ) else {
+            throw ToolError.executionFailed("Failed to create screenshot image context")
+        }
+        bitmap.interpolationQuality = .high
+        bitmap.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+        guard let resized = bitmap.makeImage() else {
+            throw ToolError.executionFailed("Failed to resize screenshot")
+        }
+        return resized
+    }
+}
+
 public struct ScreenshotTool: AgentTool {
     public init() {}
 
     public let definition = ToolDefinition(
         name: "computer.screenshot",
         description:
-            "Captures a screenshot of the main display and returns a base64 PNG data URL. No parameters required.",
+            "Captures a screenshot of the main display and returns a size-bounded JPEG data URL for visual analysis. No parameters required.",
         parameters: .object(properties: [:], required: [], additionalProperties: nil)
     )
 
@@ -74,13 +143,12 @@ public struct ScreenshotTool: AgentTool {
             )
         }
 
-        let rep = NSBitmapImageRep(cgImage: image)
-        guard let pngData = rep.representation(using: .png, properties: [:]) else {
-            throw ToolError.executionFailed("Failed to convert image to PNG format")
-        }
-
-        let b64 = pngData.base64EncodedString()
-        return "data:image/png;base64,\(b64)"
+        let encoded = try ScreenshotImageEncoder.encode(image)
+        let quality = String(format: "%.2f", encoded.quality)
+        AppLogger.shared.info(
+            "computer.screenshot encoded width=\(encoded.width) height=\(encoded.height) bytes=\(encoded.data.count) quality=\(quality)"
+        )
+        return "data:image/jpeg;base64,\(encoded.data.base64EncodedString())"
     }
 }
 

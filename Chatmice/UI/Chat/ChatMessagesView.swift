@@ -37,9 +37,13 @@ struct ChatMessagesView: View {
         "chat-bottom-\(chat.id.uuidString)"
     }
 
+    private var errorAnchorID: String {
+        "chat-error-\(chat.id.uuidString)"
+    }
+
     var body: some View {
-        ScrollView {
-            ScrollViewReader { scrollView in
+        ScrollViewReader { scrollView in
+            ScrollView {
                 LazyVStack {
                     SystemMessageBubbleView(
                         message: chat.systemMessage,
@@ -82,7 +86,7 @@ struct ChatMessagesView: View {
                         AssistantTurnActivityView(snapshot: activitySnapshot)
                             .id(activityAnchorID)
                     }
-                    else if let error = currentError {
+                    if let error = currentError {
                         let bubbleContent = ChatBubbleContent(
                             message: "",
                             own: false,
@@ -96,7 +100,7 @@ struct ChatMessagesView: View {
                         )
 
                         ChatBubbleView(content: bubbleContent, searchText: $searchText)
-                            .id(-2)
+                            .id(errorAnchorID)
                     }
 
                     Color.clear
@@ -120,6 +124,7 @@ struct ChatMessagesView: View {
                 }
                 .onPreferenceChange(ChatContentHeightPreferenceKey.self) { _ in
                     guard restoringBottomForChatID == chat.objectID else { return }
+                    guard bottomRestoreDeadline.map({ Date() < $0 }) == true else { return }
                     continueBottomRestore(using: scrollView)
                 }
                 .onDisappear {
@@ -176,6 +181,14 @@ struct ChatMessagesView: View {
                         scrollView.scrollTo(bottomAnchorID, anchor: .bottom)
                     }
                 }
+                .onChange(of: currentError?.timestamp) { _, timestamp in
+                    guard timestamp != nil else { return }
+                    DispatchQueue.main.async {
+                        withAnimation(.easeOut(duration: 0.25)) {
+                            scrollView.scrollTo(errorAnchorID, anchor: .bottom)
+                        }
+                    }
+                }
                 .onReceive(
                     NotificationCenter.default.publisher(for: NSNotification.Name("NonStreamingMessageCompleted"))
                 ) { notification in
@@ -201,9 +214,9 @@ struct ChatMessagesView: View {
                 }
             }
             .id("chatContainer")
+            .defaultScrollAnchor(.bottom)
+            .padding(.bottom, 6)
         }
-        .defaultScrollAnchor(.bottom)
-        .padding(.bottom, 6)
     }
 
     private func beginBottomRestore(using scrollView: ScrollViewProxy) {

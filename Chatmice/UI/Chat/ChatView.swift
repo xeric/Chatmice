@@ -47,7 +47,7 @@ struct ChatView: View {
     
     // Environment
     @Environment(\.colorScheme) private var colorScheme
-    var backgroundColor = Color(NSColor.controlBackgroundColor)
+    var backgroundColor = Color.clear
     private let reasoningTimer = Timer.publish(every: 0.25, on: .main, in: .common).autoconnect()
     
     // MARK: - Initialization

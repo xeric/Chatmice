@@ -48,7 +48,7 @@ struct ErrorMessage {
         case .rateLimited:
             return "Too many requests. Please wait a moment"
         case .serverError(let message):
-            return message
+            return Self.readableServerError(message)
         case .unknown(let message):
             return message
         case .noApiService(let message):
@@ -56,6 +56,38 @@ struct ErrorMessage {
         case .attachmentNotReady(let message):
             return message
         }
+    }
+
+    private static func readableServerError(_ message: String) -> String {
+        let upstreamMessage = extractedUpstreamMessage(from: message) ?? message
+        if upstreamMessage.localizedCaseInsensitiveContains("prompt is too long") {
+            return "The request exceeded the model's context limit. The conversation or attached media is too large. Reduce attachments, start a new chat, or retry."
+        }
+        if upstreamMessage.localizedCaseInsensitiveContains("context length")
+            || upstreamMessage.localizedCaseInsensitiveContains("maximum context")
+        {
+            return "The request exceeded the model's context limit. Shorten the conversation or attachments and retry."
+        }
+        return upstreamMessage
+    }
+
+    private static func extractedUpstreamMessage(from raw: String) -> String? {
+        guard let jsonStart = raw.firstIndex(of: "{") else { return nil }
+        let json = String(raw[jsonStart...])
+        guard let data = json.data(using: .utf8),
+            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return nil }
+
+        if let nested = object["error"] as? [String: Any],
+            let message = nested["message"] as? String, !message.isEmpty
+        {
+            return message
+        }
+        for key in ["errorMessage", "message", "detail", "error_description"] {
+            guard let value = object[key] as? String, !value.isEmpty else { continue }
+            return extractedUpstreamMessage(from: value) ?? value
+        }
+        return nil
     }
 
     var canRetry: Bool {

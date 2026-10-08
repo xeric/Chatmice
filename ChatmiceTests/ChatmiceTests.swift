@@ -164,6 +164,63 @@ final class ChatmiceTests: XCTestCase {
         XCTAssertLessThanOrEqual(max(preview.size.width, preview.size.height), 1_600)
     }
 
+    func testScreenshotDataURLBecomesModelImagePayload() throws {
+        let png = Data([0x89, 0x50, 0x4E, 0x47])
+        let output = "data:image/png;base64,\(png.base64EncodedString())"
+
+        let payload = try XCTUnwrap(ChatmiceEngine.toolImagePayload(from: output))
+
+        XCTAssertEqual(payload.mediaType, "image/png")
+        XCTAssertEqual(Data(base64Encoded: payload.data), png)
+        XCTAssertNil(ChatmiceEngine.toolImagePayload(from: "Screenshot complete"))
+        XCTAssertNil(ChatmiceEngine.toolImagePayload(from: "data:image/png;base64,not-base64"))
+    }
+
+    func testScreenshotEncoderBalancesDimensionsQualityAndPayloadBudget() throws {
+        let source = try XCTUnwrap(
+            NSBitmapImageRep(
+                bitmapDataPlanes: nil,
+                pixelsWide: 3_440,
+                pixelsHigh: 1_440,
+                bitsPerSample: 8,
+                samplesPerPixel: 4,
+                hasAlpha: true,
+                isPlanar: false,
+                colorSpaceName: .deviceRGB,
+                bytesPerRow: 0,
+                bitsPerPixel: 0
+            )
+        )
+        let image = try XCTUnwrap(source.cgImage)
+
+        let encoded = try ScreenshotImageEncoder.encode(image)
+
+        XCTAssertLessThanOrEqual(max(encoded.width, encoded.height), ScreenshotImageEncoder.maximumDimension)
+        XCTAssertLessThanOrEqual(encoded.data.count, ScreenshotImageEncoder.maximumBytes)
+        XCTAssertGreaterThanOrEqual(encoded.quality, 0.44)
+        XCTAssertNotNil(NSImage(data: encoded.data))
+    }
+
+    func testPromptTooLongServerErrorHasActionableMessage() {
+        let error = ErrorMessage(
+            type: .serverError(#"HTTP 400: {"errorMessage":"{\"message\":\"prompt is too long\"}"}"#),
+            timestamp: Date()
+        )
+
+        XCTAssertEqual(error.displayTitle, "Server Error")
+        XCTAssertTrue(error.displayMessage.contains("context limit"))
+        XCTAssertTrue(error.displayMessage.contains("Reduce attachments"))
+    }
+
+    func testGenericUpstreamErrorPreservesProviderMessage() {
+        let error = ErrorMessage(
+            type: .serverError(#"HTTP 502: {"error":{"message":"Upstream gateway unavailable"}}"#),
+            timestamp: Date()
+        )
+
+        XCTAssertEqual(error.displayMessage, "Upstream gateway unavailable")
+    }
+
     @MainActor
     func testMessageWithMissingTimestampRemainsRenderableForRetry() {
         let persistence = PersistenceController(inMemory: true)

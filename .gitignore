@@ -43,3 +43,4 @@ Chatmice.xcodeproj/project.xcworkspace/xcuserdata/*/UserInterfaceState.xcusersta
 # Local agent/tool configs
 .omp/
 .cmux/
+/AGENTS.md

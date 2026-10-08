@@ -12,6 +12,8 @@ struct TabAppearanceSettingsView: View {
     @AppStorage("preferredColorScheme") private var preferredColorSchemeRaw: Int = 0
     @AppStorage("codeFont") private var codeFont: String = AppConstants.firaCode
     @AppStorage("showAssistantNameInSidebar") private var showAssistantNameInSidebar: Bool = true
+    @AppStorage("mainWindowBackgroundOpacity") private var mainWindowBackgroundOpacity: Double = 75
+    @AppStorage("mainWindowBlurLevel") private var mainWindowBlurLevel: Double = 10
     @State private var selectedColorSchemeRaw: Int = 0
 
 
@@ -159,6 +161,39 @@ struct TabAppearanceSettingsView: View {
                 .padding(.vertical, 16)
 
                 Divider()
+            }
+
+            GroupBox {
+                VStack(spacing: 0) {
+                    HStack(spacing: 16) {
+                        Text("Background Opacity")
+                        Spacer(minLength: 24)
+                        Slider(value: $mainWindowBackgroundOpacity, in: 50...100, step: 1)
+                            .frame(width: 260)
+                        Text("\(Int(mainWindowBackgroundOpacity))%")
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                            .frame(width: 38, alignment: .trailing)
+                    }
+                    .padding(.vertical, 12)
+
+                    Divider()
+
+                    HStack(spacing: 16) {
+                        Text("Background Blur")
+                        Spacer(minLength: 24)
+                        Slider(value: $mainWindowBlurLevel, in: 1...10, step: 1)
+                            .frame(width: 260)
+                        Text("\(Int(mainWindowBlurLevel))")
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                            .frame(width: 38, alignment: .trailing)
+                    }
+                    .padding(.vertical, 12)
+                }
+                .padding(.horizontal, 8)
+            } label: {
+                Label("Window Background", systemImage: "square.3.layers.3d")
             }
 
             GroupBox {

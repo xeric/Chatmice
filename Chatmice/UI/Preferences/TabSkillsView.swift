@@ -917,7 +917,7 @@ private struct DefaultToolListSettingsView: View {
                                         Spacer()
                                     }
                                 }
-                                .toggleStyle(.checkbox)
+                                .toggleStyle(.switch)
                                 .controlSize(.small)
                                 .disabled(!source.isAvailable)
                                 .padding(.vertical, 3)

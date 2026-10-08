@@ -341,7 +341,10 @@ class ChatmiceEngine: APIService, AgentActivityReporting {
 
         var agentInstructions = [
             "When using tools, briefly tell the user what you are about to verify before each tool-call round. "
-                + "Keep it to one concise sentence and report only user-facing progress, never hidden chain-of-thought."
+                + "Keep it to one concise sentence and report only user-facing progress, never hidden chain-of-thought.",
+            "After every tool-call round, use the returned results to continue working on the user's original request. "
+                + "Do not stop after showing tool output; finish with a direct answer unless another tool call is required."
+
         ]
 
         if codeExecutionEnabled {
@@ -390,6 +393,8 @@ class ChatmiceEngine: APIService, AgentActivityReporting {
                 }
             }
         )
+        var emptyPostToolRetries = 0
+
 
         var rounds = 0
         let maxRounds = 10
@@ -407,8 +412,22 @@ class ChatmiceEngine: APIService, AgentActivityReporting {
                 temperature: temperature,
                 onText: { continuation.yield($0) }
             )
+            AppLogger.shared.info(
+                "engine.turn round=\(rounds) provider=\(serviceType) textChars=\(rawResult.text.count) toolCalls=\(rawResult.toolCalls.count)"
+            )
 
             if rawResult.toolCalls.isEmpty {
+                if rawResult.text.isEmpty, conversationHistory.last?.isToolResults == true {
+                    guard emptyPostToolRetries == 0 else { throw APIError.invalidResponse }
+                    emptyPostToolRetries += 1
+                    conversationHistory.append(
+                        .text(
+                            role: "system",
+                            content: "Use the preceding tool result to answer the user's original request now."
+                        )
+                    )
+                    continue
+                }
                 if !rawResult.text.isEmpty && !rawResult.textWasStreamed {
                     continuation.yield(rawResult.text)
                 }
@@ -441,6 +460,9 @@ class ChatmiceEngine: APIService, AgentActivityReporting {
                         context: context
                     )
                     result = ToolExecutionResult(call: call, output: output, isError: false)
+                    AppLogger.shared.info(
+                        "engine.tool.completed round=\(rounds) name=\(registeredName) outputChars=\(output.count) image=\(Self.toolImagePayload(from: output) != nil)"
+                    )
                 }
                 catch {
                     result = ToolExecutionResult(
@@ -482,6 +504,11 @@ class ChatmiceEngine: APIService, AgentActivityReporting {
             if case .text(let role, _) = self {
                 return role == "system"
             }
+            return false
+        }
+
+        var isToolResults: Bool {
+            if case .toolResults = self { return true }
             return false
         }
 
@@ -534,6 +561,23 @@ class ChatmiceEngine: APIService, AgentActivityReporting {
         var toolCalls: [ToolCall]
         var textWasStreamed = false
     }
+    struct ToolImagePayload: Equatable {
+        let mediaType: String
+        let data: String
+    }
+
+    static func toolImagePayload(from output: String) -> ToolImagePayload? {
+        guard output.hasPrefix("data:image/"),
+            let separator = output.range(of: ";base64,"),
+            let mediaTypeSeparator = output.firstIndex(of: ":")
+        else { return nil }
+
+        let mediaType = String(output[output.index(after: mediaTypeSeparator)..<separator.lowerBound])
+        let data = String(output[separator.upperBound...])
+        guard !mediaType.isEmpty, !data.isEmpty, Data(base64Encoded: data) != nil else { return nil }
+        return ToolImagePayload(mediaType: mediaType, data: data)
+    }
+
 
     private var serviceType: String {
         if let c = config as? APIServiceConfig { return c.type.lowercased() }
@@ -1276,13 +1320,30 @@ class ChatmiceEngine: APIService, AgentActivityReporting {
                 )
                 return blocks.isEmpty ? nil : ["role": "assistant", "content": blocks]
             case .toolResults(let results):
-                let blocks = results.map { result in
-                    [
+                let blocks = results.map { result -> [String: Any] in
+                    let content: Any
+                    if !result.isError, let image = Self.toolImagePayload(from: result.output) {
+                        content = [
+                            ["type": "text", "text": "Screenshot captured for visual analysis."],
+                            [
+                                "type": "image",
+                                "source": [
+                                    "type": "base64",
+                                    "media_type": image.mediaType,
+                                    "data": image.data,
+                                ],
+                            ],
+                        ] as [[String: Any]]
+                    }
+                    else {
+                        content = result.output
+                    }
+                    return [
                         "type": "tool_result",
                         "tool_use_id": result.call.id,
-                        "content": result.output,
+                        "content": content,
                         "is_error": result.isError,
-                    ] as [String: Any]
+                    ]
                 }
                 return blocks.isEmpty ? nil : ["role": "user", "content": blocks]
             }
@@ -1317,6 +1378,9 @@ class ChatmiceEngine: APIService, AgentActivityReporting {
         }
 
         req.httpBody = try JSONSerialization.data(withJSONObject: body)
+        AppLogger.shared.info(
+            "engine.claude.request messages=\(claudeMsgs.count) tools=\(claudeTools.count) bodyBytes=\(req.httpBody?.count ?? 0)"
+        )
         req.setValue("text/event-stream", forHTTPHeaderField: "Accept")
         let (bytes, response) = try await session.bytes(for: req)
 
