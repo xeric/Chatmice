@@ -248,9 +248,7 @@ class ChatmiceEngine: APIService, AgentActivityReporting {
             chatID.map {
                 SearchModeStore.mode(for: $0)
             } ?? .off
-        let webSearchEnabled =
-            webSearchSettings.enabled && searchMode == .web
-            && !disabledSources.contains(ToolSourceID.webSearch)
+        let webSearchEnabled = webSearchSettings.enabled && searchMode == .web
         let disabledMCPServers = Set(disabledSources.compactMap(ToolSourceID.mcpServerName(from:)))
         let approvalMode =
             BashApprovalMode(rawValue: defaults.string(forKey: Self.bashApprovalModeKey) ?? "")

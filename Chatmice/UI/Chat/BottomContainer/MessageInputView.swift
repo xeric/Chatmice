@@ -32,7 +32,7 @@ private struct ToolSelectionPopover: View {
     }
 
     private var internalSources: [ToolSourceDescriptor] {
-        sources.filter { [.fileTool, .codeExecution, .computerUse, .webSearch].contains($0.kind) }
+        sources.filter { [.fileTool, .codeExecution, .computerUse].contains($0.kind) }
     }
 
     private var skillSources: [ToolSourceDescriptor] {
@@ -248,15 +248,9 @@ private struct ToolSelectionPopover: View {
         Binding(
             get: {
                 _ = revision
-                if source.id == ToolSourceID.webSearch {
-                    return SearchModeStore.mode(for: chatID) == .web
-                }
                 return !ToolSelectionStore.disabledSourceIDs(for: chatID).contains(source.id)
             },
             set: { enabled in
-                if source.id == ToolSourceID.webSearch {
-                    SearchModeStore.setMode(enabled ? .web : .off, for: chatID)
-                }
                 ToolSelectionStore.setSourceEnabled(enabled, sourceID: source.id, for: chatID)
                 revision += 1
             }
@@ -814,8 +808,6 @@ struct MessageInputView: View {
     private func setSearchMode(_ mode: SearchMode) {
         guard let chat else { return }
         SearchModeStore.setMode(mode, for: chat.id)
-        let externalEnabled = mode == .web
-        ToolSelectionStore.setSourceEnabled(externalEnabled, sourceID: ToolSourceID.webSearch, for: chat.id)
         toolSelectionRevision += 1
     }
 

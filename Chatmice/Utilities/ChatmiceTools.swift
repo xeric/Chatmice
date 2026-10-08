@@ -14,7 +14,6 @@ enum ToolSourceID {
     static let codeExecution = "builtin:code-execution"
     static let skills = "builtin:skills"
     static let computerUse = "builtin:computer-use"
-    static let webSearch = "builtin:web-search"
     static func skill(_ identifier: String) -> String {
         "skill:\(identifier)"
     }
@@ -40,7 +39,6 @@ enum ToolSourceKind: Sendable, Equatable {
     case codeExecution
     case skills
     case computerUse
-    case webSearch
     case mcp
 
     var systemImage: String {
@@ -49,7 +47,6 @@ enum ToolSourceKind: Sendable, Equatable {
         case .codeExecution: return "terminal"
         case .skills: return "books.vertical"
         case .computerUse: return "display"
-        case .webSearch: return "globe"
         case .mcp: return "server.rack"
         }
     }
@@ -79,7 +76,6 @@ enum ToolSourceCatalog {
             skillsEnabled ?? (defaults.object(forKey: "chatmiceSkillsEnabled") as? Bool ?? true)
         let resolvedComputerEnabled =
             computerEnabled ?? (defaults.object(forKey: "chatmiceComputerEnabled") as? Bool ?? false)
-        let webSearchSettings = WebSearchSettings.load()
         let serverJSON = defaults.string(forKey: "mcpServersJSON") ?? "[]"
         let configs = (try? JSONDecoder().decode([MCPServerConfig].self, from: Data(serverJSON.utf8))) ?? []
         let statuses = await MCPService.shared.statuses()
@@ -115,15 +111,6 @@ enum ToolSourceCatalog {
                 detail: resolvedComputerEnabled ? "Screenshot, mouse, and keyboard" : "Disabled globally",
                 kind: .computerUse,
                 isAvailable: resolvedComputerEnabled
-            ),
-            ToolSourceDescriptor(
-                id: ToolSourceID.webSearch,
-                name: "Web Search",
-                detail: webSearchSettings.enabled
-                    ? "Search with \(webSearchSettings.defaultSearchProvider.name)"
-                    : "Disabled globally",
-                kind: .webSearch,
-                isAvailable: webSearchSettings.enabled
             ),
         ]
 
