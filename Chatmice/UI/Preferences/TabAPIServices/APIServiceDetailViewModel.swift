@@ -72,14 +72,15 @@ class APIServiceDetailViewModel: ObservableObject {
             defaultApiConfiguration = AppConstants.defaultApiConfigurations[type]
             selectedModel = model
 
-            if let serviceID = service.id {
-                let serviceIDString = serviceID.uuidString
-                do {
-                    apiKey = try TokenManager.getToken(for: serviceIDString) ?? ""
-                }
-                catch {
-                    print("Failed to get token: \(error.localizedDescription)")
-                }
+            let serviceID = service.id?.uuidString
+            let resolved = try? TokenManager.resolveToken(
+                preferredIdentifier: service.tokenIdentifier,
+                fallbackIdentifier: serviceID
+            )
+            apiKey = resolved?.token ?? ""
+            if let identifier = resolved?.identifier, identifier != service.tokenIdentifier {
+                service.tokenIdentifier = identifier
+                try? viewContext.save()
             }
         }
         else {
@@ -194,9 +195,6 @@ class APIServiceDetailViewModel: ObservableObject {
         serviceToSave.pdfUploadsAllowed = pdfUploadsAllowed
         serviceToSave.imageGenerationSupported = imageGenerationSupported
         serviceToSave.defaultPersona = defaultAiPersona
-        if serviceToSave.tokenIdentifier == nil || serviceToSave.tokenIdentifier?.isEmpty == true {
-            serviceToSave.tokenIdentifier = UUID().uuidString
-        }
 
         if apiService == nil {
             serviceToSave.addedDate = Date()
@@ -207,13 +205,14 @@ class APIServiceDetailViewModel: ObservableObject {
         }
 
         guard let serviceID = serviceToSave.id else {
-            print("Failed to set token: missing service id")
+            AppLogger.shared.error("provider.save.failed reason=missing-service-id")
             return
         }
 
-        let serviceIDString = serviceID.uuidString
+        let credentialIdentifier = serviceID.uuidString
+        serviceToSave.tokenIdentifier = credentialIdentifier
         do {
-            try TokenManager.setToken(apiKey, for: serviceIDString)
+            try TokenManager.setToken(apiKey, for: credentialIdentifier)
         }
         catch {
             print("Failed to set token: \(error.localizedDescription)")

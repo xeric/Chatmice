@@ -86,6 +86,22 @@ final class TokenManager {
         }
     }
 
+    static func resolveToken(
+        preferredIdentifier: String?,
+        fallbackIdentifier: String?
+    ) throws -> (token: String?, identifier: String?) {
+        var seen = Set<String>()
+        for candidate in [preferredIdentifier, fallbackIdentifier] {
+            guard let identifier = candidate?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !identifier.isEmpty,
+                  seen.insert(identifier).inserted else { continue }
+            if let token = try getToken(for: identifier), !token.isEmpty {
+                return (token, identifier)
+            }
+        }
+        return (nil, nil)
+    }
+
     static func deleteToken(for service: String, identifier: String? = nil) throws {
         let key = makeKey(for: service, identifier: identifier)
         do {

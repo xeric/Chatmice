@@ -86,6 +86,11 @@ class OpenAIResponsesHandler: OpenAIHandlerBase, APIService {
                 do {
                     AppLogger.shared.info("responses.request stream=true url=\(request.url?.absoluteString ?? "unknown") model=\(self.model)")
                     let (stream, response) = try await session.bytes(for: request)
+                    if let http = response as? HTTPURLResponse {
+                        AppLogger.shared.info("responses.http stream=true status=\(http.statusCode) model=\(self.model)")
+                    } else {
+                        AppLogger.shared.error("responses.http.invalid stream=true responseType=\(String(describing: type(of: response))) model=\(self.model)")
+                    }
                     if let httpResponse = response as? HTTPURLResponse,
                         [404, 405].contains(httpResponse.statusCode)
                     {
@@ -111,11 +116,11 @@ class OpenAIResponsesHandler: OpenAIHandlerBase, APIService {
                     switch result {
                     case .failure(let error):
                         var data = Data()
-                        for try await byte in stream {
-                            data.append(byte)
-                        }
-                        let apiError = APIError.serverError(
-                            String(data: data, encoding: .utf8) ?? error.localizedDescription
+                        for try await byte in stream { data.append(byte) }
+                        let body = String(data: data, encoding: .utf8) ?? ""
+                        let apiError = APIError.serverError(body.isEmpty ? error.localizedDescription : body)
+                        AppLogger.shared.error(
+                            "responses.http.failed stream=true model=\(self.model) error=\(apiError.localizedDescription) body=\(body)"
                         )
                         if self.isUnsupportedTemperatureError(apiError) {
                             Self.markTemperatureUnsupported(for: self.model)
@@ -153,7 +158,10 @@ class OpenAIResponsesHandler: OpenAIHandlerBase, APIService {
                         guard let jsonData = payloadString.data(using: .utf8) else { continue }
                         let (finished, error, messageData) = self.parseStreamResponse(data: jsonData)
 
-                        if let error = error {
+                        if let error {
+                            AppLogger.shared.error(
+                                "responses.stream.event.failed model=\(self.model) error=\(error.localizedDescription) payload=\(payloadString)"
+                            )
                             continuation.finish(throwing: error)
                             return
                         }
@@ -176,6 +184,10 @@ class OpenAIResponsesHandler: OpenAIHandlerBase, APIService {
                     continuation.finish()
                 }
                 catch {
+                    let nsError = error as NSError
+                    AppLogger.shared.error(
+                        "responses.stream.failed stage=url-session-or-parser model=\(self.model) type=\(String(reflecting: type(of: error))) domain=\(nsError.domain) code=\(nsError.code) error=\(error.localizedDescription)"
+                    )
                     continuation.finish(throwing: error)
                 }
             }

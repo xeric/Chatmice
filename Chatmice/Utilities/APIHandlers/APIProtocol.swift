@@ -19,6 +19,22 @@ enum APIError: Error {
     case attachmentNotReady(String)
 }
 
+extension APIError: LocalizedError {
+    var errorDescription: String? {
+        switch self {
+        case .requestFailed(let error): return "Request failed: \(error.localizedDescription)"
+        case .invalidResponse: return "The endpoint returned no usable response."
+        case .decodingFailed(let message): return "Response decoding failed: \(message)"
+        case .unauthorized: return "Unauthorized. Check the API key."
+        case .rateLimited: return "Rate limited by the endpoint."
+        case .serverError(let message): return "Server error: \(message)"
+        case .unknown(let message): return "Unknown API error: \(message)"
+        case .noApiService(let message): return message
+        case .attachmentNotReady(let message): return message
+        }
+    }
+}
+
 enum ReasoningEffort: String, Codable, CaseIterable, Identifiable {
     case `default`
     case none

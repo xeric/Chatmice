@@ -470,7 +470,41 @@ final class ChatmiceTests: XCTestCase {
         XCTAssertNil(body["input"])
     }
 
+    func testNewProviderUsesServiceIDAsCredentialIdentifier() throws {
+        let persistence = PersistenceController(inMemory: true)
+        let context = persistence.container.viewContext
+        let manager = APIServiceManager(viewContext: context)
+
+        let service = manager.createAPIService(
+            name: "Custom Provider",
+            type: "openai-responses",
+            url: URL(string: "http://127.0.0.1:6655/openai/v1")!,
+            model: "gpt-5.6-luna",
+            contextSize: 20,
+            useStreamResponse: true,
+            generateChatNames: true
+        )
+
+        XCTAssertEqual(service.tokenIdentifier, try XCTUnwrap(service.id).uuidString)
+    }
+
+    func testCredentialResolverFallsBackToServiceID() throws {
+        let incorrectIdentifier = UUID().uuidString
+        let serviceIdentifier = UUID().uuidString
+        try TokenManager.setToken("test-secret", for: serviceIdentifier)
+        defer { try? TokenManager.deleteToken(for: serviceIdentifier) }
+
+        let resolved = try TokenManager.resolveToken(
+            preferredIdentifier: incorrectIdentifier,
+            fallbackIdentifier: serviceIdentifier
+        )
+
+        XCTAssertEqual(resolved.token, "test-secret")
+        XCTAssertEqual(resolved.identifier, serviceIdentifier)
+    }
+
 }
+
 
 private final class DelayedStreamingAPIService: APIService {
     let name = "Delayed stream"

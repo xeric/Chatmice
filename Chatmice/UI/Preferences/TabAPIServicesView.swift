@@ -939,8 +939,10 @@ struct ProviderEditorSheet: View {
         targetService.type = typeText
         targetService.model = modelsList.first?.modelID ?? ""
         if let id = targetService.id {
-            try? TokenManager.setToken(apiKeyText, for: id.uuidString)
-            let key = "service_models_\(id.uuidString)"
+            let credentialIdentifier = id.uuidString
+            targetService.tokenIdentifier = credentialIdentifier
+            try? TokenManager.setToken(apiKeyText, for: credentialIdentifier)
+            let key = "service_models_\(credentialIdentifier)"
             if let data = try? JSONEncoder().encode(modelsList),
                let str = String(data: data, encoding: .utf8) {
                 UserDefaults.standard.set(str, forKey: key)

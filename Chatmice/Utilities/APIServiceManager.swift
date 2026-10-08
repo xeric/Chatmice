@@ -17,7 +17,8 @@ class APIServiceManager {
     
     func createAPIService(name: String, type: String, url: URL, model: String, contextSize: Int16, useStreamResponse: Bool, generateChatNames: Bool) -> APIServiceEntity {
         let apiService = APIServiceEntity(context: viewContext)
-        apiService.id = UUID()
+        let serviceID = UUID()
+        apiService.id = serviceID
         apiService.name = name
         apiService.type = type
         apiService.url = url
@@ -25,7 +26,7 @@ class APIServiceManager {
         apiService.contextSize = contextSize
         apiService.useStreamResponse = useStreamResponse
         apiService.generateChatNames = generateChatNames
-        apiService.tokenIdentifier = UUID().uuidString
+        apiService.tokenIdentifier = serviceID.uuidString
         
         do {
             try viewContext.save()

@@ -314,8 +314,9 @@ final class APIServiceTemplateAddViewModel: ObservableObject {
         } else {
             service = APIServiceEntity(context: viewContext)
             service.addedDate = Date()
-            service.id = UUID()
-            service.tokenIdentifier = UUID().uuidString
+            let serviceID = UUID()
+            service.id = serviceID
+            service.tokenIdentifier = serviceID.uuidString
             isNewService = true
         }
 
@@ -330,16 +331,16 @@ final class APIServiceTemplateAddViewModel: ObservableObject {
         service.pdfUploadsAllowed = pdfUploadsAllowed
         service.imageGenerationSupported = imageGenerationSupported
         service.defaultPersona = selectedPersona
-        if service.tokenIdentifier == nil || service.tokenIdentifier?.isEmpty == true {
-            service.tokenIdentifier = UUID().uuidString
-        }
         if service.id == nil {
             service.id = UUID()
         }
+        service.tokenIdentifier = service.id?.uuidString
 
         do {
-            let identifier = service.id?.uuidString ?? UUID().uuidString
-            service.id = UUID(uuidString: identifier) ?? service.id
+            guard let identifier = service.tokenIdentifier else {
+                errorMessage = "Failed to create a credential identifier."
+                return false
+            }
 
             try TokenManager.setToken(trimmedKey, for: identifier)
             try viewContext.save()

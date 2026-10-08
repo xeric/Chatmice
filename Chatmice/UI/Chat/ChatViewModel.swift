@@ -260,21 +260,31 @@ class ChatViewModel: NSObject, ObservableObject, NSFetchedResultsControllerDeleg
             return nil
         }
 
-        let serviceType = chat.apiService?.type ?? "chatgpt"
-        let tokenIdentifier = (chat.apiService?.tokenIdentifier?.isEmpty == false) ? chat.apiService!.tokenIdentifier! : (apiService.id?.uuidString ?? "")
+        let serviceType = apiService.type ?? "chatgpt"
+        let serviceID = apiService.id?.uuidString ?? ""
+        let storedIdentifier = apiService.tokenIdentifier?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
 
-        var apiKey = ""
-        if !tokenIdentifier.isEmpty {
-            do {
-                apiKey = try TokenManager.getToken(for: tokenIdentifier) ?? ""
-            }
-            catch {
-                print("Error extracting token: \(error) for \(tokenIdentifier)")
+        let resolvedCredential = try? TokenManager.resolveToken(
+            preferredIdentifier: storedIdentifier,
+            fallbackIdentifier: serviceID
+        )
+        var apiKey = resolvedCredential?.token ?? ""
+        var credentialSource = "none"
+        if let resolvedIdentifier = resolvedCredential?.identifier {
+            credentialSource = resolvedIdentifier == storedIdentifier ? "tokenIdentifier" : "serviceID-recovered"
+            if resolvedIdentifier != storedIdentifier {
+                apiService.tokenIdentifier = resolvedIdentifier
+                try? viewContext.save()
             }
         }
+
         if apiKey.isEmpty {
             apiKey = ProcessInfo.processInfo.environment["LOCAL_SAP_AI_CORE_PROXY_KEY"] ?? ""
+            if !apiKey.isEmpty { credentialSource = "environment" }
         }
+        AppLogger.shared.info(
+            "provider.credentials type=\(serviceType) service=\(serviceID) hasAPIKey=\(!apiKey.isEmpty) source=\(credentialSource)"
+        )
 
         return APIServiceConfig(
             name: getApiServiceName(),
