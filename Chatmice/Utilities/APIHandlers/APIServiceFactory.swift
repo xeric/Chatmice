@@ -58,6 +58,6 @@ class APIServiceFactory {
         default:
             base = ChatGPTHandler(config: config, session: session)
         }
-        return ChatmiceEngine(baseService: base, config: config, chatID: chatID)
+        return ChatmiceEngine(baseService: base, config: config, chatID: chatID, session: session)
     }
 }

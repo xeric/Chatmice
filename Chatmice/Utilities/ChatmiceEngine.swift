@@ -44,6 +44,7 @@ class ChatmiceEngine: APIService, AgentActivityReporting {
     private let baseService: APIService
     private let config: APIServiceConfiguration
     private let chatID: UUID?
+    private let session: URLSession
     private var activeTask: Task<Void, Never>?
     private let activityHandlerLock = NSLock()
     private var activityHandler: (@Sendable (AgentActivitySignal) -> Void)?
@@ -55,10 +56,16 @@ class ChatmiceEngine: APIService, AgentActivityReporting {
     static let bashApprovalModeKey = "chatmiceBashApprovalMode"
     static let legacyBashAutoConfirmKey = "chatmiceBashAutoConfirm"
 
-    init(baseService: APIService, config: APIServiceConfiguration, chatID: UUID? = nil) {
+    init(
+        baseService: APIService,
+        config: APIServiceConfiguration,
+        chatID: UUID? = nil,
+        session: URLSession = .shared
+    ) {
         self.baseService = baseService
         self.config = config
         self.chatID = chatID
+        self.session = session
         self.name = config.name
         self.baseURL = config.apiUrl
     }
@@ -553,25 +560,37 @@ class ChatmiceEngine: APIService, AgentActivityReporting {
         temperature: Float,
         onText: @escaping (String) -> Void
     ) async throws -> TurnResult {
-        let type = serviceType
-        if type == "gemini" {
+        switch serviceType {
+        case "gemini":
             return try await executeTurnGemini(
                 messages: messages,
                 tools: tools,
                 temperature: temperature,
                 onText: onText
             )
-        }
-        else if type == "claude" {
+        case "claude":
             return try await executeTurnClaude(
                 messages: messages,
                 tools: tools,
                 temperature: temperature,
                 onText: onText
             )
-        }
-        else {
-            return try await executeTurnOpenAI(
+        case "ollama":
+            return try await executeTurnOllama(
+                messages: messages,
+                tools: tools,
+                temperature: temperature,
+                onText: onText
+            )
+        case "openai", "openai-responses":
+            return try await executeTurnOpenAIResponses(
+                messages: messages,
+                tools: tools,
+                temperature: temperature,
+                onText: onText
+            )
+        default:
+            return try await executeTurnOpenAIChatCompletions(
                 messages: messages,
                 tools: tools,
                 temperature: temperature,
@@ -580,8 +599,8 @@ class ChatmiceEngine: APIService, AgentActivityReporting {
         }
     }
 
-    // MARK: - OpenAI / ChatGPT Execution
-    private func executeTurnOpenAI(
+    // MARK: - OpenAI Chat Completions Execution
+    private func executeTurnOpenAIChatCompletions(
         messages: [AgentMessage],
         tools: [ToolDefinition],
         temperature: Float,
@@ -649,7 +668,7 @@ class ChatmiceEngine: APIService, AgentActivityReporting {
         }
         req.httpBody = try JSONSerialization.data(withJSONObject: body)
 
-        let (bytes, response) = try await URLSession.shared.bytes(for: req)
+        let (bytes, response) = try await session.bytes(for: req)
         guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
             var data = Data()
             for try await byte in bytes { data.append(byte) }
@@ -702,6 +721,319 @@ class ChatmiceEngine: APIService, AgentActivityReporting {
         }
         return TurnResult(text: text, toolCalls: calls, textWasStreamed: streamedText)
     }
+
+    // MARK: - OpenAI Responses Execution
+    private func executeTurnOpenAIResponses(
+        messages: [AgentMessage],
+        tools: [ToolDefinition],
+        temperature: Float,
+        onText: @escaping (String) -> Void
+    ) async throws -> TurnResult {
+        let request = try makeResponsesTurnRequest(
+            messages: messages,
+            tools: tools,
+            temperature: temperature,
+            stream: true
+        )
+        let (bytes, response) = try await session.bytes(for: request)
+
+        guard let http = response as? HTTPURLResponse else { throw APIError.invalidResponse }
+        if [404, 405].contains(http.statusCode) {
+            return try await executeTurnOpenAIResponsesNonStreaming(
+                messages: messages,
+                tools: tools,
+                temperature: temperature,
+                onText: onText
+            )
+        }
+        guard (200...299).contains(http.statusCode) else {
+            var data = Data()
+            for try await byte in bytes { data.append(byte) }
+            throw APIError.serverError(String(data: data, encoding: .utf8) ?? "HTTP \(http.statusCode)")
+        }
+
+        var text = ""
+        var streamedText = false
+        var calls: [String: ResponseCallAccumulator] = [:]
+
+        for try await line in bytes.lines {
+            guard line.hasPrefix("data:") else { continue }
+            let payload = line.dropFirst(5).trimmingCharacters(in: .whitespaces)
+            if payload == "[DONE]" { break }
+            guard let data = payload.data(using: .utf8),
+                let event = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+            else { continue }
+
+            switch event["type"] as? String {
+            case "response.output_text.delta":
+                if let delta = event["delta"] as? String, !delta.isEmpty {
+                    text += delta
+                    streamedText = true
+                    onText(delta)
+                }
+            case "response.output_item.added", "response.output_item.done":
+                if let item = event["item"] as? [String: Any], item["type"] as? String == "function_call" {
+                    mergeResponsesFunctionCall(item, into: &calls)
+                }
+            case "response.function_call_arguments.delta":
+                let key = (event["item_id"] as? String) ?? "output-\(event["output_index"] as? Int ?? 0)"
+                var call = calls[key] ?? ResponseCallAccumulator()
+                call.arguments += event["delta"] as? String ?? ""
+                calls[key] = call
+            case "response.completed":
+                if let responseObject = event["response"] as? [String: Any] {
+                    let completed = parseResponsesTurn(responseObject)
+                    if !streamedText, !completed.text.isEmpty {
+                        text = completed.text
+                        onText(completed.text)
+                    }
+                }
+            case "response.failed":
+                let message = ((event["response"] as? [String: Any])?["error"] as? [String: Any])?["message"] as? String
+                throw APIError.serverError(message ?? "Responses request failed")
+            default:
+                continue
+            }
+        }
+
+        return TurnResult(
+            text: text,
+            toolCalls: calls.values.compactMap { $0.toolCall }.sorted { $0.id < $1.id },
+            textWasStreamed: streamedText || !text.isEmpty
+        )
+    }
+
+    private func executeTurnOpenAIResponsesNonStreaming(
+        messages: [AgentMessage],
+        tools: [ToolDefinition],
+        temperature: Float,
+        onText: @escaping (String) -> Void
+    ) async throws -> TurnResult {
+        let request = try makeResponsesTurnRequest(
+            messages: messages,
+            tools: tools,
+            temperature: temperature,
+            stream: false
+        )
+        let (data, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse else { throw APIError.invalidResponse }
+        if [404, 405].contains(http.statusCode), (!tools.isEmpty || nativeSearchEnabled) {
+            return try await executeTurnOpenAIChatCompletions(
+                messages: messages,
+                tools: tools,
+                temperature: temperature,
+                onText: onText
+            )
+        }
+        guard (200...299).contains(http.statusCode) else {
+            throw APIError.serverError(String(data: data, encoding: .utf8) ?? "HTTP \(http.statusCode)")
+        }
+        guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw APIError.decodingFailed("Invalid Responses payload")
+        }
+        let result = parseResponsesTurn(object)
+        if !result.text.isEmpty { onText(result.text) }
+        return TurnResult(text: result.text, toolCalls: result.toolCalls, textWasStreamed: !result.text.isEmpty)
+    }
+
+    private func makeResponsesTurnRequest(
+        messages: [AgentMessage],
+        tools: [ToolDefinition],
+        temperature: Float,
+        stream: Bool
+    ) throws -> URLRequest {
+        var request = URLRequest(url: baseURL)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("responses=v1", forHTTPHeaderField: "OpenAI-Beta")
+        if stream { request.setValue("text/event-stream", forHTTPHeaderField: "Accept") }
+        let key = effectiveKey
+        if !key.isEmpty { request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization") }
+
+        let input = messages.flatMap { message -> [[String: Any]] in
+            switch message {
+            case .text(let role, let content):
+                let contentType = role == "assistant" ? "output_text" : "input_text"
+                return [["role": role, "content": [["type": contentType, "text": AttachmentParser.stripAttachments(from: content)]]]]
+            case .assistant(let text, let calls):
+                var items: [[String: Any]] = []
+                if !text.isEmpty {
+                    items.append(["role": "assistant", "content": [["type": "output_text", "text": text]]])
+                }
+                items.append(contentsOf: calls.map {
+                    ["type": "function_call", "call_id": $0.id, "name": $0.name, "arguments": $0.arguments]
+                })
+                return items
+            case .toolResults(let results):
+                return results.map {
+                    ["type": "function_call_output", "call_id": $0.call.id, "output": $0.output]
+                }
+            }
+        }
+
+        var toolPayload = tools.map {
+            [
+                "type": "function",
+                "name": $0.name,
+                "description": $0.description,
+                "parameters": $0.parameters.openAIWireDict,
+            ] as [String: Any]
+        }
+        if nativeSearchEnabled {
+            toolPayload.append(["type": "web_search_preview"])
+        }
+
+        var body: [String: Any] = ["model": config.model, "input": input]
+        if stream { body["stream"] = true }
+        if !toolPayload.isEmpty { body["tools"] = toolPayload }
+        let reasoningSelection = ReasoningPreferenceStore.selection(for: config.model)
+        let reasoningProfile = ModelReasoningRegistry.resolve(modelID: config.model, serviceType: serviceType)
+        if reasoningSelection == .default {
+            body["temperature"] = temperature
+        }
+        ReasoningRequestEncoder.apply(
+            selection: reasoningSelection,
+            profile: reasoningProfile,
+            maxTokens: 32_768,
+            to: &body
+        )
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        return request
+    }
+
+    private func parseResponsesTurn(_ object: [String: Any]) -> TurnResult {
+        var text = object["output_text"] as? String ?? ""
+        var calls: [ToolCall] = []
+        for item in object["output"] as? [[String: Any]] ?? [] {
+            switch item["type"] as? String {
+            case "message":
+                guard text.isEmpty else { continue }
+                for content in item["content"] as? [[String: Any]] ?? [] where content["type"] as? String == "output_text" {
+                    text += content["text"] as? String ?? ""
+                }
+            case "function_call":
+                guard let name = item["name"] as? String else { continue }
+                calls.append(ToolCall(
+                    id: item["call_id"] as? String ?? item["id"] as? String ?? UUID().uuidString,
+                    name: name,
+                    arguments: item["arguments"] as? String ?? "{}"
+                ))
+            default:
+                continue
+            }
+        }
+        return TurnResult(text: text, toolCalls: calls, textWasStreamed: false)
+    }
+
+    private func mergeResponsesFunctionCall(
+        _ item: [String: Any],
+        into calls: inout [String: ResponseCallAccumulator]
+    ) {
+        let key = item["id"] as? String ?? item["call_id"] as? String ?? UUID().uuidString
+        var call = calls[key] ?? ResponseCallAccumulator()
+        call.id = item["call_id"] as? String ?? call.id
+        call.name = item["name"] as? String ?? call.name
+        if let arguments = item["arguments"] as? String, !arguments.isEmpty { call.arguments = arguments }
+        calls[key] = call
+    }
+
+    private struct ResponseCallAccumulator {
+        var id = ""
+        var name = ""
+        var arguments = ""
+
+        var toolCall: ToolCall? {
+            guard !name.isEmpty else { return nil }
+            return ToolCall(id: id.isEmpty ? UUID().uuidString : id, name: name, arguments: arguments.isEmpty ? "{}" : arguments)
+        }
+    }
+
+    // MARK: - Ollama Execution
+    private func executeTurnOllama(
+        messages: [AgentMessage],
+        tools: [ToolDefinition],
+        temperature: Float,
+        onText: @escaping (String) -> Void
+    ) async throws -> TurnResult {
+        guard !nativeSearchEnabled else {
+            throw APIError.serverError("Native Search is not supported by the Ollama wire protocol")
+        }
+
+        let wireMessages = messages.flatMap { message -> [[String: Any]] in
+            switch message {
+            case .text(let role, let content):
+                return [["role": role, "content": content]]
+            case .assistant(let text, let calls):
+                var value: [String: Any] = ["role": "assistant", "content": text]
+                if !calls.isEmpty {
+                    value["tool_calls"] = calls.map {
+                        ["function": ["name": $0.name, "arguments": $0.argumentsJSON ?? [:]]]
+                    }
+                }
+                return [value]
+            case .toolResults(let results):
+                return results.map { ["role": "tool", "content": $0.output] }
+            }
+        }
+        let toolPayload = tools.map {
+            [
+                "type": "function",
+                "function": [
+                    "name": $0.name,
+                    "description": $0.description,
+                    "parameters": $0.parameters.openAIWireDict,
+                ],
+            ] as [String: Any]
+        }
+        var body: [String: Any] = [
+            "model": config.model,
+            "messages": wireMessages,
+            "stream": true,
+            "options": ["temperature": temperature],
+        ]
+        if !toolPayload.isEmpty { body["tools"] = toolPayload }
+
+        var request = URLRequest(url: baseURL)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        let key = effectiveKey
+        if !key.isEmpty { request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization") }
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+
+        let (bytes, response) = try await session.bytes(for: request)
+        guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+            var data = Data()
+            for try await byte in bytes { data.append(byte) }
+            throw APIError.serverError(String(data: data, encoding: .utf8) ?? "Ollama request failed")
+        }
+
+        var text = ""
+        var calls: [ToolCall] = []
+        for try await line in bytes.lines where !line.isEmpty {
+            guard let data = line.data(using: .utf8),
+                let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                let message = object["message"] as? [String: Any]
+            else { continue }
+            if let chunk = message["content"] as? String, !chunk.isEmpty {
+                text += chunk
+                onText(chunk)
+            }
+            for toolCall in message["tool_calls"] as? [[String: Any]] ?? [] {
+                guard let function = toolCall["function"] as? [String: Any],
+                    let name = function["name"] as? String
+                else { continue }
+                let arguments = function["arguments"] as? [String: Any] ?? [:]
+                let argumentData = try JSONSerialization.data(withJSONObject: arguments)
+                calls.append(ToolCall(
+                    id: toolCall["id"] as? String ?? UUID().uuidString,
+                    name: name,
+                    arguments: String(data: argumentData, encoding: .utf8) ?? "{}"
+                ))
+            }
+        }
+        return TurnResult(text: text, toolCalls: calls, textWasStreamed: !text.isEmpty)
+    }
+
 
     // MARK: - Gemini Execution
     private func executeTurnGemini(
@@ -821,7 +1153,7 @@ class ChatmiceEngine: APIService, AgentActivityReporting {
 
         req.httpBody = try JSONSerialization.data(withJSONObject: body)
         req.setValue("text/event-stream", forHTTPHeaderField: "Accept")
-        let (bytes, response) = try await URLSession.shared.bytes(for: req)
+        let (bytes, response) = try await session.bytes(for: req)
 
         guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
             var data = Data()
@@ -893,7 +1225,7 @@ class ChatmiceEngine: APIService, AgentActivityReporting {
             config.model,
             baseURL: baseURL,
             apiKey: key,
-            session: URLSession.shared
+            session: session
         )
 
         let systemText = messages.compactMap { message -> String? in
@@ -967,7 +1299,7 @@ class ChatmiceEngine: APIService, AgentActivityReporting {
 
         req.httpBody = try JSONSerialization.data(withJSONObject: body)
         req.setValue("text/event-stream", forHTTPHeaderField: "Accept")
-        let (bytes, response) = try await URLSession.shared.bytes(for: req)
+        let (bytes, response) = try await session.bytes(for: req)
 
         guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
             var data = Data()

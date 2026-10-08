@@ -246,6 +246,177 @@ final class ChatmiceTests: XCTestCase {
         XCTAssertTrue(ChatmiceEngine.shouldUseAgentRequestPath(toolsEnabled: false, searchMode: .web))
     }
 
+    func testResponsesTurnKeepsConfiguredWireAPIWhenToolsAreDisabled() async throws {
+        let chatID = UUID()
+        let defaults = UserDefaults.standard
+        let previousToolsValue = defaults.object(forKey: ChatmiceEngine.toolsEnabledKey)
+        defaults.set(false, forKey: ChatmiceEngine.toolsEnabledKey)
+        SearchModeStore.setMode(.native, for: chatID)
+        defer {
+            SearchModeStore.setMode(.off, for: chatID)
+            if let previousToolsValue {
+                defaults.set(previousToolsValue, forKey: ChatmiceEngine.toolsEnabledKey)
+            } else {
+                defaults.removeObject(forKey: ChatmiceEngine.toolsEnabledKey)
+            }
+            ResponsesFallbackURLProtocol.requestHandler = nil
+        }
+
+        var capturedRequest: URLRequest?
+        ResponsesFallbackURLProtocol.requestHandler = { request in
+            capturedRequest = request
+            let response = HTTPURLResponse(
+                url: try XCTUnwrap(request.url),
+                statusCode: 200,
+                httpVersion: nil,
+                headerFields: ["Content-Type": "text/event-stream"]
+            )!
+            let payload = """
+            data: {"type":"response.output_text.delta","delta":"pong"}
+
+            data: {"type":"response.completed","response":{"output":[]}}
+
+            """
+            return (response, Data(payload.utf8))
+        }
+
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [ResponsesFallbackURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        let config = APIServiceConfig(
+            name: "Responses",
+            apiUrl: URL(string: "http://127.0.0.1:6655/openai/v1")!,
+            apiKey: "test-key",
+            model: "gpt-5.6-luna",
+            type: "openai-responses"
+        )
+        let base = OpenAIResponsesHandler(config: config, session: session, imageGenerationSupported: false)
+        let engine = ChatmiceEngine(baseService: base, config: config, chatID: chatID, session: session)
+
+        let stream = try await engine.sendMessageStream([["role": "user", "content": "ping"]], temperature: 0.7)
+        var result = ""
+        for try await chunk in stream { result += chunk }
+
+        XCTAssertEqual(result, "pong")
+        let request = try XCTUnwrap(capturedRequest)
+        XCTAssertEqual(request.url?.path, "/openai/v1")
+        let body = try XCTUnwrap(JSONSerialization.jsonObject(with: try XCTUnwrap(request.httpBody)) as? [String: Any])
+        XCTAssertNotNil(body["input"])
+        XCTAssertNil(body["messages"])
+        let tools = try XCTUnwrap(body["tools"] as? [[String: Any]])
+        XCTAssertTrue(tools.contains { $0["type"] as? String == "web_search_preview" })
+    }
+
+    func testResponsesTurnFallsBackToChatCompletionsOnlyAfterResponsesRejectsTools() async throws {
+        let chatID = UUID()
+        let defaults = UserDefaults.standard
+        let previousToolsValue = defaults.object(forKey: ChatmiceEngine.toolsEnabledKey)
+        defaults.set(false, forKey: ChatmiceEngine.toolsEnabledKey)
+        SearchModeStore.setMode(.native, for: chatID)
+        defer {
+            SearchModeStore.setMode(.off, for: chatID)
+            if let previousToolsValue {
+                defaults.set(previousToolsValue, forKey: ChatmiceEngine.toolsEnabledKey)
+            } else {
+                defaults.removeObject(forKey: ChatmiceEngine.toolsEnabledKey)
+            }
+            ResponsesFallbackURLProtocol.requestHandler = nil
+        }
+
+        var paths: [String] = []
+        ResponsesFallbackURLProtocol.requestHandler = { request in
+            paths.append(request.url?.path ?? "")
+            let body = try XCTUnwrap(request.httpBody)
+            let json = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+            let isChatCompletions = json["messages"] != nil
+            let status = isChatCompletions ? 200 : 404
+            let response = HTTPURLResponse(
+                url: try XCTUnwrap(request.url),
+                statusCode: status,
+                httpVersion: nil,
+                headerFields: ["Content-Type": isChatCompletions ? "text/event-stream" : "application/json"]
+            )!
+            let payload = isChatCompletions
+                ? "data: {\"choices\":[{\"delta\":{\"content\":\"pong\"}}]}\n\ndata: [DONE]\n\n"
+                : #"{"error":{"message":"Responses tools unsupported"}}"#
+            return (response, Data(payload.utf8))
+        }
+
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [ResponsesFallbackURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        let config = APIServiceConfig(
+            name: "HAI Responses",
+            apiUrl: URL(string: "http://127.0.0.1:6655/openai/v1")!,
+            apiKey: "test-key",
+            model: "gpt-5.6-luna",
+            type: "openai-responses"
+        )
+        let base = OpenAIResponsesHandler(config: config, session: session, imageGenerationSupported: false)
+        let engine = ChatmiceEngine(baseService: base, config: config, chatID: chatID, session: session)
+
+        let stream = try await engine.sendMessageStream([["role": "user", "content": "ping"]], temperature: 0.7)
+        var result = ""
+        for try await chunk in stream { result += chunk }
+
+        XCTAssertEqual(result, "pong")
+        XCTAssertEqual(paths, ["/openai/v1", "/openai/v1", "/openai/v1/chat/completions"])
+    }
+
+    func testOllamaTurnKeepsNativeChatEndpointWhenToolsAreEnabled() async throws {
+        let chatID = UUID()
+        let defaults = UserDefaults.standard
+        let previousToolsValue = defaults.object(forKey: ChatmiceEngine.toolsEnabledKey)
+        let previousFileToolsValue = defaults.object(forKey: "chatmiceFileToolsEnabled")
+        defaults.set(true, forKey: ChatmiceEngine.toolsEnabledKey)
+        defaults.set(true, forKey: "chatmiceFileToolsEnabled")
+        ToolSelectionStore.setSourceEnabled(true, sourceID: ToolSourceID.fileTool, for: chatID)
+        defer {
+            if let previousToolsValue { defaults.set(previousToolsValue, forKey: ChatmiceEngine.toolsEnabledKey) }
+            else { defaults.removeObject(forKey: ChatmiceEngine.toolsEnabledKey) }
+            if let previousFileToolsValue { defaults.set(previousFileToolsValue, forKey: "chatmiceFileToolsEnabled") }
+            else { defaults.removeObject(forKey: "chatmiceFileToolsEnabled") }
+            ResponsesFallbackURLProtocol.requestHandler = nil
+        }
+
+        var capturedRequest: URLRequest?
+        ResponsesFallbackURLProtocol.requestHandler = { request in
+            capturedRequest = request
+            let response = HTTPURLResponse(
+                url: try XCTUnwrap(request.url),
+                statusCode: 200,
+                httpVersion: nil,
+                headerFields: ["Content-Type": "application/x-ndjson"]
+            )!
+            return (response, Data(#"{"message":{"role":"assistant","content":"pong"},"done":true}"#.utf8))
+        }
+
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [ResponsesFallbackURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        let config = APIServiceConfig(
+            name: "Ollama",
+            apiUrl: URL(string: "http://127.0.0.1:11434/api/chat")!,
+            apiKey: "",
+            model: "qwen3",
+            type: "ollama"
+        )
+        let base = OllamaHandler(config: config, session: session)
+        let engine = ChatmiceEngine(baseService: base, config: config, chatID: chatID, session: session)
+
+        let stream = try await engine.sendMessageStream([["role": "user", "content": "ping"]], temperature: 0.7)
+        var result = ""
+        for try await chunk in stream { result += chunk }
+
+        XCTAssertEqual(result, "pong")
+        let request = try XCTUnwrap(capturedRequest)
+        XCTAssertEqual(request.url?.path, "/api/chat")
+        let body = try XCTUnwrap(JSONSerialization.jsonObject(with: try XCTUnwrap(request.httpBody)) as? [String: Any])
+        XCTAssertNotNil(body["messages"])
+        XCTAssertNotNil(body["tools"])
+        XCTAssertNil(body["input"])
+    }
+
 }
 
 private final class DelayedStreamingAPIService: APIService {
