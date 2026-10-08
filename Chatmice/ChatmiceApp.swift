@@ -665,6 +665,56 @@ private struct MainWindowTracker: NSViewRepresentable {
         nsView.stopTracking()
     }
 }
+@MainActor
+private final class ThinScrollerController: NSObject {
+    static let shared = ThinScrollerController()
+
+    private override init() {
+        super.init()
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(windowDidBecomeKey(_:)),
+            name: NSWindow.didBecomeKeyNotification,
+            object: nil
+        )
+    }
+
+    func applyToExistingWindows() {
+        for window in NSApp.windows {
+            scheduleConfiguration(for: window)
+        }
+    }
+
+    @objc private func windowDidBecomeKey(_ notification: Notification) {
+        guard let window = notification.object as? NSWindow else { return }
+        scheduleConfiguration(for: window)
+    }
+
+    private func scheduleConfiguration(for window: NSWindow) {
+        for delay in [0.0, 0.25, 1.0] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self, weak window] in
+                guard let self, let contentView = window?.contentView else { return }
+                self.configure(contentView)
+            }
+        }
+    }
+
+    private func configure(_ view: NSView) {
+        if let scrollView = view as? NSScrollView {
+            scrollView.scrollerStyle = .overlay
+            scrollView.autohidesScrollers = true
+            scrollView.verticalScroller?.controlSize = .mini
+            scrollView.horizontalScroller?.controlSize = .mini
+        }
+        else if let scroller = view as? NSScroller {
+            scroller.controlSize = .mini
+        }
+        for subview in view.subviews {
+            configure(subview)
+        }
+    }
+}
+
 
 private struct PersistentStoreLoadingView: View {
     var body: some View {
@@ -783,6 +833,7 @@ struct ChatmiceApp: App {
             DatabasePatcher.deliverPendingGeminiMigrationNotificationIfNeeded()
         }
         NotificationPresenter.shared.requestAuthorizationIfNeeded()
+        _ = ThinScrollerController.shared
 
         // Enable badge for existing users who were authorized without .badge
         NotificationPresenter.shared.enableBadgeForExistingUsers()
@@ -824,6 +875,11 @@ struct ChatmiceApp: App {
                 if UserDefaults.standard.bool(forKey: "autoCheckForUpdates") {
                     updateCoordinator.checkForUpdatesInBackground()
                 }
+            }
+        }
+        .onChange(of: persistenceController.loadState) { _, state in
+            if state == .ready {
+                ThinScrollerController.shared.applyToExistingWindows()
             }
         }
         .commands {
