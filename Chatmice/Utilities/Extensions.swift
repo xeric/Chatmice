@@ -10,6 +10,7 @@ import CoreData
 import Foundation
 import SwiftUI
 import AppKit
+import os
 
 extension Data {
     public func sha256() -> String {
@@ -194,5 +195,77 @@ extension PersistenceController {
 extension Range where Bound == String.Index {
     func toNSRange(in string: String) -> NSRange? {
         return NSRange(self, in: string)
+    }
+}
+
+/// Persistent product diagnostics. Never log credentials or request payloads.
+final class AppLogger: @unchecked Sendable {
+    static let shared = AppLogger()
+
+    static var logsDirectoryURL: URL { shared.directoryURL }
+    static var logFileURL: URL { shared.fileURL }
+
+    private let lock = NSLock()
+    private let systemLogger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "xeric.com.chatmice", category: "Chatmice")
+    private let directoryURL: URL
+    private let fileURL: URL
+    private let rotatedFileURL: URL
+    private let formatter = ISO8601DateFormatter()
+    private let maximumFileSize: UInt64 = 5 * 1_024 * 1_024
+
+    private init() {
+        let library = FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask).first
+            ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library", isDirectory: true)
+        directoryURL = library.appendingPathComponent("Logs/Chatmice", isDirectory: true)
+        fileURL = directoryURL.appendingPathComponent("chatmice.log")
+        rotatedFileURL = directoryURL.appendingPathComponent("chatmice.previous.log")
+        try? FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
+    }
+
+    func info(_ message: @autoclosure () -> String) {
+        write(level: "INFO", message: message())
+    }
+
+    func error(_ message: @autoclosure () -> String) {
+        write(level: "ERROR", message: message())
+    }
+
+    private func write(level: String, message: String) {
+        let sanitized = message
+            .replacingOccurrences(of: "\r", with: "\\r")
+            .replacingOccurrences(of: "\n", with: "\\n")
+
+        lock.lock()
+        defer { lock.unlock() }
+
+        let line = "\(formatter.string(from: Date())) [\(level)] \(sanitized)\n"
+        rotateIfNeeded(incomingBytes: UInt64(line.utf8.count))
+        let data = Data(line.utf8)
+        do {
+            if !FileManager.default.fileExists(atPath: fileURL.path) {
+                try data.write(to: fileURL, options: .atomic)
+            } else {
+                let handle = try FileHandle(forWritingTo: fileURL)
+                defer { try? handle.close() }
+                try handle.seekToEnd()
+                try handle.write(contentsOf: data)
+            }
+        } catch {
+            systemLogger.error("Failed to write product log: \(error.localizedDescription, privacy: .public)")
+        }
+
+        if level == "ERROR" {
+            systemLogger.error("\(sanitized, privacy: .public)")
+        } else {
+            systemLogger.info("\(sanitized, privacy: .public)")
+        }
+    }
+
+    private func rotateIfNeeded(incomingBytes: UInt64) {
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: fileURL.path),
+              let size = attributes[.size] as? NSNumber,
+              size.uint64Value + incomingBytes > maximumFileSize else { return }
+        try? FileManager.default.removeItem(at: rotatedFileURL)
+        try? FileManager.default.moveItem(at: fileURL, to: rotatedFileURL)
     }
 }

@@ -118,6 +118,9 @@ class ChatmiceEngine: APIService, AgentActivityReporting {
     ) async throws -> AsyncThrowingStream<String, Error> {
         let toolsEnabled = (UserDefaults.standard.object(forKey: Self.toolsEnabledKey) as? Bool) ?? true
         let searchMode = activeSearchMode
+        AppLogger.shared.info(
+            "engine.request provider=\(serviceType) model=\(config.model) url=\(baseURL.absoluteString) tools=\(toolsEnabled) search=\(searchMode.rawValue)"
+        )
 
         // Search is independent from general agent tools. Only bypass the agent
         // request path when both capabilities are disabled.
@@ -135,6 +138,9 @@ class ChatmiceEngine: APIService, AgentActivityReporting {
                     continuation.finish()
                 }
                 catch {
+                    AppLogger.shared.error(
+                        "engine.request.failed provider=\(self.serviceType) model=\(self.config.model) error=\(error.localizedDescription)"
+                    )
                     continuation.finish(throwing: error)
                 }
             }
@@ -604,10 +610,7 @@ class ChatmiceEngine: APIService, AgentActivityReporting {
         temperature: Float,
         onText: @escaping (String) -> Void
     ) async throws -> TurnResult {
-        var targetURL = baseURL
-        if !targetURL.absoluteString.hasSuffix("/chat/completions") {
-            targetURL = targetURL.appendingPathComponent("chat/completions")
-        }
+        let targetURL = OpenAIEndpointURL.chatCompletions(from: baseURL)
         var req = URLRequest(url: targetURL)
         req.httpMethod = "POST"
         let key = effectiveKey
@@ -733,10 +736,12 @@ class ChatmiceEngine: APIService, AgentActivityReporting {
             temperature: temperature,
             stream: true
         )
+        AppLogger.shared.info("engine.responses.request stream=true url=\(request.url?.absoluteString ?? "unknown") tools=\(tools.count) search=\(nativeSearchEnabled)")
         let (bytes, response) = try await session.bytes(for: request)
 
         guard let http = response as? HTTPURLResponse else { throw APIError.invalidResponse }
         if [404, 405].contains(http.statusCode) {
+            AppLogger.shared.info("engine.responses.fallback stream=false status=\(http.statusCode) model=\(config.model)")
             return try await executeTurnOpenAIResponsesNonStreaming(
                 messages: messages,
                 tools: tools,
@@ -747,7 +752,9 @@ class ChatmiceEngine: APIService, AgentActivityReporting {
         guard (200...299).contains(http.statusCode) else {
             var data = Data()
             for try await byte in bytes { data.append(byte) }
-            throw APIError.serverError(String(data: data, encoding: .utf8) ?? "HTTP \(http.statusCode)")
+            let body = String(data: data, encoding: .utf8) ?? "HTTP \(http.statusCode)"
+            AppLogger.shared.error("engine.responses.failed stream=true status=\(http.statusCode) model=\(config.model) body=\(body)")
+            throw APIError.serverError(body)
         }
 
         var text = ""
@@ -813,9 +820,11 @@ class ChatmiceEngine: APIService, AgentActivityReporting {
             temperature: temperature,
             stream: false
         )
+        AppLogger.shared.info("engine.responses.request stream=false url=\(request.url?.absoluteString ?? "unknown") tools=\(tools.count) search=\(nativeSearchEnabled)")
         let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse else { throw APIError.invalidResponse }
         if [404, 405].contains(http.statusCode), (!tools.isEmpty || nativeSearchEnabled) {
+            AppLogger.shared.info("engine.responses.fallback wire=chat-completions status=\(http.statusCode) model=\(config.model)")
             return try await executeTurnOpenAIChatCompletions(
                 messages: messages,
                 tools: tools,
@@ -824,7 +833,9 @@ class ChatmiceEngine: APIService, AgentActivityReporting {
             )
         }
         guard (200...299).contains(http.statusCode) else {
-            throw APIError.serverError(String(data: data, encoding: .utf8) ?? "HTTP \(http.statusCode)")
+            let body = String(data: data, encoding: .utf8) ?? "HTTP \(http.statusCode)"
+            AppLogger.shared.error("engine.responses.failed stream=false status=\(http.statusCode) model=\(config.model) body=\(body)")
+            throw APIError.serverError(body)
         }
         guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             throw APIError.decodingFailed("Invalid Responses payload")

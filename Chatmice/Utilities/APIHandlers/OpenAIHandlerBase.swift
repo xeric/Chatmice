@@ -8,6 +8,19 @@
 import CoreData
 import Foundation
 
+enum OpenAIEndpointURL {
+    static func chatCompletions(from configuredURL: URL) -> URL {
+        var base = configuredURL
+        if base.lastPathComponent == "responses" {
+            base.deleteLastPathComponent()
+        }
+        if base.path.hasSuffix("/chat/completions") {
+            return base
+        }
+        return base.appendingPathComponent("chat/completions")
+    }
+}
+
 class OpenAIHandlerBase {
     let name: String
     let baseURL: URL

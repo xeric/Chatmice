@@ -239,6 +239,59 @@ final class ChatmiceTests: XCTestCase {
         XCTAssertEqual(requests, [true, false])
     }
 
+    func testResponsesTextRequestFallsBackToNormalizedChatCompletionsURL() async throws {
+        var paths: [String] = []
+        ResponsesFallbackURLProtocol.requestHandler = { request in
+            paths.append(request.url?.path ?? "")
+            let isChatCompletions = request.url?.path.hasSuffix("/chat/completions") == true
+            let response = HTTPURLResponse(
+                url: try XCTUnwrap(request.url),
+                statusCode: isChatCompletions ? 200 : 404,
+                httpVersion: nil,
+                headerFields: ["Content-Type": isChatCompletions ? "text/event-stream" : "application/json"]
+            )!
+            let payload = isChatCompletions
+                ? "data: {\"choices\":[{\"delta\":{\"content\":\"pong\"}}]}\n\ndata: [DONE]\n\n"
+                : #"{"error":{"message":"Responses unsupported"}}"#
+            return (response, Data(payload.utf8))
+        }
+        defer { ResponsesFallbackURLProtocol.requestHandler = nil }
+
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [ResponsesFallbackURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        let config = APIServiceConfig(
+            name: "Responses",
+            apiUrl: URL(string: "http://127.0.0.1:9988/openai/v1/responses")!,
+            apiKey: "test-key",
+            model: "gpt-5.6-luna",
+            type: "openai-responses"
+        )
+        let handler = OpenAIResponsesHandler(config: config, session: session, imageGenerationSupported: false)
+
+        let stream = try await handler.sendMessageStream(
+            [["role": "user", "content": "ping"]],
+            temperature: 0.7
+        )
+        var result = ""
+        for try await chunk in stream { result += chunk }
+
+        XCTAssertEqual(result, "pong")
+        XCTAssertEqual(paths, [
+            "/openai/v1/responses",
+            "/openai/v1/responses",
+            "/openai/v1/chat/completions",
+        ])
+    }
+
+    func testAppLoggerWritesPersistentLogFile() throws {
+        let marker = "log-test-\(UUID().uuidString)"
+        AppLogger.shared.error(marker)
+        let contents = try String(contentsOf: AppLogger.logFileURL, encoding: .utf8)
+        XCTAssertTrue(contents.contains(marker))
+        XCTAssertEqual(AppLogger.logFileURL.lastPathComponent, "chatmice.log")
+    }
+
     func testSearchRoutingIsIndependentFromGeneralTools() {
         XCTAssertFalse(ChatmiceEngine.shouldUseAgentRequestPath(toolsEnabled: false, searchMode: .off))
         XCTAssertTrue(ChatmiceEngine.shouldUseAgentRequestPath(toolsEnabled: true, searchMode: .off))

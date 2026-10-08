@@ -188,11 +188,9 @@ class ChatGPTHandler: OpenAIHandlerBase, APIService {
     internal func prepareRequest(requestMessages: [[String: String]], model: String, temperature: Float, stream: Bool)
         -> URLRequest
     {
-        var targetURL = baseURL
-        if !targetURL.absoluteString.hasSuffix("/chat/completions") {
-            targetURL = targetURL.appendingPathComponent("chat/completions")
-        }
+        let targetURL = OpenAIEndpointURL.chatCompletions(from: baseURL)
         var request = URLRequest(url: targetURL)
+        AppLogger.shared.info("chat-completions.request stream=\(stream) url=\(targetURL.absoluteString) model=\(model)")
         request.httpMethod = "POST"
         let effectiveKey = apiKey.isEmpty ? (ProcessInfo.processInfo.environment["LOCAL_SAP_AI_CORE_PROXY_KEY"] ?? "") : apiKey
         request.setValue("Bearer \(effectiveKey)", forHTTPHeaderField: "Authorization")

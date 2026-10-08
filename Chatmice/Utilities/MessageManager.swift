@@ -167,6 +167,7 @@ class MessageManager: ObservableObject {
 
             do {
                 let stream = try await apiService.sendMessageStream(requestMessages, temperature: temperature)
+                AppLogger.shared.info("message.stream.started provider=\(apiService.name) chat=\(chat.id.uuidString)")
                 var accumulatedResponse = ""
                 var deferImageResponse = false
                 var streamingMessage: MessageEntity?
@@ -218,6 +219,7 @@ class MessageManager: ObservableObject {
                 }
 
                 guard !accumulatedResponse.isEmpty else {
+                    AppLogger.shared.error("message.stream.empty provider=\(apiService.name) chat=\(chat.id.uuidString)")
                     self.endActivity(
                         for: chat.id,
                         kind: .failed(message: APIError.invalidResponse.localizedDescription)
@@ -276,12 +278,15 @@ class MessageManager: ObservableObject {
                 completion(.failure(CancellationError()))
             }
             catch {
-                print("Streaming error: \(error)")
+                AppLogger.shared.error(
+                    "message.stream.failed provider=\(apiService.name) chat=\(chat.id.uuidString) error=\(error.localizedDescription)"
+                )
                 if streamGeneration == generation {
                     self.endActivity(for: chat.id, kind: .failed(message: error.localizedDescription))
                 }
                 completion(.failure(error))
             }
+
         }
     }
 

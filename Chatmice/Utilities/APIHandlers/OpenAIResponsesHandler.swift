@@ -84,10 +84,14 @@ class OpenAIResponsesHandler: OpenAIHandlerBase, APIService {
             let streamTask = Task {
                 defer { self.activeStreamTask = nil }
                 do {
+                    AppLogger.shared.info("responses.request stream=true url=\(request.url?.absoluteString ?? "unknown") model=\(self.model)")
                     let (stream, response) = try await session.bytes(for: request)
                     if let httpResponse = response as? HTTPURLResponse,
                         [404, 405].contains(httpResponse.statusCode)
                     {
+                        AppLogger.shared.info(
+                            "responses.fallback stream=false status=\(httpResponse.statusCode) url=\(request.url?.absoluteString ?? "unknown") model=\(self.model)"
+                        )
                         do {
                             let message = try await self.sendNonStreamingFallback(
                                 requestMessages: requestMessages,
@@ -97,6 +101,7 @@ class OpenAIResponsesHandler: OpenAIHandlerBase, APIService {
                             continuation.finish()
                         }
                         catch {
+                            AppLogger.shared.error("responses.fallback.failed model=\(self.model) error=\(error.localizedDescription)")
                             continuation.finish(throwing: error)
                         }
                         return
@@ -192,6 +197,15 @@ class OpenAIResponsesHandler: OpenAIHandlerBase, APIService {
             includeTemperature: shouldSendTemperature()
         )
         let (data, response) = try await session.data(for: request)
+        if let http = response as? HTTPURLResponse, [404, 405].contains(http.statusCode) {
+            AppLogger.shared.info("responses.fallback wire=chat-completions status=\(http.statusCode) model=\(model)")
+            return try await sendChatCompletionsFallback(
+                requestMessages: requestMessages,
+                temperature: temperature
+            )
+        }
+
+        AppLogger.shared.info("responses.request stream=false url=\(request.url?.absoluteString ?? "unknown") model=\(model)")
         switch handleAPIResponse(response, data: data, error: nil) {
         case .success(let responseData):
             guard let responseData,
@@ -201,8 +215,32 @@ class OpenAIResponsesHandler: OpenAIHandlerBase, APIService {
             }
             return message
         case .failure(let error):
+            let body = String(data: data, encoding: .utf8) ?? ""
+            AppLogger.shared.error("responses.request.failed stream=false model=\(model) error=\(error.localizedDescription) body=\(body)")
             throw error
         }
+    }
+
+    private func sendChatCompletionsFallback(
+        requestMessages: [[String: String]],
+        temperature: Float
+    ) async throws -> String {
+        let config = APIServiceConfig(
+            name: name,
+            apiUrl: baseURL,
+            apiKey: apiKey,
+            model: model,
+            type: "chatgpt"
+        )
+        let handler = ChatGPTHandler(config: config, session: session)
+        let stream = try await handler.sendMessageStream(requestMessages, temperature: temperature)
+        var response = ""
+        for try await chunk in stream { response += chunk }
+        guard !response.isEmpty else {
+            AppLogger.shared.error("responses.fallback.empty wire=chat-completions model=\(model)")
+            throw APIError.invalidResponse
+        }
+        return response
     }
 
 

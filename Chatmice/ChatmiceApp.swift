@@ -822,6 +822,8 @@ struct ChatmiceApp: App {
     private let updateCoordinator = V3UpdateCoordinator.shared
 
     init() {
+        let appVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "unknown"
+        AppLogger.shared.info("app.started version=\(appVersion) log=\(AppLogger.logFileURL.path)")
 
         ValueTransformer.setValueTransformer(
             RequestMessagesTransformer(),
@@ -941,6 +943,12 @@ struct ChatmiceApp: App {
                     )
                 }
                 .keyboardShortcut("s", modifiers: [.command])
+            }
+
+            CommandGroup(after: .help) {
+                Button("Open Logs Folder") {
+                    NSWorkspace.shared.open(AppLogger.logsDirectoryURL)
+                }
             }
         }
 
