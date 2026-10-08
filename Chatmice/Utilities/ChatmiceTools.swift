@@ -82,39 +82,45 @@ enum ToolSourceCatalog {
         let statusByName = Dictionary(uniqueKeysWithValues: statuses.map { ($0.name, $0) })
         let configsByName = Dictionary(configs.map { ($0.name, $0) }, uniquingKeysWith: { _, latest in latest })
 
-        var sources = [
-            ToolSourceDescriptor(
+        var sources: [ToolSourceDescriptor] = []
+        if resolvedFileToolsEnabled {
+            sources.append(ToolSourceDescriptor(
                 id: ToolSourceID.fileTool,
                 name: "File Tool",
-                detail: resolvedFileToolsEnabled
-                    ? "Files, directories, and read-only SQLite" : "Disabled globally",
+                detail: "Files, directories, and read-only SQLite",
                 kind: .fileTool,
-                isAvailable: resolvedFileToolsEnabled
-            ),
-            ToolSourceDescriptor(
+                isAvailable: true
+            ))
+        }
+        if resolvedBashEnabled {
+            sources.append(ToolSourceDescriptor(
                 id: ToolSourceID.codeExecution,
                 name: "Code Execution",
-                detail: resolvedBashEnabled ? "Bash and sandboxed Python" : "Disabled globally",
+                detail: "Bash and sandboxed Python",
                 kind: .codeExecution,
-                isAvailable: resolvedBashEnabled
-            ),
-            ToolSourceDescriptor(
+                isAvailable: true
+            ))
+        }
+        if resolvedSkillsEnabled {
+            sources.append(ToolSourceDescriptor(
                 id: ToolSourceID.skills,
                 name: "Skills",
-                detail: resolvedSkillsEnabled ? "Installed skill instructions" : "Disabled globally",
+                detail: "Installed skill instructions",
                 kind: .skills,
-                isAvailable: resolvedSkillsEnabled
-            ),
-            ToolSourceDescriptor(
+                isAvailable: true
+            ))
+        }
+        if resolvedComputerEnabled {
+            sources.append(ToolSourceDescriptor(
                 id: ToolSourceID.computerUse,
                 name: "Computer Use",
-                detail: resolvedComputerEnabled ? "Screenshot, mouse, and keyboard" : "Disabled globally",
+                detail: "Screenshot, mouse, and keyboard",
                 kind: .computerUse,
-                isAvailable: resolvedComputerEnabled
-            ),
-        ]
+                isAvailable: true
+            ))
+        }
 
-        let serverNames = Set(configsByName.keys).union(statusByName.keys).sorted()
+        let serverNames = Set(configs.filter(\.enabled).map(\.name)).sorted()
         sources.append(
             contentsOf: serverNames.map { name in
                 let config = configsByName[name]

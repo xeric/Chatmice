@@ -37,18 +37,14 @@ struct TabWebSearchSettingsView: View {
                     Toggle("Enable Web Search", isOn: binding(\.enabled))
                         .toggleStyle(.switch)
                     Text(
-                        "Makes web_search and web_fetch available to AI assistants. Provider credentials are stored in Apple Keychain."
+                        "Makes the selected web_search and web_fetch tools available to AI assistants. Provider credentials are stored in Apple Keychain."
                     )
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
                     if settings.enabled {
                         Divider()
-                        providerPicker(
-                            title: "Search provider",
-                            selection: binding(\.defaultSearchProvider),
-                            providers: enabledSearchProviders
-                        )
+                        searchProviderPicker()
                         providerPicker(
                             title: "URL retrieval provider",
                             selection: binding(\.defaultFetchProvider),
@@ -90,6 +86,23 @@ struct TabWebSearchSettingsView: View {
         .onAppear {
             loadSecrets()
             normalizeProviderSelections()
+        }
+    }
+
+    private func searchProviderPicker() -> some View {
+        HStack {
+            Text("Search provider")
+            Spacer()
+            Picker("Search provider", selection: binding(\.defaultSearchProvider)) {
+                Text("Disabled")
+                    .tag(nil as WebSearchProviderID?)
+                ForEach(enabledSearchProviders) { provider in
+                    Text(provider.name).tag(Optional(provider))
+                }
+            }
+            .labelsHidden()
+            .fixedSize()
+            .frame(width: 190, alignment: .trailing)
         }
     }
 
@@ -360,10 +373,10 @@ struct TabWebSearchSettingsView: View {
 
     private func normalizeProviderSelections() {
         let searchProviders = enabledSearchProviders
-        if !searchProviders.contains(settings.defaultSearchProvider),
-            let fallback = searchProviders.first
+        if let selected = settings.defaultSearchProvider,
+            !searchProviders.contains(selected)
         {
-            settings.defaultSearchProvider = fallback
+            settings.defaultSearchProvider = searchProviders.first
         }
 
         let fetchProviders = enabledFetchProviders

@@ -168,7 +168,7 @@ struct ModelPickerPopoverView: View {
                     }
                 }
                 .padding(.leading, 8)
-                .padding(.trailing, 24)
+                .padding(.trailing, 8)
                 .padding(.vertical, 8)
             }
             .frame(height: 380)

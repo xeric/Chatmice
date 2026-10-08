@@ -52,7 +52,7 @@ class CloudSyncManager: ObservableObject {
 
     private var eventSubscription: AnyCancellable?
     private var container: NSPersistentCloudKitContainer?
-    private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "macai", category: "CloudSync")
+    private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "xeric.com.chatmice", category: "CloudSync")
     private let cloudContainerIdentifier = AppConstants.cloudKitContainerIdentifier
 
     struct SyncLogEntry: Identifiable {
@@ -119,7 +119,7 @@ class CloudSyncManager: ObservableObject {
     }
 
     func exportLogsAsText() -> String {
-        var output = "=== macai iCloud Sync Debug Log ===\n"
+        var output = "=== Chatmice iCloud Sync Debug Log ===\n"
         output += "Export time: \(Date())\n"
         output += "Sync status: \(syncStatus.displayText)\n"
         if let lastSync = lastSyncDate {

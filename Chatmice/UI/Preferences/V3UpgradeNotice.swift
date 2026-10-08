@@ -376,6 +376,6 @@ private struct V3ChangeRow: View {
     }
 }
 
-#Preview("macai 3 upgrade notice") {
+#Preview("Chatmice 3 upgrade notice") {
     V3UpgradeNoticeView(version: "3.0", state: V3UpgradeNoticeState(), onDismiss: {}, onUpdate: {})
 }

@@ -3,7 +3,7 @@
 //  Chatmice
 //
 //  APIService Proxy that orchestrates multi-turn Agent tool calling (MCP, Bash, Skills).
-//  Seamlessly integrates into macai without modifying MessageManager or ChatView.
+//  Integrates with MessageManager and ChatView through the existing API service interface.
 //
 
 import AppKit
@@ -111,20 +111,27 @@ class ChatmiceEngine: APIService, AgentActivityReporting {
     static func shouldUseAgentRequestPath(toolsEnabled: Bool, searchMode: SearchMode) -> Bool {
         toolsEnabled || searchMode != .off
     }
+    static func effectiveSearchMode(
+        searchEnabled: Bool,
+        storedMode: SearchMode,
+        isSonarModel: Bool
+    ) -> SearchMode {
+        guard searchEnabled else { return .off }
+        return isSonarModel && storedMode == .web ? .native : storedMode
+    }
 
     func sendMessageStream(
         _ requestMessages: [[String: String]],
         temperature: Float
     ) async throws -> AsyncThrowingStream<String, Error> {
-        let toolsEnabled = (UserDefaults.standard.object(forKey: Self.toolsEnabledKey) as? Bool) ?? true
+        let defaults = UserDefaults.standard
+        let agentToolsEnabled = (defaults.object(forKey: Self.toolsEnabledKey) as? Bool) ?? true
         let searchMode = activeSearchMode
         AppLogger.shared.info(
-            "engine.request provider=\(serviceType) model=\(config.model) url=\(baseURL.absoluteString) tools=\(toolsEnabled) search=\(searchMode.rawValue)"
+            "engine.request provider=\(serviceType) model=\(config.model) url=\(baseURL.absoluteString) tools=\(agentToolsEnabled) search=\(searchMode.rawValue)"
         )
 
-        // Search is independent from general agent tools. Only bypass the agent
-        // request path when both capabilities are disabled.
-        guard Self.shouldUseAgentRequestPath(toolsEnabled: toolsEnabled, searchMode: searchMode) else {
+        guard Self.shouldUseAgentRequestPath(toolsEnabled: agentToolsEnabled, searchMode: searchMode) else {
             return try await baseService.sendMessageStream(requestMessages, temperature: temperature)
         }
         return AsyncThrowingStream { continuation in
@@ -231,30 +238,26 @@ class ChatmiceEngine: APIService, AgentActivityReporting {
         }
         let box = ToolBox()
         let defaults = UserDefaults.standard
-        let toolsEnabled = (defaults.object(forKey: Self.toolsEnabledKey) as? Bool) ?? true
+        let agentToolsEnabled = (defaults.object(forKey: Self.toolsEnabledKey) as? Bool) ?? true
         let disabledSources = ToolSelectionStore.disabledSourceIDs(for: chatID)
         let fileToolsEnabled =
-            toolsEnabled
+            agentToolsEnabled
             && (defaults.object(forKey: "chatmiceFileToolsEnabled") as? Bool ?? true)
             && !disabledSources.contains(ToolSourceID.fileTool)
         let codeExecutionEnabled =
-            toolsEnabled
+            agentToolsEnabled
             && (defaults.object(forKey: Self.bashEnabledKey) as? Bool ?? true)
             && !disabledSources.contains(ToolSourceID.codeExecution)
         let skillsEnabled =
-            toolsEnabled
+            agentToolsEnabled
             && (defaults.object(forKey: Self.skillsEnabledKey) as? Bool ?? true)
             && !disabledSources.contains(ToolSourceID.skills)
         let computerEnabled =
-            toolsEnabled
+            agentToolsEnabled
             && (defaults.object(forKey: Self.computerEnabledKey) as? Bool ?? false)
             && !disabledSources.contains(ToolSourceID.computerUse)
-        let webSearchSettings = WebSearchSettings.load()
-        let searchMode =
-            chatID.map {
-                SearchModeStore.mode(for: $0)
-            } ?? .off
-        let webSearchEnabled = webSearchSettings.enabled && searchMode == .web
+        let searchMode = activeSearchMode
+        let webSearchEnabled = searchMode == .web
         let disabledMCPServers = Set(disabledSources.compactMap(ToolSourceID.mcpServerName(from:)))
         let approvalMode =
             BashApprovalMode(rawValue: defaults.string(forKey: Self.bashApprovalModeKey) ?? "")
@@ -298,10 +301,15 @@ class ChatmiceEngine: APIService, AgentActivityReporting {
             await box.register(PressKeyTool())
         }
         if webSearchEnabled {
-            await box.register(WebSearchTool())
-            await box.register(WebFetchTool())
+            let webSettings = WebSearchSettings.load()
+            if webSettings.searchAvailable {
+                await box.register(WebSearchTool())
+            }
+            if webSettings.fetchAvailable {
+                await box.register(WebFetchTool())
+            }
         }
-        if toolsEnabled {
+        if agentToolsEnabled {
             for tool in await MCPService.shared.allTools(excludingServers: disabledMCPServers) {
                 await box.register(tool)
             }
@@ -535,10 +543,12 @@ class ChatmiceEngine: APIService, AgentActivityReporting {
 
     private var activeSearchMode: SearchMode {
         guard let chatID else { return .off }
-        let mode = SearchModeStore.mode(for: chatID)
-        return isSonarModel && mode == .web ? .native : mode
+        return Self.effectiveSearchMode(
+            searchEnabled: WebSearchSettings.load().enabled,
+            storedMode: SearchModeStore.mode(for: chatID),
+            isSonarModel: isSonarModel
+        )
     }
-
     private var nativeSearchEnabled: Bool {
         activeSearchMode == .native
     }

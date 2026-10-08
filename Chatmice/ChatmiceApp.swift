@@ -211,10 +211,9 @@ class PersistenceController: ObservableObject {
             container = NSPersistentContainer(name: "macaiDataModel")
         }
 
-        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        let chatmiceDir = appSupport.appendingPathComponent("Chatmice", isDirectory: true)
+        let chatmiceDir = AppConstants.applicationSupportDirectoryURL
         try? FileManager.default.createDirectory(at: chatmiceDir, withIntermediateDirectories: true)
-        let storeURL = chatmiceDir.appendingPathComponent("chatmiceDataModel.sqlite")
+        let storeURL = AppConstants.persistentStoreURL
 
         for description in container.persistentStoreDescriptions {
             description.url = inMemory ? URL(fileURLWithPath: "/dev/null") : storeURL
@@ -668,15 +667,21 @@ private struct MainWindowTracker: NSViewRepresentable {
 @MainActor
 private final class ThinScrollerController: NSObject {
     static let shared = ThinScrollerController()
+    private var scheduledWindows: Set<ObjectIdentifier> = []
 
     private override init() {
         super.init()
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(windowDidBecomeKey(_:)),
-            name: NSWindow.didBecomeKeyNotification,
-            object: nil
-        )
+        for name in [
+            NSWindow.didBecomeKeyNotification,
+            NSWindow.didUpdateNotification,
+        ] {
+            NotificationCenter.default.addObserver(
+                self,
+                selector: #selector(windowNeedsScrollerConfiguration(_:)),
+                name: name,
+                object: nil
+            )
+        }
     }
 
     func applyToExistingWindows() {
@@ -685,15 +690,22 @@ private final class ThinScrollerController: NSObject {
         }
     }
 
-    @objc private func windowDidBecomeKey(_ notification: Notification) {
+    @objc private func windowNeedsScrollerConfiguration(_ notification: Notification) {
         guard let window = notification.object as? NSWindow else { return }
         scheduleConfiguration(for: window)
     }
 
     private func scheduleConfiguration(for window: NSWindow) {
+        let windowID = ObjectIdentifier(window)
+        guard scheduledWindows.insert(windowID).inserted else { return }
+
         for delay in [0.0, 0.25, 1.0] {
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self, weak window] in
-                guard let self, let contentView = window?.contentView else { return }
+                guard let self else { return }
+                if delay == 1.0 {
+                    self.scheduledWindows.remove(windowID)
+                }
+                guard let contentView = window?.contentView else { return }
                 self.configure(contentView)
             }
         }
@@ -701,12 +713,16 @@ private final class ThinScrollerController: NSObject {
 
     private func configure(_ view: NSView) {
         if let scrollView = view as? NSScrollView {
-            scrollView.scrollerStyle = .overlay
-            scrollView.autohidesScrollers = true
-            scrollView.verticalScroller?.controlSize = .mini
-            scrollView.horizontalScroller?.controlSize = .mini
+            if scrollView.scrollerStyle != .overlay { scrollView.scrollerStyle = .overlay }
+            if !scrollView.autohidesScrollers { scrollView.autohidesScrollers = true }
+            if scrollView.verticalScroller?.controlSize != .mini {
+                scrollView.verticalScroller?.controlSize = .mini
+            }
+            if scrollView.horizontalScroller?.controlSize != .mini {
+                scrollView.horizontalScroller?.controlSize = .mini
+            }
         }
-        else if let scroller = view as? NSScroller {
+        else if let scroller = view as? NSScroller, scroller.controlSize != .mini {
             scroller.controlSize = .mini
         }
         for subview in view.subviews {

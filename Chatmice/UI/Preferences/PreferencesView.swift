@@ -79,6 +79,7 @@ struct PreferencesView: View {
                     .tag(page)
             }
             .listStyle(.sidebar)
+            .contentMargins(.top, 14, for: .scrollContent)
             .navigationSplitViewColumnWidth(min: 200, ideal: 215, max: 240)
         } detail: {
             detailContent

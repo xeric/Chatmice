@@ -118,7 +118,7 @@ struct WebSearchProviderConfig: Codable, Equatable, Sendable, Identifiable {
 
 struct WebSearchSettings: Codable, Equatable, Sendable {
     var enabled = false
-    var defaultSearchProvider: WebSearchProviderID = .tavily
+    var defaultSearchProvider: WebSearchProviderID? = .tavily
     var defaultFetchProvider: WebSearchProviderID = .fetch
     var maxResults = 5
     var providers = WebSearchProviderID.allCases.map { WebSearchProviderConfig(id: $0) }
@@ -139,6 +139,17 @@ struct WebSearchSettings: Codable, Equatable, Sendable {
 
     func provider(_ id: WebSearchProviderID) -> WebSearchProviderConfig {
         providers.first(where: { $0.id == id }) ?? WebSearchProviderConfig(id: id)
+    }
+
+    var searchAvailable: Bool {
+        guard enabled, let id = defaultSearchProvider else { return false }
+        let config = provider(id)
+        return config.enabled && id.supportsSearch
+    }
+
+    var fetchAvailable: Bool {
+        let config = provider(defaultFetchProvider)
+        return enabled && config.enabled && defaultFetchProvider.supportsFetch
     }
 
     static func apiKey(for id: WebSearchProviderID) -> String {
@@ -215,11 +226,10 @@ struct WebSearchClient: Sendable {
     init(session: URLSession = .shared) { self.session = session }
 
     func search(query: String, settings: WebSearchSettings) async throws -> String {
-        let provider = settings.defaultSearchProvider
-        let config = settings.provider(provider)
-        guard settings.enabled, config.enabled, provider.supportsSearch else {
-            throw ToolError.executionFailed("The selected web search provider is disabled or unavailable")
+        guard settings.searchAvailable, let provider = settings.defaultSearchProvider else {
+            throw ToolError.executionFailed("Web search is disabled in Settings > Web Search")
         }
+        let config = settings.provider(provider)
         if provider.requiresAPIKey && WebSearchSettings.apiKey(for: provider).isEmpty {
             throw ToolError.executionFailed("Add an API key for \(provider.name) in Settings > Web Search")
         }

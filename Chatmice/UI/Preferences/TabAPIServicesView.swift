@@ -19,8 +19,7 @@ struct TabAPIServicesView: View {
     private var apiServices: FetchedResults<APIServiceEntity>
 
     @State private var editingService: APIServiceEntity?
-    @State private var isShowingAddSheet = false
-    @State private var initialAddPreset: ProviderPresetItem?
+    @State private var addSheetRequest: ProviderAddSheetRequest?
 
     var body: some View {
         Form {
@@ -108,10 +107,10 @@ struct TabAPIServicesView: View {
                 }
             )
         }
-        .sheet(isPresented: $isShowingAddSheet) {
+        .sheet(item: $addSheetRequest) { request in
             ProviderEditorSheet(
                 service: nil,
-                initialPreset: initialAddPreset,
+                initialPreset: request.preset,
                 onSave: {
                     try? viewContext.save()
                     sanitizeDefaults()
@@ -183,8 +182,7 @@ struct TabAPIServicesView: View {
     }
 
     private func presentAddSheet(preset: ProviderPresetItem?) {
-        initialAddPreset = preset
-        isShowingAddSheet = true
+        addSheetRequest = ProviderAddSheetRequest(preset: preset)
     }
 
     private func duplicateService(_ service: APIServiceEntity) {
@@ -269,6 +267,11 @@ struct TabAPIServicesView: View {
         return entity
     }
 
+}
+
+private struct ProviderAddSheetRequest: Identifiable {
+    let id = UUID()
+    let preset: ProviderPresetItem?
 }
 
 // Preset Provider template used for populating the add menu
@@ -523,23 +526,6 @@ struct ProviderEditorSheet: View {
                                 .controlSize(.small)
                             }
 
-                            HStack(spacing: 8) {
-                                Button(action: openCapabilityTestSheet) {
-                                    Label("Test Connection", systemImage: "wave.3.right")
-                                }
-                                .buttonStyle(.bordered)
-                                .controlSize(.small)
-                                .disabled(modelsList.isEmpty || urlText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-
-                                if let currentlyTestingModel {
-                                    ProgressView()
-                                        .controlSize(.mini)
-                                    Text("Testing \(currentlyTestingModel)…")
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                        .lineLimit(1)
-                                }
-                            }
 
                             if let err = fetchError {
                                 Text(err)
@@ -607,6 +593,28 @@ struct ProviderEditorSheet: View {
                                             RoundedRectangle(cornerRadius: 6, style: .continuous)
                                                 .strokeBorder(Color(NSColor.separatorColor), lineWidth: 0.5)
                                         )
+                                )
+                            }
+                            HStack(spacing: 8) {
+                                if let currentlyTestingModel {
+                                    ProgressView()
+                                        .controlSize(.mini)
+                                    Text("Testing \(currentlyTestingModel)…")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(1)
+                                }
+
+                                Spacer()
+
+                                Button(action: openCapabilityTestSheet) {
+                                    Label("Test Connection", systemImage: "wave.3.right")
+                                }
+                                .buttonStyle(.bordered)
+                                .controlSize(.small)
+                                .disabled(
+                                    modelsList.isEmpty
+                                        || urlText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                                 )
                             }
 
@@ -904,17 +912,22 @@ struct ProviderEditorSheet: View {
                 let key = "service_models_\(id.uuidString)"
                 if let data = UserDefaults.standard.string(forKey: key)?.data(using: .utf8),
                    let list = try? JSONDecoder().decode([ServiceModelRow].self, from: data) {
-                    // Sanitize away any legacy "optional" nickname placeholder values
-                    self.modelsList = list.map { ServiceModelRow(id: $0.id, nickname: ($0.nickname == "optional" ? "" : $0.nickname), modelID: $0.modelID) }
+                    modelsList = list.map {
+                        ServiceModelRow(id: $0.id, nickname: $0.nickname == "optional" ? "" : $0.nickname, modelID: $0.modelID)
+                    }
                 }
             }
-        } else if let preset = initialPreset {
-            nameText = preset.name
-            urlText = preset.defaultURL
-            typeText = preset.type
-            modelsList = []
-            apiKeyText = ProcessInfo.processInfo.environment["LOCAL_SAP_AI_CORE_PROXY_KEY"] ?? ""
+            return
         }
+
+        let defaultType = initialPreset?.type ?? AppConstants.defaultApiType
+        let defaultConfiguration = AppConstants.defaultApiConfigurations[defaultType]
+        nameText = initialPreset?.name ?? defaultConfiguration?.name ?? "Custom Provider"
+        urlText = initialPreset?.defaultURL ?? defaultConfiguration?.url ?? ""
+        typeText = defaultType
+        let defaultModel = initialPreset?.defaultModel ?? defaultConfiguration?.defaultModel ?? ""
+        modelsList = defaultModel.isEmpty ? [] : [ServiceModelRow(nickname: "", modelID: defaultModel)]
+        apiKeyText = ProcessInfo.processInfo.environment["LOCAL_SAP_AI_CORE_PROXY_KEY"] ?? ""
     }
 
     private func saveChanges() {

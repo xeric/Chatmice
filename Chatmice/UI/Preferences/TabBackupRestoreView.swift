@@ -53,12 +53,38 @@ struct DatabaseBackupInfo: Identifiable, Hashable {
 
 enum DatabaseBackupManager {
     static func backupsDirectoryURL() -> URL? {
-        let base = NSPersistentContainer.defaultDirectoryURL()
+        let canonicalURL = AppConstants.backupsDirectoryURL
         let bundleID = Bundle.main.bundleIdentifier ?? "xeric.com.chatmice"
-        let backupsURL = base
+        let legacyURL = NSPersistentContainer.defaultDirectoryURL()
             .appendingPathComponent(bundleID, isDirectory: true)
             .appendingPathComponent("Backups", isDirectory: true)
-        return backupsURL
+        let fm = FileManager.default
+
+        if legacyURL != canonicalURL, fm.fileExists(atPath: legacyURL.path) {
+            do {
+                try fm.createDirectory(at: canonicalURL, withIntermediateDirectories: true)
+                for item in try fm.contentsOfDirectory(
+                    at: legacyURL,
+                    includingPropertiesForKeys: nil,
+                    options: [.skipsHiddenFiles]
+                ) {
+                    let destination = canonicalURL.appendingPathComponent(item.lastPathComponent)
+                    guard !fm.fileExists(atPath: destination.path) else { continue }
+                    try fm.copyItem(at: item, to: destination)
+                }
+            }
+            catch {
+                AppLogger.shared.error("backup.directoryMigration failed=\(error.localizedDescription)")
+            }
+        }
+        return canonicalURL
+    }
+
+    private static func activeStoreURL() -> URL? {
+        PersistenceController.shared.container.persistentStoreCoordinator.persistentStores
+            .compactMap(\.url)
+            .first(where: { $0.path != "/dev/null" })
+            ?? AppConstants.persistentStoreURL
     }
 
     static func discoverBackups() -> [DatabaseBackupInfo] {
@@ -170,25 +196,19 @@ enum DatabaseBackupManager {
         guard let backupsDir = backupsDirectoryURL() else {
             throw BackupError.backupsDirectoryNotFound
         }
-
-        // Get the current store URL
-        let base = NSPersistentContainer.defaultDirectoryURL()
-        let storeBaseURL = base.appendingPathComponent("macaiDataModel")
-        let sqliteURL = storeBaseURL.appendingPathExtension("sqlite")
-
-        guard fm.fileExists(atPath: sqliteURL.path) else {
+        guard let sqliteURL = activeStoreURL(), fm.fileExists(atPath: sqliteURL.path) else {
             throw BackupError.sourceNotFound
         }
-
-        // Create backup folder name
         let timestamp = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")
-        let folderName = customName ?? "Manual-Backup-\(timestamp)"
-        let backupFolder = backupsDir.appendingPathComponent(folderName, isDirectory: true)
+        return try createBackup(from: sqliteURL, in: backupsDir, named: customName ?? "Manual-Backup-\(timestamp)")
+    }
 
-        // Create directories if needed
+    static func createBackup(from sqliteURL: URL, in backupsDir: URL, named customName: String) throws -> URL {
+        let fm = FileManager.default
+        let storeBaseURL = sqliteURL.deletingPathExtension()
+        let backupFolder = backupsDir.appendingPathComponent(customName, isDirectory: true)
         try fm.createDirectory(at: backupFolder, withIntermediateDirectories: true)
 
-        // Copy all store files
         for ext in ["sqlite", "sqlite-wal", "sqlite-shm"] {
             let source = storeBaseURL.appendingPathExtension(ext)
             guard fm.fileExists(atPath: source.path) else { continue }
@@ -216,14 +236,19 @@ enum DatabaseBackupManager {
 
     static func restoreBackup(_ backup: DatabaseBackupInfo) throws {
         let fm = FileManager.default
-        let base = NSPersistentContainer.defaultDirectoryURL()
-        let storeBaseURL = base.appendingPathComponent("macaiDataModel")
+        guard let sqliteURL = activeStoreURL() else {
+            throw BackupError.sourceNotFound
+        }
+        let storeBaseURL = sqliteURL.deletingPathExtension()
 
         UserDefaults.standard.set(true, forKey: "CoreDataMigrationRetrySkipBackup")
 
-        // Copy backup files to store location
         for ext in ["sqlite", "sqlite-wal", "sqlite-shm"] {
-            let source = backup.url.appendingPathComponent("macaiDataModel.\(ext)")
+            let currentName = "chatmiceDataModel.\(ext)"
+            let legacyName = "macaiDataModel.\(ext)"
+            let currentSource = backup.url.appendingPathComponent(currentName)
+            let legacySource = backup.url.appendingPathComponent(legacyName)
+            let source = fm.fileExists(atPath: currentSource.path) ? currentSource : legacySource
             let destination = storeBaseURL.appendingPathExtension(ext)
 
             if fm.fileExists(atPath: source.path) {

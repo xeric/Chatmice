@@ -62,6 +62,18 @@ struct ChatTypography {
 }
 
 struct AppConstants {
+    static var applicationSupportDirectoryURL: URL {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("Chatmice", isDirectory: true)
+    }
+
+    static var persistentStoreURL: URL {
+        applicationSupportDirectoryURL.appendingPathComponent("chatmiceDataModel.sqlite")
+    }
+
+    static var backupsDirectoryURL: URL {
+        applicationSupportDirectoryURL.appendingPathComponent("Backups", isDirectory: true)
+    }
     static let requestTimeout: TimeInterval = 180
     static let apiUrlChatCompletions: String = "https://api.openai.com/v1/chat/completions"
     static let apiUrlOpenAIResponses: String = "https://api.openai.com/v1/responses"

@@ -87,6 +87,7 @@ struct ChatListView: View {
                 }
                 .padding(12)
             }
+            .contentMargins(.top, -8, for: .scrollIndicators)
         }
         .onChange(of: searchText) { _, newValue in
             debounceTimer?.invalidate()

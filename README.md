@@ -1,5 +1,5 @@
 <div align="center">
-  <img width="192" height="192" alt="Chatmice app icon" src="Chatmice/Assets.xcassets/AppIcon.appiconset/icon_1024x1024.png" />
+  <img width="192" height="192" alt="Chatmice app icon" src="docs/images/chatmice-app-icon.png" />
 </div>
 <h2 align="center">Chatmice</h2>
 

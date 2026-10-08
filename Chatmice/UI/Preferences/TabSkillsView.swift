@@ -21,12 +21,12 @@ struct TabToolsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            GroupBox("Agent Tools") {
+            GroupBox("Tools") {
                 VStack(alignment: .leading, spacing: 6) {
-                    Toggle("Enable Agent Tools", isOn: $toolsEnabled)
+                    Toggle("Enable Tools", isOn: $toolsEnabled)
                         .toggleStyle(.switch)
                     Text(
-                        "Allows the assistant to call enabled tools while answering. Turn this off to run every chat as model-only conversation."
+                        "Master switch for File Tool, Code Execution, Computer Use, Skills, and MCP servers. Individual selections are preserved while tools are off."
                     )
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -117,18 +117,14 @@ struct TabToolsView: View {
                         openSettings: ComputerUsePermissions.openAccessibilitySettings
                     )
 
-                    if !accessibilityGranted {
-                        Divider()
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text("Manual Accessibility Setup")
-                                .font(.subheadline.weight(.medium))
-                            Text(
-                                "If Chatmice does not appear automatically, open Accessibility settings and drag this app into the applications list."
-                            )
+                    Divider()
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Manual Accessibility Setup")
+                            .font(.subheadline.weight(.medium))
+                        Text("Drag Chatmice into the Accessibility applications list to add or replace its permission entry.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
-                            DraggableApplicationPermissionView()
-                        }
+                        DraggableApplicationPermissionView()
                     }
                 }
                 .padding(8)
@@ -136,11 +132,13 @@ struct TabToolsView: View {
             }
 
             DefaultToolListSettingsView(
+                agentToolsEnabled: toolsEnabled,
                 fileToolsEnabled: fileToolsEnabled,
                 bashEnabled: bashEnabled,
                 skillsEnabled: skillsEnabled,
                 computerEnabled: computerEnabled
             )
+            .disabled(!toolsEnabled)
         }
         .frame(minHeight: 340)
         .onAppear(perform: refreshPermissions)
@@ -876,6 +874,7 @@ private actor SkillMarketplaceInstaller {
 }
 
 private struct DefaultToolListSettingsView: View {
+    let agentToolsEnabled: Bool
     let fileToolsEnabled: Bool
     let bashEnabled: Bool
     let skillsEnabled: Bool
@@ -933,6 +932,7 @@ private struct DefaultToolListSettingsView: View {
         }
         .task { await loadSources() }
         .onChange(of: mcpServersJSON) { _, _ in reloadSources() }
+        .onChange(of: agentToolsEnabled) { _, _ in reloadSources() }
         .onChange(of: fileToolsEnabled) { _, _ in reloadSources() }
         .onChange(of: bashEnabled) { _, _ in reloadSources() }
         .onChange(of: skillsEnabled) { _, _ in reloadSources() }

@@ -167,7 +167,7 @@ private struct ChatmiceTextFieldRep: NSViewRepresentable {
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
         context.coordinator.parent = self
 
-        guard let textView = scrollView.documentView as? MacaiNSTextView else { return }
+        guard let textView = scrollView.documentView as? ChatmiceNSTextView else { return }
         textView.focusBinding = isFocused
         textView.onPasteImage = onPasteImage
 
@@ -188,7 +188,7 @@ private struct ChatmiceTextFieldRep: NSViewRepresentable {
         updateFocus(for: textView)
     }
 
-    private func makeTextView() -> MacaiNSTextView {
+    private func makeTextView() -> ChatmiceNSTextView {
         let textStorage = NSTextStorage()
         let layoutManager = NSLayoutManager()
         layoutManager.allowsNonContiguousLayout = true
@@ -200,7 +200,7 @@ private struct ChatmiceTextFieldRep: NSViewRepresentable {
         textContainer.lineFragmentPadding = 0
         layoutManager.addTextContainer(textContainer)
 
-        let textView = MacaiNSTextView(frame: .zero, textContainer: textContainer)
+        let textView = ChatmiceNSTextView(frame: .zero, textContainer: textContainer)
         textView.backgroundColor = NSColor.clear
         textView.drawsBackground = false
         textView.isEditable = true
@@ -330,7 +330,7 @@ private struct ChatmiceTextFieldRep: NSViewRepresentable {
     }
 }
 
-private final class MacaiNSTextView: NSTextView {
+private final class ChatmiceNSTextView: NSTextView {
     var focusBinding: Binding<Bool>?
     var onSizeChange: (() -> Void)?
     var onPasteImage: ((NSImage) -> Void)?

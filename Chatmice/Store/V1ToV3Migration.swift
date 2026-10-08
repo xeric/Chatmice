@@ -2,6 +2,20 @@ import AppKit
 import CoreData
 import SQLite3
 
+private enum LegacyStoreLocator {
+    static func baseURL(for containerName: String) -> URL {
+        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        let candidates = [
+            NSPersistentContainer.defaultDirectoryURL().appendingPathComponent(containerName),
+            appSupport.appendingPathComponent("macai", isDirectory: true).appendingPathComponent(containerName),
+            appSupport.appendingPathComponent(containerName),
+        ]
+        return candidates.first {
+            FileManager.default.fileExists(atPath: $0.appendingPathExtension("sqlite").path)
+        } ?? candidates[0]
+    }
+}
+
 struct MigrationState {
     let needsMigration: Bool
     let exportedData: MigrationDataExport?
@@ -12,7 +26,7 @@ struct MigrationState {
 /// into a freshly created store. Built-in mapping-model based migration is intentionally avoided.
 final class ProgrammaticMigrator {
     private let containerName: String
-    private static let restoreURL = URL(string: "https://macai.chat/update_2.3.x_issue/")!
+    private static let restoreURL = URL(string: "https://github.com/xeric/Chatmice")!
     private static var restoreLinkOpened = false
     private var activeProgressWindow: MigrationProgressWindow?
     private var attemptedMigrationThisRun = false
@@ -150,15 +164,14 @@ final class ProgrammaticMigrator {
     }
 
     private static func storeURL(for containerName: String) -> URL {
-        NSPersistentContainer.defaultDirectoryURL().appendingPathComponent("\(containerName).sqlite")
+        LegacyStoreLocator.baseURL(for: containerName).appendingPathExtension("sqlite")
     }
 
     private static func deleteLegacyStores(for containerName: String) {
         let fm = FileManager.default
-        let base = NSPersistentContainer.defaultDirectoryURL().appendingPathComponent(containerName)
+        let base = LegacyStoreLocator.baseURL(for: containerName)
         for ext in ["sqlite", "sqlite-wal", "sqlite-shm"] {
-            let url = base.appendingPathExtension(ext)
-            try? fm.removeItem(at: url)
+            try? fm.removeItem(at: base.appendingPathExtension(ext))
         }
     }
 
@@ -702,7 +715,7 @@ enum CoreDataBackupManager {
     private static let legacyBackupCompletedKey = "CoreDataBackupBeforeV3Completed"
     private static let backupNoticeShownKey = "CoreDataBackupBeforeV3NoticeShown"
     private static let migrationRetrySkipBackupKey = "CoreDataMigrationRetrySkipBackup"
-    private static let targetModelVersionName = "macai_v2.3.0"
+    private static let targetModelVersionName = "Chatmice_v3"
     private static let latestDBVersion = 3
 
     static func needsMigrationBackup(containerName: String) -> Bool {
@@ -802,11 +815,7 @@ enum CoreDataBackupManager {
     }
 
     static func backupsDirectoryURL() -> URL {
-        let base = NSPersistentContainer.defaultDirectoryURL()
-        let bundleID = Bundle.main.bundleIdentifier ?? "xeric.com.chatmice"
-        return base
-            .appendingPathComponent(bundleID, isDirectory: true)
-            .appendingPathComponent("Backups", isDirectory: true)
+        AppConstants.backupsDirectoryURL
     }
 
     static func createRecoveryBackup(containerName: String, reason: String) {
@@ -827,8 +836,7 @@ enum CoreDataBackupManager {
     }
 
     private static func defaultStoreURL(for containerName: String) -> URL? {
-        let base = NSPersistentContainer.defaultDirectoryURL()
-        return base.appendingPathComponent(containerName)
+        LegacyStoreLocator.baseURL(for: containerName)
     }
 
     private static func storeMetadata(at storeURL: URL) -> [String: Any]? {

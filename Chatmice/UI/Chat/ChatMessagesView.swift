@@ -20,6 +20,9 @@ struct ChatMessagesView: View {
     let reasoningDurations: [NSManagedObjectID: TimeInterval]
     let activeReasoningMessageID: NSManagedObjectID?
     @State private var scrollDebounceWorkItem: DispatchWorkItem?
+    @State private var bottomRestoreWorkItem: DispatchWorkItem?
+    @State private var restoringBottomForChatID: NSManagedObjectID?
+    @State private var bottomRestoreDeadline: Date?
     @ObservedObject private var activityStore = ChatActivityStore.shared
 
     private var activitySnapshot: ChatActivitySnapshot? {
@@ -100,11 +103,30 @@ struct ChatMessagesView: View {
                         .frame(height: 1)
                         .id(bottomAnchorID)
                 }
+                .background {
+                    GeometryReader { geometry in
+                        Color.clear.preference(
+                            key: ChatContentHeightPreferenceKey.self,
+                            value: geometry.size.height
+                        )
+                    }
+                }
                 .padding(24)
                 .onAppear {
-                    DispatchQueue.main.async {
-                        scrollView.scrollTo(bottomAnchorID, anchor: .bottom)
-                    }
+                    beginBottomRestore(using: scrollView)
+                }
+                .onChange(of: chat.objectID) {
+                    beginBottomRestore(using: scrollView)
+                }
+                .onPreferenceChange(ChatContentHeightPreferenceKey.self) { _ in
+                    guard restoringBottomForChatID == chat.objectID else { return }
+                    continueBottomRestore(using: scrollView)
+                }
+                .onDisappear {
+                    bottomRestoreWorkItem?.cancel()
+                    bottomRestoreWorkItem = nil
+                    restoringBottomForChatID = nil
+                    bottomRestoreDeadline = nil
                 }
                 .onSwipe { event in
                     switch event.direction {
@@ -112,9 +134,16 @@ struct ChatMessagesView: View {
                         scrollDebounceWorkItem?.cancel()
                         scrollDebounceWorkItem = nil
                         userIsScrolling = true
+                        bottomRestoreWorkItem?.cancel()
+                        bottomRestoreWorkItem = nil
+                        restoringBottomForChatID = nil
+                        bottomRestoreDeadline = nil
                     case .down:
+                        bottomRestoreWorkItem?.cancel()
+                        bottomRestoreWorkItem = nil
+                        restoringBottomForChatID = nil
+                        bottomRestoreDeadline = nil
                         userIsScrolling = false
-                        scrollView.scrollTo(bottomAnchorID, anchor: .bottom)
                     case .none, .left, .right:
                         break
                     }
@@ -175,6 +204,50 @@ struct ChatMessagesView: View {
         }
         .defaultScrollAnchor(.bottom)
         .padding(.bottom, 6)
+    }
+
+    private func beginBottomRestore(using scrollView: ScrollViewProxy) {
+        scrollDebounceWorkItem?.cancel()
+        scrollDebounceWorkItem = nil
+        bottomRestoreWorkItem?.cancel()
+        userIsScrolling = false
+        restoringBottomForChatID = chat.objectID
+        bottomRestoreDeadline = Date().addingTimeInterval(2)
+        continueBottomRestore(using: scrollView)
+    }
+
+    private func continueBottomRestore(using scrollView: ScrollViewProxy) {
+        let chatID = chat.objectID
+        guard restoringBottomForChatID == chatID else { return }
+
+        DispatchQueue.main.async {
+            guard restoringBottomForChatID == chatID, chat.objectID == chatID else { return }
+            scrollView.scrollTo(bottomAnchorID, anchor: .bottom)
+        }
+
+        bottomRestoreWorkItem?.cancel()
+        let workItem = DispatchWorkItem {
+            guard restoringBottomForChatID == chatID, chat.objectID == chatID else { return }
+            scrollView.scrollTo(bottomAnchorID, anchor: .bottom)
+
+            if let deadline = bottomRestoreDeadline, Date() < deadline {
+                continueBottomRestore(using: scrollView)
+            } else {
+                restoringBottomForChatID = nil
+                bottomRestoreDeadline = nil
+                bottomRestoreWorkItem = nil
+            }
+        }
+        bottomRestoreWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12, execute: workItem)
+    }
+}
+
+private struct ChatContentHeightPreferenceKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
     }
 }
 

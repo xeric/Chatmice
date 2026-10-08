@@ -204,6 +204,7 @@ struct ContentView: View {
             }
         }
         .navigationTitle("")
+        .ignoresSafeArea(.container, edges: .top)
 
         .onChange(of: scenePhase) { _, phase in
             activityStore.updatePresentationContext(
@@ -256,11 +257,15 @@ struct ContentView: View {
 
     private var sidebarHeader: some View {
         Color.clear
-            .frame(height: 52)
+            .frame(height: 38)
     }
 
     private var detailHeader: some View {
         HStack(spacing: 12) {
+            if !isSidebarVisible {
+                // Reserve only the traffic-light and sidebar-toggle area.
+                Color.clear.frame(width: 132)
+            }
 
             Text(headerChat.map { $0.name.isEmpty ? ($0.persona?.name ?? "Chatmice") : $0.name } ?? "")
                 .font(.system(size: 15, weight: .semibold))
@@ -281,7 +286,7 @@ struct ContentView: View {
                     }
             }
             .padding(.horizontal, 11)
-            .frame(width: 320, height: 36)
+            .frame(minWidth: 180, idealWidth: 320, maxWidth: 320, minHeight: 36, maxHeight: 36)
             .background(
                 RoundedRectangle(cornerRadius: 16, style: .continuous)
                     .fill(Color.primary.opacity(0.045))

@@ -65,10 +65,20 @@ public actor SkillStore: SkillCatalog {
             let fm = FileManager.default
             let appSupport = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
             let chatmiceDir = appSupport.appendingPathComponent("Chatmice/skills", isDirectory: true)
-            let macaiDir = appSupport.appendingPathComponent("macai/skills", isDirectory: true)
+            let legacyDir = appSupport.appendingPathComponent("macai/skills", isDirectory: true)
             try? fm.createDirectory(at: chatmiceDir, withIntermediateDirectories: true)
-            try? fm.createDirectory(at: macaiDir, withIntermediateDirectories: true)
-            self.directories = [chatmiceDir, macaiDir]
+            if let entries = try? fm.contentsOfDirectory(
+                at: legacyDir,
+                includingPropertiesForKeys: [.isDirectoryKey],
+                options: [.skipsHiddenFiles]
+            ) {
+                for entry in entries {
+                    let destination = chatmiceDir.appendingPathComponent(entry.lastPathComponent)
+                    guard !fm.fileExists(atPath: destination.path) else { continue }
+                    try? fm.copyItem(at: entry, to: destination)
+                }
+            }
+            self.directories = [chatmiceDir]
         }
     }
 

@@ -298,11 +298,91 @@ final class ChatmiceTests: XCTestCase {
         XCTAssertTrue(ChatmiceEngine.shouldUseAgentRequestPath(toolsEnabled: false, searchMode: .native))
         XCTAssertTrue(ChatmiceEngine.shouldUseAgentRequestPath(toolsEnabled: false, searchMode: .web))
     }
+    func testDisabledWebSearchForcesStoredModesOff() {
+        XCTAssertEqual(
+            ChatmiceEngine.effectiveSearchMode(
+                searchEnabled: false,
+                storedMode: .native,
+                isSonarModel: false
+            ),
+            .off
+        )
+        XCTAssertEqual(
+            ChatmiceEngine.effectiveSearchMode(
+                searchEnabled: false,
+                storedMode: .web,
+                isSonarModel: true
+            ),
+            .off
+        )
+    }
+
+
+    func testDatabaseBackupCopiesCurrentStoreFiles() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("chatmice-backup-test-\(UUID().uuidString)", isDirectory: true)
+        let storeDirectory = root.appendingPathComponent("store", isDirectory: true)
+        let backupsDirectory = root.appendingPathComponent("backups", isDirectory: true)
+        try FileManager.default.createDirectory(at: storeDirectory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let sqliteURL = storeDirectory.appendingPathComponent("chatmiceDataModel.sqlite")
+        let walURL = storeDirectory.appendingPathComponent("chatmiceDataModel.sqlite-wal")
+        try Data("database".utf8).write(to: sqliteURL)
+        try Data("wal".utf8).write(to: walURL)
+
+        let backupURL = try DatabaseBackupManager.createBackup(
+            from: sqliteURL,
+            in: backupsDirectory,
+            named: "Manual-Test"
+        )
+
+        XCTAssertTrue(FileManager.default.fileExists(
+            atPath: backupURL.appendingPathComponent("chatmiceDataModel.sqlite").path
+        ))
+        XCTAssertTrue(FileManager.default.fileExists(
+            atPath: backupURL.appendingPathComponent("chatmiceDataModel.sqlite-wal").path
+        ))
+    }
+
+    func testSkillsRemainListedWhenAgentToolsAreDisabled() async {
+        let sources = await ToolSourceCatalog.load(
+            fileToolsEnabled: false,
+            bashEnabled: false,
+            skillsEnabled: true,
+            computerEnabled: false
+        )
+        let sourceIDs = Set(sources.map(\.id))
+
+        XCTAssertTrue(sourceIDs.contains(ToolSourceID.skills))
+        XCTAssertFalse(sourceIDs.contains(ToolSourceID.fileTool))
+        XCTAssertFalse(sourceIDs.contains(ToolSourceID.codeExecution))
+        XCTAssertFalse(sourceIDs.contains(ToolSourceID.computerUse))
+    }
+
+    func testDisabledBuiltInToolsAreExcludedFromSourceCatalog() async {
+        let sources = await ToolSourceCatalog.load(
+            fileToolsEnabled: false,
+            bashEnabled: false,
+            skillsEnabled: false,
+            computerEnabled: false
+        )
+        let sourceIDs = Set(sources.map(\.id))
+
+        XCTAssertFalse(sourceIDs.contains(ToolSourceID.fileTool))
+        XCTAssertFalse(sourceIDs.contains(ToolSourceID.codeExecution))
+        XCTAssertFalse(sourceIDs.contains(ToolSourceID.skills))
+        XCTAssertFalse(sourceIDs.contains(ToolSourceID.computerUse))
+    }
 
     func testResponsesTurnKeepsConfiguredWireAPIWhenToolsAreDisabled() async throws {
         let chatID = UUID()
         let defaults = UserDefaults.standard
         let previousToolsValue = defaults.object(forKey: ChatmiceEngine.toolsEnabledKey)
+        let previousWebSearchData = defaults.data(forKey: WebSearchSettings.storageKey)
+        var webSearchSettings = WebSearchSettings.load()
+        webSearchSettings.enabled = true
+        webSearchSettings.save()
         defaults.set(false, forKey: ChatmiceEngine.toolsEnabledKey)
         SearchModeStore.setMode(.native, for: chatID)
         defer {
@@ -311,6 +391,11 @@ final class ChatmiceTests: XCTestCase {
                 defaults.set(previousToolsValue, forKey: ChatmiceEngine.toolsEnabledKey)
             } else {
                 defaults.removeObject(forKey: ChatmiceEngine.toolsEnabledKey)
+            }
+            if let previousWebSearchData {
+                defaults.set(previousWebSearchData, forKey: WebSearchSettings.storageKey)
+            } else {
+                defaults.removeObject(forKey: WebSearchSettings.storageKey)
             }
             ResponsesFallbackURLProtocol.requestHandler = nil
         }
@@ -364,6 +449,10 @@ final class ChatmiceTests: XCTestCase {
         let chatID = UUID()
         let defaults = UserDefaults.standard
         let previousToolsValue = defaults.object(forKey: ChatmiceEngine.toolsEnabledKey)
+        let previousWebSearchData = defaults.data(forKey: WebSearchSettings.storageKey)
+        var webSearchSettings = WebSearchSettings.load()
+        webSearchSettings.enabled = true
+        webSearchSettings.save()
         defaults.set(false, forKey: ChatmiceEngine.toolsEnabledKey)
         SearchModeStore.setMode(.native, for: chatID)
         defer {
@@ -372,6 +461,11 @@ final class ChatmiceTests: XCTestCase {
                 defaults.set(previousToolsValue, forKey: ChatmiceEngine.toolsEnabledKey)
             } else {
                 defaults.removeObject(forKey: ChatmiceEngine.toolsEnabledKey)
+            }
+            if let previousWebSearchData {
+                defaults.set(previousWebSearchData, forKey: WebSearchSettings.storageKey)
+            } else {
+                defaults.removeObject(forKey: WebSearchSettings.storageKey)
             }
             ResponsesFallbackURLProtocol.requestHandler = nil
         }
