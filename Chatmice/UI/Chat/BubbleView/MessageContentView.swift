@@ -317,12 +317,14 @@ struct MessageContentView: View {
     let prefetchedElements: [MessageElements]?
     @Binding var searchText: String
     var currentSearchOccurrence: SearchOccurrence?
+    var allowsStreamingLayout = true
 
     @State private var showFullMessage = false
     @State private var isParsingFullMessage = false
     @State private var expandedReasoningElements: Set<String> = []
     @State private var expandedToolElements: Set<String> = []
     @State private var copiedMermaidItem: String?
+    @State private var hasUsedStreamingLayout = false
     @AppStorage("chatFontWeight") private var chatFontWeight = ChatFontWeightPreference.light.rawValue
 
     private var preferredFontWeight: ChatFontWeightPreference {
@@ -332,13 +334,39 @@ struct MessageContentView: View {
     private let largeMessageSymbolsThreshold = AppConstants.largeMessageSymbolsThreshold
 
     var body: some View {
-        VStack(alignment: .leading, spacing: ChatTypography.contentBlockSpacing) {
-            // Check if message contains image data or JSON with image_url before applying truncation
-            if content.count > largeMessageSymbolsThreshold && !showFullMessage && !containsImageData(content) {
-                renderPartialContent()
+        Group {
+            if !own && allowsStreamingLayout && (isStreaming || hasUsedStreamingLayout) {
+                StreamingMarkdownContentView(
+                    message: message,
+                    content: content,
+                    effectiveFontSize: effectiveFontSize,
+                    colorScheme: colorScheme,
+                    reasoningDuration: reasoningDuration,
+                    isStreaming: isStreaming,
+                    isActiveReasoning: isActiveReasoning,
+                    searchText: $searchText,
+                    currentSearchOccurrence: currentSearchOccurrence
+                )
             }
             else {
-                renderFullContent()
+                VStack(alignment: .leading, spacing: ChatTypography.contentBlockSpacing) {
+                    if content.count > largeMessageSymbolsThreshold && !showFullMessage && !containsImageData(content) {
+                        renderPartialContent()
+                    }
+                    else {
+                        renderFullContent()
+                    }
+                }
+            }
+        }
+        .onAppear {
+            if isStreaming {
+                hasUsedStreamingLayout = true
+            }
+        }
+        .onChange(of: isStreaming) { _, streaming in
+            if streaming {
+                hasUsedStreamingLayout = true
             }
         }
     }
@@ -1220,6 +1248,162 @@ struct MessageContentView: View {
     }
 }
 
+private struct StreamingMarkdownContentView: View {
+    let message: MessageEntity?
+    let content: String
+    let effectiveFontSize: Double
+    let colorScheme: ColorScheme
+    let reasoningDuration: TimeInterval?
+    let isStreaming: Bool
+    let isActiveReasoning: Bool
+    @Binding var searchText: String
+    let currentSearchOccurrence: SearchOccurrence?
+
+    var body: some View {
+        let parts = StreamingMarkdownSplitter.split(content)
+        let visibleTail = StreamingMarkdownSplitter.liveText(from: parts.tail)
+        VStack(alignment: .leading, spacing: ChatTypography.contentBlockSpacing) {
+            ForEach(Array(parts.blocks.enumerated()), id: \.offset) { _, block in
+                StableStreamingMarkdownBlock(
+                    message: message,
+                    content: block,
+                    effectiveFontSize: effectiveFontSize,
+                    colorScheme: colorScheme,
+                    reasoningDuration: reasoningDuration,
+                    isActiveReasoning: isActiveReasoning,
+                    searchText: $searchText,
+                    currentSearchOccurrence: currentSearchOccurrence
+                )
+                .equatable()
+            }
+
+            if !parts.tail.isEmpty {
+                if isStreaming {
+                    Text(verbatim: visibleTail)
+                        .font(.system(size: effectiveFontSize))
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                else {
+                    StableStreamingMarkdownBlock(
+                        message: message,
+                        content: parts.tail,
+                        effectiveFontSize: effectiveFontSize,
+                        colorScheme: colorScheme,
+                        reasoningDuration: reasoningDuration,
+                        isActiveReasoning: isActiveReasoning,
+                        searchText: $searchText,
+                        currentSearchOccurrence: currentSearchOccurrence
+                    )
+                }
+            }
+        }
+    }
+}
+
+private struct StableStreamingMarkdownBlock: View, Equatable {
+    let message: MessageEntity?
+    let content: String
+    let effectiveFontSize: Double
+    let colorScheme: ColorScheme
+    let reasoningDuration: TimeInterval?
+    let isActiveReasoning: Bool
+    @Binding var searchText: String
+    let currentSearchOccurrence: SearchOccurrence?
+
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.message?.objectID == rhs.message?.objectID
+            && lhs.content == rhs.content
+            && lhs.effectiveFontSize == rhs.effectiveFontSize
+            && lhs.colorScheme == rhs.colorScheme
+            && lhs.reasoningDuration == rhs.reasoningDuration
+            && lhs.isActiveReasoning == rhs.isActiveReasoning
+            && lhs.searchText == rhs.searchText
+            && lhs.currentSearchOccurrence == rhs.currentSearchOccurrence
+    }
+
+    var body: some View {
+        MessageContentView(
+            message: message,
+            content: content,
+            isStreaming: false,
+            own: false,
+            effectiveFontSize: effectiveFontSize,
+            colorScheme: colorScheme,
+            inlineAttachments: true,
+            reasoningDuration: reasoningDuration,
+            isActiveReasoning: isActiveReasoning,
+            prefetchedElements: nil,
+            searchText: $searchText,
+            currentSearchOccurrence: currentSearchOccurrence,
+            allowsStreamingLayout: false
+        )
+    }
+}
+
+enum StreamingMarkdownSplitter {
+    struct Parts {
+        let blocks: [String]
+        let tail: String
+    }
+
+    static func split(_ content: String) -> Parts {
+        let lines = content.split(separator: "\n", omittingEmptySubsequences: false)
+        var blocks: [String] = []
+        var current = ""
+
+        for (index, line) in lines.enumerated() {
+            current += line
+            if index < lines.count - 1 {
+                current += "\n"
+            }
+
+            let trimmedLine = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            let endsStructuredRecord =
+                trimmedLine.hasPrefix(ToolActivityRecord.openingTag)
+                && trimmedLine.hasSuffix(ToolActivityRecord.closingTag)
+            if trimmedLine.isEmpty || endsStructuredRecord, isCompleteBlock(current) {
+                blocks.append(current)
+                current = ""
+            }
+        }
+
+        return Parts(blocks: blocks, tail: current)
+    }
+
+    static func liveText(from tail: String) -> String {
+        var visible = tail
+        while let openingRange = visible.range(of: ToolActivityRecord.openingTag) {
+            let suffix = visible[openingRange.upperBound...]
+            guard let closingRange = suffix.range(of: ToolActivityRecord.closingTag) else {
+                visible.removeSubrange(openingRange.lowerBound...)
+                break
+            }
+            visible.removeSubrange(openingRange.lowerBound..<closingRange.upperBound)
+        }
+
+        return
+            visible
+            .replacingOccurrences(of: "<think>", with: "")
+            .replacingOccurrences(of: "</think>", with: "")
+    }
+
+    private static func isCompleteBlock(_ block: String) -> Bool {
+        let fenceCount = block.components(separatedBy: "```").count - 1
+        guard fenceCount.isMultiple(of: 2) else { return false }
+        guard occurrences(of: "<think>", in: block) == occurrences(of: "</think>", in: block) else { return false }
+        guard
+            occurrences(of: ToolActivityRecord.openingTag, in: block)
+                == occurrences(of: ToolActivityRecord.closingTag, in: block)
+        else { return false }
+        return true
+    }
+
+    private static func occurrences(of marker: String, in text: String) -> Int {
+        text.components(separatedBy: marker).count - 1
+    }
+}
+
 enum ToolActivityPresentationState: Equatable {
     case awaitingApproval
     case running
@@ -1433,5 +1617,6 @@ struct ToolActivityView: View {
                 .stroke(state.accentColor.opacity(0.24), lineWidth: 1)
         )
         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .fixedSize(horizontal: false, vertical: true)
     }
 }

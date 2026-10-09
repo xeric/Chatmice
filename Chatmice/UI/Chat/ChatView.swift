@@ -26,7 +26,7 @@ struct ChatView: View {
     @Binding var searchText: String
     let window: NSWindow?
     @AppStorage("lastOpenedChatId") var lastOpenedChatId = ""
-    
+
     // UI State
     @State private var messageField = ""
     @State private var inputBuffer: ChatInputBuffer
@@ -39,17 +39,17 @@ struct ChatView: View {
     @State private var reasoningDurations: [NSManagedObjectID: TimeInterval] = [:]
     @State private var lastRequestStartTime: Date?
     @State private var activeReasoningMessageID: NSManagedObjectID?
-    
+
     // View models and logic
     @ObservedObject private var chatViewModel: ChatViewModel
     @ObservedObject private var logicHandler: ChatLogicHandler
     @StateObject private var draftManager: ChatDraftManager
-    
+
     // Environment
     @Environment(\.colorScheme) private var colorScheme
     var backgroundColor = Color.clear
     private let reasoningTimer = Timer.publish(every: 0.25, on: .main, in: .common).autoconnect()
-    
+
     // MARK: - Initialization
     init(
         viewContext: NSManagedObjectContext,
@@ -65,7 +65,7 @@ struct ChatView: View {
         // Initialize view models
         let viewModel = ChatViewModel(chat: chat, viewContext: viewContext)
         self._chatViewModel = ObservedObject(wrappedValue: viewModel)
-        
+
         // Keep request state tied to the selected chat without resetting the full view identity.
         let handler = ChatLogicHandler(viewContext: viewContext, chat: chat, chatViewModel: viewModel)
         self._logicHandler = ObservedObject(wrappedValue: handler)
@@ -115,7 +115,9 @@ struct ChatView: View {
     var body: some View {
         VStack(spacing: 0) {
             chatMessagesView
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             chatInputView
+                .fixedSize(horizontal: false, vertical: true)
         }
         .background(backgroundColor)
         .navigationTitle(chat.name != "" ? chat.name : chat.persona?.name ?? "Chatmice LLM chat")
@@ -137,7 +139,8 @@ struct ChatView: View {
                 isEditingSystemMessage: editSystemMessage
             )
         }
-        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("RecreateMessageManager"))) { notification in
+        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("RecreateMessageManager"))) {
+            notification in
             if let chatId = notification.userInfo?["chatId"] as? UUID,
                 chatId == chat.id
             {
@@ -148,9 +151,11 @@ struct ChatView: View {
         .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("RetryMessage"))) { notification in
             if let targetChatID = notification.userInfo?["chatId"] as? UUID {
                 guard targetChatID == chat.id else { return }
-            } else if let targetWindowID = notification.userInfo?["windowId"] as? Int {
+            }
+            else if let targetWindowID = notification.userInfo?["windowId"] as? Int {
                 guard targetWindowID != 0, targetWindowID == window?.windowNumber else { return }
-            } else {
+            }
+            else {
                 return
             }
             lastRequestStartTime = Date()
@@ -173,7 +178,8 @@ struct ChatView: View {
                 chatViewModel.goToPreviousOccurrence()
             }
         }
-        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("ChatResponseCompleted"))) { notification in
+        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("ChatResponseCompleted"))) {
+            notification in
             guard let notificationChat = notification.object as? ChatEntity, notificationChat == chat else { return }
             if let lastMessage = chat.lastMessage, !lastMessage.own {
                 finalizeReasoningTimingIfNeeded(for: lastMessage)
@@ -294,7 +300,8 @@ struct ChatView: View {
 
     private func switchConversation(from oldChatID: NSManagedObjectID) {
         if let oldChat = try? viewContext.existingObject(with: oldChatID) as? ChatEntity,
-           !oldChat.isDeleted {
+            !oldChat.isDeleted
+        {
             draftManager.persistImmediately(
                 chat: oldChat,
                 message: inputBuffer.text,
@@ -362,7 +369,8 @@ struct ChatView: View {
 
     private func updateLiveReasoningDurationIfNeeded() {
         guard let messageID = activeReasoningMessageID,
-              let startTime = reasoningStartTimes[messageID] else { return }
+            let startTime = reasoningStartTimes[messageID]
+        else { return }
         reasoningDurations[messageID] = max(0, Date().timeIntervalSince(startTime))
     }
 
@@ -426,4 +434,3 @@ struct SearchNavigationView: View {
         }
     }
 }
-

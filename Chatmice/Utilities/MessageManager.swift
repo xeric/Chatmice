@@ -153,9 +153,16 @@ class MessageManager: ObservableObject {
         let temperature = (chat.persona?.temperature ?? AppConstants.defaultTemperatureForChat).roundedToOneDecimal()
         beginActivity(for: chat.id)
         chat.waitingForResponse = true
+        StreamingResponseStore.shared.begin(chatId: chat.id)
 
         streamTask = Task { [self] in
+            var accumulatedResponse = ""
+            var deferImageResponse = false
+            var streamingMessage: MessageEntity?
+            var postedStreamingActivity = false
+
             defer {
+                StreamingResponseStore.shared.clear(chatId: chat.id)
                 if self.streamGeneration == generation {
                     self.streamTask = nil
                     self.streamGeneration = nil
@@ -168,16 +175,13 @@ class MessageManager: ObservableObject {
             do {
                 let stream = try await apiService.sendMessageStream(requestMessages, temperature: temperature)
                 AppLogger.shared.info("message.stream.started provider=\(apiService.name) chat=\(chat.id.uuidString)")
-                var accumulatedResponse = ""
-                var deferImageResponse = false
-                var streamingMessage: MessageEntity?
-
                 for try await chunk in stream {
                     if Task.isCancelled || cancelRequested || streamGeneration != generation {
                         break
                     }
                     guard !chunk.isEmpty else { continue }
-                    if !chunk.contains(ToolActivityRecord.openingTag) {
+                    if !postedStreamingActivity, !chunk.contains(ToolActivityRecord.openingTag) {
+                        postedStreamingActivity = true
                         ChatActivityEvents.post(ChatActivityEvent(chatId: chat.id, kind: .streamingResponse))
                     }
 
@@ -191,26 +195,31 @@ class MessageManager: ObservableObject {
                             streamingMessage = nil
                             chat.objectWillChange.send()
                         }
+                        StreamingResponseStore.shared.clear(chatId: chat.id)
                     }
 
                     if deferImageResponse { continue }
-                    guard let lastMessage = chat.lastMessage else { continue }
 
-                    if lastMessage.own {
-                        self.addMessageToChat(chat: chat, message: accumulatedResponse)
-                        streamingMessage = chat.lastMessage
+                    if streamingMessage == nil {
+                        if chat.lastMessage?.own != false {
+                            self.addMessageToChat(chat: chat, message: accumulatedResponse)
+                        }
+                        streamingMessage = chat.lastMessage?.own == false ? chat.lastMessage : nil
                     }
-                    else {
-                        updateLastMessage(
-                            chat: chat,
-                            lastMessage: lastMessage,
-                            accumulatedResponse: accumulatedResponse
-                        )
-                        streamingMessage = lastMessage
+                    if StreamingResponseStore.shared.offer(accumulatedResponse, for: chat.id) {
+                        await Task.yield()
                     }
                 }
 
                 guard !Task.isCancelled, !cancelRequested, streamGeneration == generation else {
+                    if let streamingMessage, !accumulatedResponse.isEmpty {
+                        StreamingResponseStore.shared.finish(accumulatedResponse, for: chat.id)
+                        updateLastMessage(
+                            chat: chat,
+                            lastMessage: streamingMessage,
+                            accumulatedResponse: accumulatedResponse
+                        )
+                    }
                     if streamGeneration == generation {
                         self.endActivity(for: chat.id, kind: .cancelled)
                     }
@@ -228,6 +237,7 @@ class MessageManager: ObservableObject {
                     return
                 }
 
+                StreamingResponseStore.shared.finish(accumulatedResponse, for: chat.id)
                 let geminiParts = encodePartsEnvelope(
                     from: (self.apiService as? GeminiHandler)?.consumeLastResponseParts(),
                     serviceType: chat.apiService?.type
@@ -272,12 +282,28 @@ class MessageManager: ObservableObject {
                 completion(.success(()))
             }
             catch is CancellationError {
+                if let streamingMessage, !accumulatedResponse.isEmpty {
+                    StreamingResponseStore.shared.finish(accumulatedResponse, for: chat.id)
+                    updateLastMessage(
+                        chat: chat,
+                        lastMessage: streamingMessage,
+                        accumulatedResponse: accumulatedResponse
+                    )
+                }
                 if streamGeneration == generation {
                     self.endActivity(for: chat.id, kind: .cancelled)
                 }
                 completion(.failure(CancellationError()))
             }
             catch {
+                if let streamingMessage, !accumulatedResponse.isEmpty {
+                    StreamingResponseStore.shared.finish(accumulatedResponse, for: chat.id)
+                    updateLastMessage(
+                        chat: chat,
+                        lastMessage: streamingMessage,
+                        accumulatedResponse: accumulatedResponse
+                    )
+                }
                 AppLogger.shared.error(
                     "message.stream.failed provider=\(apiService.name) chat=\(chat.id.uuidString) error=\(error.localizedDescription)"
                 )

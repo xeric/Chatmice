@@ -334,4 +334,64 @@ class MessageParserTests: XCTestCase {
         XCTAssertEqual(InlineMathParser.parse(input), [.text(input)])
     }
 
+    func testStreamingMarkdownSplitterCommitsOnlyCompleteBlocks() {
+        let input = """
+        First paragraph.
+
+        ```swift
+        let value = 1
+        """
+
+        let parts = StreamingMarkdownSplitter.split(input)
+
+        XCTAssertEqual(parts.blocks, ["First paragraph.\n\n"])
+        XCTAssertEqual(parts.tail, "```swift\nlet value = 1")
+    }
+
+    func testStreamingMarkdownSplitterKeepsReasoningTogether() {
+        let incomplete = StreamingMarkdownSplitter.split("<think>\nworking\n\n")
+        XCTAssertTrue(incomplete.blocks.isEmpty)
+        XCTAssertEqual(StreamingMarkdownSplitter.liveText(from: incomplete.tail), "\nworking\n\n")
+
+        let complete = StreamingMarkdownSplitter.split("<think>\nworking\n</think>\n\nAnswer")
+        XCTAssertEqual(complete.blocks, ["<think>\nworking\n</think>\n\n"])
+        XCTAssertEqual(complete.tail, "Answer")
+    }
+    func testStreamingMarkdownLiveTextPreservesProseAroundToolRecord() {
+        let activity = ToolActivityRecord(
+            name: "bash",
+            input: "pwd",
+            output: "/tmp",
+            isError: false
+        )
+        let tail = "Before tool. \(activity.marker) After tool."
+
+        XCTAssertEqual(StreamingMarkdownSplitter.liveText(from: tail), "Before tool.  After tool.")
+    }
+
+    @MainActor
+    func testStreamingResponseStorePublishesFirstTurnChunkImmediately() {
+        let chatId = UUID()
+        let store = StreamingResponseStore.shared
+        store.begin(chatId: chatId)
+
+        store.offer("Visible before the tool starts", for: chatId)
+
+        XCTAssertEqual(store.responses[chatId], "Visible before the tool starts")
+        store.clear(chatId: chatId)
+    }
+
+    @MainActor
+    func testStreamingResponseStorePublishesAfterMainActorWasBusy() {
+        let chatId = UUID()
+        let store = StreamingResponseStore.shared
+        store.begin(chatId: chatId)
+        store.offer("#", for: chatId)
+
+        Thread.sleep(forTimeInterval: 0.04)
+        store.offer("# A visible heading", for: chatId)
+
+        XCTAssertEqual(store.responses[chatId], "# A visible heading")
+        store.clear(chatId: chatId)
+    }
 }

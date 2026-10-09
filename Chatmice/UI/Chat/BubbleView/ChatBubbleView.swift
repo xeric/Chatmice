@@ -42,7 +42,8 @@ struct ChatBubbleContent: Equatable {
         return lhs.message == rhs.message && lhs.own == rhs.own && lhs.waitingForResponse == rhs.waitingForResponse
             && lhs.systemMessage == rhs.systemMessage && lhs.isStreaming == rhs.isStreaming
             && lhs.isLatestMessage == rhs.isLatestMessage && lhs.reasoningDuration == rhs.reasoningDuration
-            && lhs.isActiveReasoning == rhs.isActiveReasoning && lhs.errorMessage?.timestamp == rhs.errorMessage?.timestamp
+            && lhs.isActiveReasoning == rhs.isActiveReasoning
+            && lhs.errorMessage?.timestamp == rhs.errorMessage?.timestamp
     }
 }
 
@@ -146,6 +147,7 @@ struct ChatBubbleView: View, Equatable {
                 Color.clear.frame(height: 12)
             }
         }
+        .fixedSize(horizontal: false, vertical: true)
         .padding(.vertical, ChatTypography.messageVerticalPadding)
         .background(
             Rectangle()
@@ -352,7 +354,8 @@ struct ChatBubbleView: View, Equatable {
         case .file(let fileInfo):
             if fileInfo.mimeType?.hasPrefix("audio/") == true {
                 AudioAttachmentPlayerView(id: fileInfo.id, filename: fileInfo.filename, width: tileSize)
-            } else {
+            }
+            else {
                 PDFAttachmentTileView(
                     fileInfo: fileInfo,
                     size: tileSize,
@@ -568,13 +571,13 @@ struct ChatBubbleView: View, Equatable {
                         .year().month(.twoDigits).day(.twoDigits)
                         .hour(.twoDigits(amPM: .omitted)).minute(.twoDigits).second(.twoDigits)
                 )
-                    .font(.system(size: 10))
-                    .foregroundStyle(.tertiary)
-                    .monospacedDigit()
-                    .lineLimit(1)
-                    .fixedSize(horizontal: true, vertical: false)
-                    .help(timestamp.formatted(date: .long, time: .standard))
-                    .accessibilityLabel("Sent at \(timestamp.formatted(date: .long, time: .standard))")
+                .font(.system(size: 10))
+                .foregroundStyle(.tertiary)
+                .monospacedDigit()
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
+                .help(timestamp.formatted(date: .long, time: .standard))
+                .accessibilityLabel("Sent at \(timestamp.formatted(date: .long, time: .standard))")
             }
         }
     }

@@ -186,6 +186,9 @@ final class ChatActivityStore: ObservableObject {
             snapshots[event.chatId] = nil
             return
         }
+        if snapshots[event.chatId]?.phase == phase {
+            return
+        }
 
         let startedAt = event.kind == .started
             ? event.timestamp
@@ -247,5 +250,74 @@ final class ChatActivityStore: ObservableObject {
         NSApplication.shared.dockTile.showsApplicationBadge = true
         NSApplication.shared.dockTile.badgeLabel = badge
         NSApplication.shared.dockTile.display()
+    }
+}
+
+@MainActor
+final class StreamingResponseStore: ObservableObject {
+    static let shared = StreamingResponseStore()
+
+    @Published private(set) var responses: [UUID: String] = [:]
+
+    private var pendingResponses: [UUID: String] = [:]
+    private var publishWorkItems: [UUID: DispatchWorkItem] = [:]
+    private var lastPublicationDates: [UUID: Date] = [:]
+    private let publishInterval: TimeInterval = 1.0 / 30.0
+
+    private init() {}
+
+    func begin(chatId: UUID) {
+        publishWorkItems[chatId]?.cancel()
+        publishWorkItems[chatId] = nil
+        pendingResponses[chatId] = nil
+        lastPublicationDates[chatId] = nil
+        responses[chatId] = ""
+    }
+
+    @discardableResult
+    func offer(_ response: String, for chatId: UUID) -> Bool {
+        let now = Date()
+        let elapsed = lastPublicationDates[chatId].map { now.timeIntervalSince($0) } ?? publishInterval
+
+        if elapsed >= publishInterval {
+            publishWorkItems[chatId]?.cancel()
+            publishWorkItems[chatId] = nil
+            pendingResponses[chatId] = nil
+            lastPublicationDates[chatId] = now
+            responses[chatId] = response
+            return true
+        }
+        pendingResponses[chatId] = response
+        guard publishWorkItems[chatId] == nil else { return false }
+
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.publishWorkItems[chatId] = nil
+            guard let response = self.pendingResponses.removeValue(forKey: chatId) else { return }
+            self.lastPublicationDates[chatId] = Date()
+            self.responses[chatId] = response
+        }
+        publishWorkItems[chatId] = workItem
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + max(0, publishInterval - elapsed),
+            execute: workItem
+        )
+        return false
+    }
+
+    func finish(_ response: String, for chatId: UUID) {
+        publishWorkItems[chatId]?.cancel()
+        publishWorkItems[chatId] = nil
+        pendingResponses[chatId] = nil
+        responses[chatId] = response
+        lastPublicationDates[chatId] = Date()
+    }
+
+    func clear(chatId: UUID) {
+        publishWorkItems[chatId]?.cancel()
+        publishWorkItems[chatId] = nil
+        pendingResponses[chatId] = nil
+        responses[chatId] = nil
+        lastPublicationDates[chatId] = nil
     }
 }

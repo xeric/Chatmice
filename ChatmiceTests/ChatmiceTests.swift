@@ -222,6 +222,24 @@ final class ChatmiceTests: XCTestCase {
     }
 
     @MainActor
+    func testUpdateFeedParametersAddFreshCacheKey() throws {
+        let parameters = V3UpdateCoordinator.cacheBustFeedParameters(
+            date: Date(timeIntervalSince1970: 1_234)
+        )
+        let parameter = try XCTUnwrap(parameters.first)
+
+        XCTAssertEqual(parameter["key"], "cacheBust")
+        XCTAssertEqual(parameter["value"], "1234")
+        XCTAssertEqual(parameter["displayKey"], "")
+        XCTAssertEqual(parameter["displayValue"], "")
+        XCTAssertTrue(
+            V3UpdateCoordinator.shared.responds(
+                to: NSSelectorFromString("feedParametersForUpdater:sendingSystemProfile:")
+            )
+        )
+    }
+
+    @MainActor
     func testMessageWithMissingTimestampRemainsRenderableForRetry() {
         let persistence = PersistenceController(inMemory: true)
         let context = persistence.container.viewContext
@@ -655,6 +673,7 @@ final class ChatmiceTests: XCTestCase {
     }
 
 }
+
 
 
 private final class DelayedStreamingAPIService: APIService {

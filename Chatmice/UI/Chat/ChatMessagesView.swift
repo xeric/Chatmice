@@ -20,10 +20,12 @@ struct ChatMessagesView: View {
     let reasoningDurations: [NSManagedObjectID: TimeInterval]
     let activeReasoningMessageID: NSManagedObjectID?
     @State private var scrollDebounceWorkItem: DispatchWorkItem?
-    @State private var bottomRestoreWorkItem: DispatchWorkItem?
-    @State private var restoringBottomForChatID: NSManagedObjectID?
-    @State private var bottomRestoreDeadline: Date?
     @ObservedObject private var activityStore = ChatActivityStore.shared
+    @ObservedObject private var streamingResponseStore = StreamingResponseStore.shared
+
+    private var liveResponse: String? {
+        streamingResponseStore.responses[chat.id]
+    }
 
     private var activitySnapshot: ChatActivitySnapshot? {
         activityStore.activeSnapshot(for: chat.id)
@@ -31,10 +33,6 @@ struct ChatMessagesView: View {
 
     private var activityAnchorID: String {
         "chat-activity-\(chat.id.uuidString)"
-    }
-
-    private var bottomAnchorID: String {
-        "chat-bottom-\(chat.id.uuidString)"
     }
 
     private var errorAnchorID: String {
@@ -60,8 +58,12 @@ struct ChatMessagesView: View {
                             let isActiveAssistant = isLatest && !messageEntity.own && activitySnapshot != nil
                             let storedDuration =
                                 messageEntity.reasoningDuration > 0 ? messageEntity.reasoningDuration : nil
+                            let displayedMessage =
+                                isLatest && !messageEntity.own
+                                ? (liveResponse ?? messageEntity.body)
+                                : messageEntity.body
                             let bubbleContent = ChatBubbleContent(
-                                message: messageEntity.body,
+                                message: displayedMessage,
                                 own: messageEntity.own,
                                 waitingForResponse: messageEntity.waitingForResponse,
                                 errorMessage: nil,
@@ -103,17 +105,6 @@ struct ChatMessagesView: View {
                             .id(errorAnchorID)
                     }
 
-                    Color.clear
-                        .frame(height: 1)
-                        .id(bottomAnchorID)
-                }
-                .background {
-                    GeometryReader { geometry in
-                        Color.clear.preference(
-                            key: ChatContentHeightPreferenceKey.self,
-                            value: geometry.size.height
-                        )
-                    }
                 }
                 .padding(24)
                 .onAppear {
@@ -122,63 +113,44 @@ struct ChatMessagesView: View {
                 .onChange(of: chat.objectID) {
                     beginBottomRestore(using: scrollView)
                 }
-                .onPreferenceChange(ChatContentHeightPreferenceKey.self) { _ in
-                    guard restoringBottomForChatID == chat.objectID else { return }
-                    guard bottomRestoreDeadline.map({ Date() < $0 }) == true else { return }
-                    continueBottomRestore(using: scrollView)
-                }
-                .onDisappear {
-                    bottomRestoreWorkItem?.cancel()
-                    bottomRestoreWorkItem = nil
-                    restoringBottomForChatID = nil
-                    bottomRestoreDeadline = nil
-                }
                 .onSwipe { event in
                     switch event.direction {
                     case .up:
                         scrollDebounceWorkItem?.cancel()
                         scrollDebounceWorkItem = nil
                         userIsScrolling = true
-                        bottomRestoreWorkItem?.cancel()
-                        bottomRestoreWorkItem = nil
-                        restoringBottomForChatID = nil
-                        bottomRestoreDeadline = nil
                     case .down:
-                        bottomRestoreWorkItem?.cancel()
-                        bottomRestoreWorkItem = nil
-                        restoringBottomForChatID = nil
-                        bottomRestoreDeadline = nil
                         userIsScrolling = false
                     case .none, .left, .right:
                         break
                     }
                 }
-                .onChange(of: chat.updatedDate) {
-                    guard isStreaming, !userIsScrolling else { return }
-
-                    scrollDebounceWorkItem?.cancel()
-                    let workItem = DispatchWorkItem {
-                        scrollDebounceWorkItem = nil
+                .onChange(of: liveResponse) {
+                    guard liveResponse != nil, !userIsScrolling else { return }
+                    DispatchQueue.main.async {
                         guard !userIsScrolling else { return }
-
-                        DispatchQueue.main.async {
-                            scrollView.scrollTo(bottomAnchorID, anchor: .bottom)
-                        }
+                        scrollToCurrentBottom(using: scrollView)
                     }
-
-                    scrollDebounceWorkItem = workItem
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.03, execute: workItem)
+                }
+                .onChange(of: isStreaming) { wasStreaming, streaming in
+                    guard wasStreaming, !streaming, !userIsScrolling else { return }
+                    Task { @MainActor in
+                        await Task.yield()
+                        await Task.yield()
+                        guard !userIsScrolling else { return }
+                        scrollToCurrentBottom(using: scrollView)
+                    }
                 }
                 .onChange(of: activitySnapshot?.phase) { _, phase in
                     guard phase != nil, !userIsScrolling else { return }
                     withAnimation(.easeOut(duration: 0.22)) {
-                        scrollView.scrollTo(bottomAnchorID, anchor: .bottom)
+                        scrollToCurrentBottom(using: scrollView)
                     }
                 }
                 .onChange(of: chatViewModel.sortedMessages.count) {
                     guard !userIsScrolling else { return }
                     withAnimation {
-                        scrollView.scrollTo(bottomAnchorID, anchor: .bottom)
+                        scrollToCurrentBottom(using: scrollView)
                     }
                 }
                 .onChange(of: currentError?.timestamp) { _, timestamp in
@@ -192,15 +164,11 @@ struct ChatMessagesView: View {
                 .onReceive(
                     NotificationCenter.default.publisher(for: NSNotification.Name("NonStreamingMessageCompleted"))
                 ) { notification in
-                    if let notificationChat = notification.object as? ChatEntity, notificationChat == chat {
-                        DispatchQueue.main.async {
-                            if !userIsScrolling {
-                                withAnimation(.easeOut(duration: 0.5)) {
-                                    scrollView.scrollTo(bottomAnchorID, anchor: .bottom)
-                                }
-                            }
-                        }
-                    }
+                    guard let notificationChat = notification.object as? ChatEntity,
+                        notificationChat == chat,
+                        !userIsScrolling
+                    else { return }
+                    beginBottomRestore(using: scrollView)
                 }
                 .onChange(of: chatViewModel.currentSearchOccurrence) { _, newOccurrence in
                     if let occurrence = newOccurrence {
@@ -219,49 +187,32 @@ struct ChatMessagesView: View {
         }
     }
 
+    private func scrollToCurrentBottom(using scrollView: ScrollViewProxy) {
+        if currentError != nil {
+            scrollView.scrollTo(errorAnchorID, anchor: .bottom)
+        }
+        else if chatViewModel.sortedMessages.last?.own != false, activitySnapshot != nil {
+            scrollView.scrollTo(activityAnchorID, anchor: .bottom)
+        }
+        else if let lastMessage = chatViewModel.sortedMessages.last {
+            scrollView.scrollTo(lastMessage.objectID, anchor: .bottom)
+        }
+        else {
+            scrollView.scrollTo("system_message", anchor: .bottom)
+        }
+    }
+
     private func beginBottomRestore(using scrollView: ScrollViewProxy) {
         scrollDebounceWorkItem?.cancel()
         scrollDebounceWorkItem = nil
-        bottomRestoreWorkItem?.cancel()
         userIsScrolling = false
-        restoringBottomForChatID = chat.objectID
-        bottomRestoreDeadline = Date().addingTimeInterval(2)
-        continueBottomRestore(using: scrollView)
-    }
-
-    private func continueBottomRestore(using scrollView: ScrollViewProxy) {
-        let chatID = chat.objectID
-        guard restoringBottomForChatID == chatID else { return }
 
         DispatchQueue.main.async {
-            guard restoringBottomForChatID == chatID, chat.objectID == chatID else { return }
-            scrollView.scrollTo(bottomAnchorID, anchor: .bottom)
+            guard !userIsScrolling else { return }
+            scrollToCurrentBottom(using: scrollView)
         }
-
-        bottomRestoreWorkItem?.cancel()
-        let workItem = DispatchWorkItem {
-            guard restoringBottomForChatID == chatID, chat.objectID == chatID else { return }
-            scrollView.scrollTo(bottomAnchorID, anchor: .bottom)
-
-            if let deadline = bottomRestoreDeadline, Date() < deadline {
-                continueBottomRestore(using: scrollView)
-            } else {
-                restoringBottomForChatID = nil
-                bottomRestoreDeadline = nil
-                bottomRestoreWorkItem = nil
-            }
-        }
-        bottomRestoreWorkItem = workItem
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12, execute: workItem)
     }
-}
 
-private struct ChatContentHeightPreferenceKey: PreferenceKey {
-    static var defaultValue: CGFloat = 0
-
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = nextValue()
-    }
 }
 
 struct AssistantTurnActivityView: View {

@@ -189,6 +189,15 @@ final class V3UpdateCoordinator: NSObject, ObservableObject {
         guard let major = Int(majorDigits) else { return false }
         return major >= 3
     }
+
+    static func cacheBustFeedParameters(date: Date = Date()) -> [[String: String]] {
+        [[
+            "key": "cacheBust",
+            "value": String(Int(date.timeIntervalSince1970)),
+            "displayKey": "",
+            "displayValue": "",
+        ]]
+    }
 }
 
 extension V3UpdateCoordinator: NSWindowDelegate {
@@ -199,6 +208,13 @@ extension V3UpdateCoordinator: NSWindowDelegate {
 }
 
 extension V3UpdateCoordinator: @preconcurrency SPUUpdaterDelegate {
+    func feedParameters(
+        for updater: SPUUpdater,
+        sendingSystemProfile: Bool
+    ) -> [[String: String]] {
+        Self.cacheBustFeedParameters()
+    }
+
     /// The hard gate. Sparkle consults this in every update driver — including
     /// the silent automatic-install driver — before an update is downloaded.
     /// Throwing here means the update is neither shown by Sparkle nor
