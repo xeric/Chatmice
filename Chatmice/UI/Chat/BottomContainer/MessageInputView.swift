@@ -701,22 +701,25 @@ struct MessageInputView: View {
         .padding(.bottom, 8)
     }
 
+    @ViewBuilder
     private var attachmentButton: some View {
-        Menu {
-            if pdfUploadsAllowed { Button("Add Document / PDF", action: onAddFile) }
-            if imageUploadsAllowed {
-                Button("Add Image from File", action: onAddImage)
-                Button("Add Image from Photos") { isShowingPhotosPicker = true }
+        if let attachmentButtonIcon {
+            Menu {
+                if pdfUploadsAllowed { Button("Add Document / PDF", action: onAddFile) }
+                if imageUploadsAllowed {
+                    Button("Add Image from File", action: onAddImage)
+                    Button("Add Image from Photos") { isShowingPhotosPicker = true }
+                }
+            } label: {
+                Image(systemName: attachmentButtonIcon)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(toolbarControlForegroundColor)
+                    .frame(width: 24, height: 24)
+                    .background(Circle().fill(toolbarControlBackgroundColor))
             }
-        } label: {
-            Image(systemName: "paperclip")
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(toolbarControlForegroundColor)
-                .frame(width: 24, height: 24)
-                .background(Circle().fill(toolbarControlBackgroundColor))
+            .menuStyle(.borderlessButton)
+            .help("Attach file or image")
         }
-        .menuStyle(.borderlessButton)
-        .help("Attach file or image")
     }
 
     private var isWebSearchConfigured: Bool {

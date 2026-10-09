@@ -62,6 +62,12 @@ struct TabAPIServicesView: View {
                                 subtitle: "DeepSeek Official API"
                             ))
                         }
+                        Button("xAI") {
+                            presentAddSheet(preset: ProviderPresetItem(
+                                name: "xAI", type: "xai", defaultURL: "https://api.x.ai/v1", defaultModel: "grok-4",
+                                subtitle: "Official xAI API"
+                            ))
+                        }
                         Button("Ollama") {
                             presentAddSheet(preset: ProviderPresetItem(
                                 name: "Ollama", type: "ollama", defaultURL: "http://localhost:11434/api/chat", defaultModel: "llama3.1",
@@ -365,6 +371,8 @@ struct ProviderEditorSheet: View {
             return "https://openrouter.ai/api/v1"
         case "deepseek":
             return "https://api.deepseek.com/v1"
+        case "xai":
+            return "https://api.x.ai/v1"
         default:
             return "https://api.openai.com/v1"
         }
@@ -450,6 +458,7 @@ struct ProviderEditorSheet: View {
                                     Text("Ollama").tag("ollama")
                                     Text("OpenRouter").tag("openrouter")
                                     Text("DeepSeek").tag("deepseek")
+                                    Text("xAI (OpenAI Compatible)").tag("xai")
                                 }
                                 .labelsHidden()
                                 .pickerStyle(.menu)
@@ -1181,6 +1190,8 @@ struct ProviderEditorSheet: View {
             return ["gemini-2.5-flash", "gemini-2.5-pro"]
         case "deepseek":
             return ["deepseek-chat", "deepseek-reasoner"]
+        case "xai":
+            return ["grok-4", "grok-3", "grok-3-mini"]
         case "ollama":
             return ["llama3.1", "qwen2.5:7b", "mistral"]
         default:

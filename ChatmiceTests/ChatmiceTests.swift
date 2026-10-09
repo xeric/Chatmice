@@ -32,6 +32,34 @@ final class ChatmiceTests: XCTestCase {
         )
     }
 
+    func testVisionProbeRequiresSemanticRedResponseAcrossProtocols() {
+        let responses: [(type: String, json: String)] = [
+            ("deepseek", #"{"choices":[{"message":{"content":"red"}}]}"#),
+            ("claude", #"{"content":[{"type":"text","text":"red"}]}"#),
+            ("gemini", #"{"candidates":[{"content":{"parts":[{"text":"red"}]}}]}"#),
+            ("openai-responses", #"{"output":[{"content":[{"type":"output_text","text":"red"}]}]}"#),
+            ("ollama", #"{"message":{"content":"red"}}"#),
+        ]
+
+        for response in responses {
+            XCTAssertTrue(
+                ModelCapabilityProbe.responseProvesVision(
+                    data: Data(response.json.utf8),
+                    serviceType: response.type
+                ),
+                response.type
+            )
+        }
+
+        let genericSuccess = #"{"choices":[{"message":{"content":"OK"}}]}"#
+        XCTAssertFalse(
+            ModelCapabilityProbe.responseProvesVision(
+                data: Data(genericSuccess.utf8),
+                serviceType: "deepseek"
+            )
+        )
+    }
+
     @MainActor
     func testStreamingMessageIsVisibleBeforeStreamCompletes() async {
         let persistence = PersistenceController(inMemory: true)
@@ -219,6 +247,48 @@ final class ChatmiceTests: XCTestCase {
         )
 
         XCTAssertEqual(error.displayMessage, "Upstream gateway unavailable")
+    }
+
+    func testMonthlyBudgetErrorPreservesProviderMessageAndDisablesRetry() {
+        let error = ErrorMessage(
+            type: .serverError(
+                #"HTTP 402: {"errorCode":"MONTHLY_CAP_REACHED","errorMessage":"Your monthly AI budget of 500 EUR is used up. Your budget resets automatically on the 1st of next month."}"#
+            ),
+            timestamp: Date()
+        )
+
+        XCTAssertEqual(error.displayTitle, "Usage Limit Reached")
+        XCTAssertEqual(
+            error.displayMessage,
+            "Your monthly AI budget of 500 EUR is used up. Your budget resets automatically on the 1st of next month."
+        )
+        XCTAssertFalse(error.canRetry)
+    }
+
+    @MainActor
+    func testFailedActivitySnapshotRetainsProviderErrorForRendering() async throws {
+        let chatId = UUID()
+        let message = "Your monthly AI budget is used up."
+        ChatActivityStore.shared.updatePresentationContext(
+            focusedChatId: chatId,
+            applicationIsActive: true
+        )
+
+        ChatActivityEvents.post(ChatActivityEvent(chatId: chatId, kind: .failed(message: message)))
+        await Task.yield()
+
+        let snapshot = try XCTUnwrap(ChatActivityStore.shared.snapshot(for: chatId))
+        guard case .failed(let storedMessage) = snapshot.phase else {
+            return XCTFail("Expected failed activity snapshot")
+        }
+        XCTAssertEqual(storedMessage, message)
+
+        ChatActivityEvents.post(ChatActivityEvent(chatId: chatId, kind: .cancelled))
+        await Task.yield()
+        ChatActivityStore.shared.updatePresentationContext(
+            focusedChatId: nil,
+            applicationIsActive: true
+        )
     }
 
     @MainActor

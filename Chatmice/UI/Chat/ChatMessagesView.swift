@@ -19,9 +19,10 @@ struct ChatMessagesView: View {
     @Binding var searchText: String
     let reasoningDurations: [NSManagedObjectID: TimeInterval]
     let activeReasoningMessageID: NSManagedObjectID?
-    @State private var scrollDebounceWorkItem: DispatchWorkItem?
     @ObservedObject private var activityStore = ChatActivityStore.shared
     @ObservedObject private var streamingResponseStore = StreamingResponseStore.shared
+    @State private var scrollPosition = ScrollPosition(edge: .bottom)
+
 
     private var liveResponse: String? {
         streamingResponseStore.responses[chat.id]
@@ -29,6 +30,14 @@ struct ChatMessagesView: View {
 
     private var activitySnapshot: ChatActivitySnapshot? {
         activityStore.activeSnapshot(for: chat.id)
+    }
+
+    private var displayedError: ErrorMessage? {
+        if let currentError { return currentError }
+        guard let snapshot = activityStore.snapshot(for: chat.id),
+            case .failed(let message) = snapshot.phase
+        else { return nil }
+        return ErrorMessage(type: .serverError(message), timestamp: snapshot.updatedAt)
     }
 
     private var activityAnchorID: String {
@@ -40,9 +49,8 @@ struct ChatMessagesView: View {
     }
 
     var body: some View {
-        ScrollViewReader { scrollView in
-            ScrollView {
-                LazyVStack {
+        ScrollView {
+            LazyVStack {
                     SystemMessageBubbleView(
                         message: chat.systemMessage,
                         color: chat.persona?.color,
@@ -88,7 +96,7 @@ struct ChatMessagesView: View {
                         AssistantTurnActivityView(snapshot: activitySnapshot)
                             .id(activityAnchorID)
                     }
-                    if let error = currentError {
+                    if let error = displayedError {
                         let bubbleContent = ChatBubbleContent(
                             message: "",
                             own: false,
@@ -101,117 +109,41 @@ struct ChatMessagesView: View {
                             isActiveReasoning: false
                         )
 
-                        ChatBubbleView(content: bubbleContent, searchText: $searchText)
-                            .id(errorAnchorID)
+                        ChatBubbleView(
+                            content: bubbleContent,
+                            retryChatID: chat.id,
+                            searchText: $searchText
+                        )
+                        .id(errorAnchorID)
                     }
 
                 }
                 .padding(24)
-                .onAppear {
-                    beginBottomRestore(using: scrollView)
-                }
-                .onChange(of: chat.objectID) {
-                    beginBottomRestore(using: scrollView)
-                }
-                .onSwipe { event in
-                    switch event.direction {
-                    case .up:
-                        scrollDebounceWorkItem?.cancel()
-                        scrollDebounceWorkItem = nil
-                        userIsScrolling = true
-                    case .down:
-                        userIsScrolling = false
-                    case .none, .left, .right:
-                        break
-                    }
-                }
-                .onChange(of: liveResponse) {
-                    guard liveResponse != nil, !userIsScrolling else { return }
-                    DispatchQueue.main.async {
-                        guard !userIsScrolling else { return }
-                        scrollToCurrentBottom(using: scrollView)
-                    }
-                }
-                .onChange(of: isStreaming) { wasStreaming, streaming in
-                    guard wasStreaming, !streaming, !userIsScrolling else { return }
-                    Task { @MainActor in
-                        await Task.yield()
-                        await Task.yield()
-                        guard !userIsScrolling else { return }
-                        scrollToCurrentBottom(using: scrollView)
-                    }
-                }
-                .onChange(of: activitySnapshot?.phase) { _, phase in
-                    guard phase != nil, !userIsScrolling else { return }
-                    withAnimation(.easeOut(duration: 0.22)) {
-                        scrollToCurrentBottom(using: scrollView)
-                    }
-                }
-                .onChange(of: chatViewModel.sortedMessages.count) {
-                    guard !userIsScrolling else { return }
-                    withAnimation {
-                        scrollToCurrentBottom(using: scrollView)
-                    }
-                }
-                .onChange(of: currentError?.timestamp) { _, timestamp in
-                    guard timestamp != nil else { return }
-                    DispatchQueue.main.async {
-                        withAnimation(.easeOut(duration: 0.25)) {
-                            scrollView.scrollTo(errorAnchorID, anchor: .bottom)
-                        }
-                    }
-                }
-                .onReceive(
-                    NotificationCenter.default.publisher(for: NSNotification.Name("NonStreamingMessageCompleted"))
-                ) { notification in
-                    guard let notificationChat = notification.object as? ChatEntity,
-                        notificationChat == chat,
-                        !userIsScrolling
-                    else { return }
-                    beginBottomRestore(using: scrollView)
-                }
                 .onChange(of: chatViewModel.currentSearchOccurrence) { _, newOccurrence in
                     if let occurrence = newOccurrence {
+                        userIsScrolling = true
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                            // Generate element ID for the occurrence
                             let messageIDString = occurrence.messageID.uriRepresentation().absoluteString
                             let elementID = "\(messageIDString)_element_\(occurrence.elementIndex)"
-                            scrollView.scrollTo(elementID, anchor: .center)
+                            scrollPosition.scrollTo(id: elementID, anchor: .center)
                         }
                     }
                 }
+        }
+        .defaultScrollAnchor(.bottom, for: .initialOffset)
+        .defaultScrollAnchor(.bottom, for: .alignment)
+        .defaultScrollAnchor(userIsScrolling ? nil : .bottom, for: .sizeChanges)
+        .scrollPosition($scrollPosition)
+        .onScrollGeometryChange(for: Bool.self) { geometry in
+            geometry.contentSize.height - geometry.visibleRect.maxY > 24
+        } action: { _, isDetachedFromBottom in
+            if userIsScrolling != isDetachedFromBottom {
+                userIsScrolling = isDetachedFromBottom
             }
-            .id("chatContainer")
-            .defaultScrollAnchor(.bottom)
-            .padding(.bottom, 6)
         }
+        .padding(.bottom, 6)
     }
 
-    private func scrollToCurrentBottom(using scrollView: ScrollViewProxy) {
-        if currentError != nil {
-            scrollView.scrollTo(errorAnchorID, anchor: .bottom)
-        }
-        else if chatViewModel.sortedMessages.last?.own != false, activitySnapshot != nil {
-            scrollView.scrollTo(activityAnchorID, anchor: .bottom)
-        }
-        else if let lastMessage = chatViewModel.sortedMessages.last {
-            scrollView.scrollTo(lastMessage.objectID, anchor: .bottom)
-        }
-        else {
-            scrollView.scrollTo("system_message", anchor: .bottom)
-        }
-    }
-
-    private func beginBottomRestore(using scrollView: ScrollViewProxy) {
-        scrollDebounceWorkItem?.cancel()
-        scrollDebounceWorkItem = nil
-        userIsScrolling = false
-
-        DispatchQueue.main.async {
-            guard !userIsScrolling else { return }
-            scrollToCurrentBottom(using: scrollView)
-        }
-    }
 
 }
 

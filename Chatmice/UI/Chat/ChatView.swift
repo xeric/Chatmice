@@ -39,6 +39,7 @@ struct ChatView: View {
     @State private var reasoningDurations: [NSManagedObjectID: TimeInterval] = [:]
     @State private var lastRequestStartTime: Date?
     @State private var activeReasoningMessageID: NSManagedObjectID?
+    @State private var modelCapabilityRevision = 0
 
     // View models and logic
     @ObservedObject private var chatViewModel: ChatViewModel
@@ -87,7 +88,14 @@ struct ChatView: View {
     }
 
     private var imageUploadsAllowed: Bool {
-        chat.apiService?.imageUploadsAllowed ?? false
+        _ = modelCapabilityRevision
+        guard let service = chat.apiService else { return false }
+        let testedVision = service.id.flatMap {
+            ModelCapabilityTestStore.results(for: $0)[chat.gptModel]?.visionSupported
+        }
+        if testedVision == false { return false }
+        if service.imageUploadsAllowed { return true }
+        return service.type?.lowercased() == "deepseek" && testedVision == true
     }
 
     private var imageGenerationSupported: Bool {
@@ -123,6 +131,11 @@ struct ChatView: View {
         .navigationTitle(chat.name != "" ? chat.name : chat.persona?.name ?? "Chatmice LLM chat")
         .onAppear {
             self.lastOpenedChatId = chat.id.uuidString
+        }
+        .onReceive(NotificationCenter.default.publisher(for: ModelCapabilityTestStore.didChangeNotification)) {
+            notification in
+            guard notification.object as? UUID == chat.apiService?.id else { return }
+            modelCapabilityRevision += 1
         }
         .onChange(of: chat.objectID) { oldChatID, newChatID in
             DispatchQueue.main.async {

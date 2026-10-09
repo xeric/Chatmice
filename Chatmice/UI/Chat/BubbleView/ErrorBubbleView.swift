@@ -14,23 +14,23 @@ struct ErrorMessage {
 
     var displayTitle: String {
         switch type {
-        case .requestFailed(_):
+        case .requestFailed:
             return "Connection Error"
         case .invalidResponse:
             return "Invalid Response"
-        case .decodingFailed(_):
+        case .decodingFailed:
             return "Processing Error"
         case .unauthorized:
             return "Authentication Error"
         case .rateLimited:
             return "Rate Limited"
-        case .serverError(_):
-            return "Server Error"
-        case .unknown(_):
+        case .serverError(let message):
+            return Self.isUsageLimitError(message) ? "Usage Limit Reached" : "Server Error"
+        case .unknown:
             return "Unknown Error"
-        case .noApiService(_):
+        case .noApiService:
             return "No API Service selected"
-        case .attachmentNotReady(_):
+        case .attachmentNotReady:
             return "Attachment Error"
         }
     }
@@ -71,6 +71,14 @@ struct ErrorMessage {
         return upstreamMessage
     }
 
+    private static func isUsageLimitError(_ message: String) -> Bool {
+        let readable = extractedUpstreamMessage(from: message) ?? message
+        return readable.localizedCaseInsensitiveContains("monthly_cap_reached")
+            || readable.localizedCaseInsensitiveContains("monthly AI budget")
+            || readable.localizedCaseInsensitiveContains("usage limit")
+            || readable.localizedCaseInsensitiveContains("quota")
+    }
+
     private static func extractedUpstreamMessage(from raw: String) -> String? {
         guard let jsonStart = raw.firstIndex(of: "{") else { return nil }
         let json = String(raw[jsonStart...])
@@ -92,8 +100,12 @@ struct ErrorMessage {
 
     var canRetry: Bool {
         switch type {
-        case .unauthorized: return false
-        default: return retryCount < 3
+        case .unauthorized:
+            return false
+        case .serverError(let message) where Self.isUsageLimitError(message):
+            return false
+        default:
+            return retryCount < 3
         }
     }
 }

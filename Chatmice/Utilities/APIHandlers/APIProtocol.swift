@@ -302,7 +302,9 @@ struct ModelCapabilityTestResult: Codable, Equatable, Sendable {
 }
 
 enum ModelCapabilityTestStore {
-    private static let prefix = "modelCapabilityTests."
+    private static let prefix = "modelCapabilityTests.v2."
+    static let didChangeNotification = Notification.Name("ModelCapabilityTestStore.didChange")
+
 
     static func results(for serviceID: UUID) -> [String: ModelCapabilityTestResult] {
         guard let data = UserDefaults.standard.data(forKey: prefix + serviceID.uuidString),
@@ -314,6 +316,7 @@ enum ModelCapabilityTestStore {
     static func save(_ results: [String: ModelCapabilityTestResult], for serviceID: UUID) {
         guard let data = try? JSONEncoder().encode(results) else { return }
         UserDefaults.standard.set(data, forKey: prefix + serviceID.uuidString)
+        NotificationCenter.default.post(name: didChangeNotification, object: serviceID)
     }
 }
 
@@ -325,6 +328,9 @@ enum ModelCapabilityProbe {
     }
 
     private static let pixelPNGBase64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC"
+    private static let visionPrompt =
+        "What is the only color in this image? Reply with exactly one lowercase color word."
+
 
     static func test(config: APIServiceConfig, modelID: String) async -> ModelCapabilityTestResult {
         do {
@@ -373,6 +379,12 @@ enum ModelCapabilityProbe {
         guard (200...299).contains(httpResponse.statusCode) else {
             let detail = String(data: data, encoding: .utf8) ?? ""
             throw APIError.serverError("HTTP \(httpResponse.statusCode): \(detail)")
+        }
+
+        if kind == .vision,
+            !responseProvesVision(data: data, serviceType: config.type)
+        {
+            throw APIError.invalidResponse
         }
     }
 
@@ -441,7 +453,7 @@ enum ModelCapabilityProbe {
         var message: [String: Any] = ["role": "user", "content": "Reply with OK."]
         if kind == .vision {
             message["content"] = [
-                ["type": "text", "text": "Identify this one-pixel image, then reply with one word."],
+                ["type": "text", "text": visionPrompt],
                 ["type": "image_url", "image_url": ["url": "data:image/png;base64,\(pixelPNGBase64)"]]
             ]
         }
@@ -457,7 +469,10 @@ enum ModelCapabilityProbe {
     private static func responsesBody(modelID: String, kind: ProbeKind) -> [String: Any] {
         var content: [[String: Any]] = [["type": "input_text", "text": "Reply with OK."]]
         if kind == .vision {
-            content.append(["type": "input_image", "image_url": "data:image/png;base64,\(pixelPNGBase64)"])
+            content = [
+                ["type": "input_text", "text": visionPrompt],
+                ["type": "input_image", "image_url": "data:image/png;base64,\(pixelPNGBase64)"]
+            ]
         }
         var body: [String: Any] = [
             "model": modelID,
@@ -473,7 +488,7 @@ enum ModelCapabilityProbe {
         if kind == .vision {
             content = [
                 ["type": "image", "source": ["type": "base64", "media_type": "image/png", "data": pixelPNGBase64]],
-                ["type": "text", "text": "Identify this one-pixel image, then reply with one word."]
+                ["type": "text", "text": visionPrompt]
             ]
         }
         var body: [String: Any] = [
@@ -496,7 +511,10 @@ enum ModelCapabilityProbe {
     private static func geminiBody(modelID: String, kind: ProbeKind) -> [String: Any] {
         var parts: [[String: Any]] = [["text": "Reply with OK."]]
         if kind == .vision {
-            parts.insert(["inline_data": ["mime_type": "image/png", "data": pixelPNGBase64]], at: 0)
+            parts = [
+                ["inline_data": ["mime_type": "image/png", "data": pixelPNGBase64]],
+                ["text": visionPrompt]
+            ]
         }
         var body: [String: Any] = ["contents": [["role": "user", "parts": parts]]]
         if kind == .reasoning {
@@ -512,10 +530,40 @@ enum ModelCapabilityProbe {
     }
 
     private static func ollamaBody(modelID: String, kind: ProbeKind) -> [String: Any] {
-        var message: [String: Any] = ["role": "user", "content": "Reply with OK."]
+        var message: [String: Any] = ["role": "user", "content": kind == .vision ? visionPrompt : "Reply with OK."]
         if kind == .vision { message["images"] = [pixelPNGBase64] }
         var body: [String: Any] = ["model": modelID, "messages": [message], "stream": false]
         if kind == .reasoning { body["think"] = true }
         return body
+    }
+
+    static func responseProvesVision(data: Data, serviceType: String) -> Bool {
+        guard let text = responseText(data: data, serviceType: serviceType) else { return false }
+        let trimSet = CharacterSet.whitespacesAndNewlines
+            .union(.punctuationCharacters)
+            .union(.symbols)
+        return text.trimmingCharacters(in: trimSet).lowercased() == "red"
+    }
+
+    private static func responseText(data: Data, serviceType: String) -> String? {
+        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        switch serviceType.lowercased() {
+        case "claude":
+            return (root["content"] as? [[String: Any]])?
+                .first(where: { $0["type"] as? String == "text" })?["text"] as? String
+        case "gemini":
+            let candidates = root["candidates"] as? [[String: Any]]
+            let content = candidates?.first?["content"] as? [String: Any]
+            return (content?["parts"] as? [[String: Any]])?.compactMap { $0["text"] as? String }.joined()
+        case "openai-responses":
+            let output = root["output"] as? [[String: Any]]
+            let content = output?.flatMap { $0["content"] as? [[String: Any]] ?? [] }
+            return content?.compactMap { $0["text"] as? String }.joined()
+        case "ollama":
+            return (root["message"] as? [String: Any])?["content"] as? String
+        default:
+            let choices = root["choices"] as? [[String: Any]]
+            return (choices?.first?["message"] as? [String: Any])?["content"] as? String
+        }
     }
 }

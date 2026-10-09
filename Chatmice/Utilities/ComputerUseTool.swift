@@ -8,6 +8,8 @@
 import AppKit
 import CoreGraphics
 import Foundation
+import ScreenCaptureKit
+
 
 enum ComputerUsePermissions {
     static var canRecordScreen: Bool {
@@ -47,6 +49,29 @@ enum ComputerUsePermissions {
             )
         else { return }
         NSWorkspace.shared.open(url)
+    }
+}
+
+private enum ScreenCapture {
+    static func mainDisplayImage() async throws -> CGImage {
+        let content = try await SCShareableContent.excludingDesktopWindows(
+            false,
+            onScreenWindowsOnly: true
+        )
+        guard let display = content.displays.first(where: { $0.displayID == CGMainDisplayID() }) else {
+            throw ToolError.executionFailed("Main display is unavailable for screen capture")
+        }
+
+        let filter = SCContentFilter(display: display, excludingWindows: [])
+        let configuration = SCStreamConfiguration()
+        let scale = max(1, CGFloat(filter.pointPixelScale))
+        configuration.width = Int((CGFloat(display.width) * scale).rounded())
+        configuration.height = Int((CGFloat(display.height) * scale).rounded())
+        configuration.showsCursor = true
+        return try await SCScreenshotManager.captureImage(
+            contentFilter: filter,
+            configuration: configuration
+        )
     }
 }
 
@@ -135,12 +160,19 @@ public struct ScreenshotTool: AgentTool {
             throw ToolError.confirmationDenied("User denied screen capture")
         }
 
-        guard ComputerUsePermissions.canRecordScreen,
-            let image = CGDisplayCreateImage(CGMainDisplayID())
-        else {
+        guard ComputerUsePermissions.canRecordScreen else {
             throw ToolError.executionFailed(
                 "Screen Recording permission is required in System Settings > Privacy & Security > Screen Recording"
             )
+        }
+
+        let image: CGImage
+        do {
+            image = try await ScreenCapture.mainDisplayImage()
+        } catch let error as ToolError {
+            throw error
+        } catch {
+            throw ToolError.executionFailed("Failed to capture main display: \(error.localizedDescription)")
         }
 
         let encoded = try ScreenshotImageEncoder.encode(image)

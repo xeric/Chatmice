@@ -34,8 +34,6 @@ struct ContentView: View {
     @State var selectedChat: ChatEntity?
     @State private var displayedChat: ChatEntity?
     @State private var headerChat: ChatEntity?
-    @State private var isLoadingConversation = false
-    @State private var conversationLoadTask: Task<Void, Never>?
     @AppStorage("gptToken") var gptToken = ""
     @AppStorage("gptModel") var gptModel = AppConstants.defaultPrimaryModel
     @AppStorage("systemMessage") var systemMessage = AppConstants.chatGptSystemMessage
@@ -103,7 +101,12 @@ struct ContentView: View {
                 .padding(.vertical, 10)
                 .background(Color.clear)
             }
-            .background(Color.clear)
+            .background {
+                MainGlassBackground(
+                    opacity: mainWindowBackgroundOpacity,
+                    blurLevel: mainWindowBlurLevel
+                )
+            }
             .navigationSplitViewColumnWidth(
                 min: 180,
                 ideal: 220,
@@ -120,7 +123,12 @@ struct ContentView: View {
                     }
                 }
             }
-            .background(Color.clear)
+            .background {
+                MainGlassBackground(
+                    opacity: mainWindowBackgroundOpacity,
+                    blurLevel: mainWindowBlurLevel
+                )
+            }
             .onSubmit(of: .search) {
                 // Handle Enter key in search field - go to next occurrence
                 NotificationCenter.default.post(
@@ -357,7 +365,6 @@ struct ContentView: View {
                 )
             }
             .buttonStyle(.plain)
-            .disabled(isLoadingConversation)
             .popover(isPresented: $isShowingModelPickerPopover, arrowEdge: .bottom) {
                 ModelPickerPopoverView(
                     apiServices: Array(apiServices),
@@ -373,7 +380,7 @@ struct ContentView: View {
 
     @ViewBuilder
     private var conversationDetail: some View {
-        ZStack {
+        Group {
             if let displayedChat {
                 ChatView(
                     viewContext: viewContext,
@@ -381,10 +388,10 @@ struct ContentView: View {
                     searchText: $searchText,
                     window: window
                 )
+                .id(displayedChat.objectID)
                 .frame(minWidth: 400)
-                .disabled(isLoadingConversation)
             }
-            else if !isLoadingConversation {
+            else {
                 WelcomeScreen(
                     chatsCount: chats.count,
                     apiServiceIsPresent: apiServices.count > 0,
@@ -392,17 +399,6 @@ struct ContentView: View {
                     openPreferencesView: openPreferencesView,
                     newChat: newChat
                 )
-            }
-
-            if isLoadingConversation {
-                Color(NSColor.windowBackgroundColor)
-                    .opacity(displayedChat == nil ? 1 : 0.72)
-                    .ignoresSafeArea()
-                ProgressView("Loading conversation…")
-                    .controlSize(.small)
-                    .padding(.horizontal, 18)
-                    .padding(.vertical, 12)
-                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
             }
         }
         .frame(minWidth: 400)
@@ -608,49 +604,14 @@ struct ContentView: View {
             applicationIsActive: scenePhase == .active && NSApp.isActive
         )
 
-        conversationLoadTask?.cancel()
-        guard let targetID = chat?.objectID else {
+        guard let chat, !chat.isDeleted else {
             displayedChat = nil
             headerChat = nil
-            isLoadingConversation = false
             return
         }
 
-        isLoadingConversation = true
-        conversationLoadTask = Task { @MainActor in
-            await Task.yield()
-            try? await Task.sleep(for: .milliseconds(45))
-            guard !Task.isCancelled else { return }
-
-            await warmConversation(targetID)
-            guard !Task.isCancelled, selectedChat?.objectID == targetID,
-                let loadedChat = try? viewContext.existingObject(with: targetID) as? ChatEntity,
-                !loadedChat.isDeleted
-            else { return }
-
-            displayedChat = loadedChat
-            headerChat = loadedChat
-            isLoadingConversation = false
-        }
-    }
-
-    private func warmConversation(_ chatID: NSManagedObjectID) async {
-        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-            PersistenceController.shared.container.performBackgroundTask { context in
-                defer { continuation.resume() }
-                guard let chat = try? context.existingObject(with: chatID) as? ChatEntity else { return }
-                let request = NSFetchRequest<MessageEntity>(entityName: "MessageEntity")
-                request.predicate = NSPredicate(format: "chat == %@", chat)
-                request.sortDescriptors = chat.messageSortDescriptors
-                request.fetchBatchSize = 30
-                guard let messages = try? context.fetch(request) else { return }
-                for message in messages {
-                    _ = message.body
-                    _ = message.timestamp
-                    _ = message.own
-                }
-            }
-        }
+        displayedChat = chat
+        headerChat = chat
     }
 
     private func updateSidebarVisibilityForChatCount(previousCount: Int, newCount: Int) {
@@ -751,12 +712,36 @@ private struct MainGlassBackground: View {
 
     var body: some View {
         ZStack {
-            Rectangle()
-                .fill(.regularMaterial)
-                .opacity(blurLevel / 10)
+            WindowVisualEffectView(
+                material: .fullScreenUI,
+                blendingMode: .behindWindow
+            )
+            .opacity(blurLevel / 10)
+
             Color(NSColor.windowBackgroundColor)
                 .opacity(opacity / 100)
         }
+    }
+}
+
+private struct WindowVisualEffectView: NSViewRepresentable {
+    let material: NSVisualEffectView.Material
+    let blendingMode: NSVisualEffectView.BlendingMode
+
+    func makeNSView(context: Context) -> NSVisualEffectView {
+        let view = NSVisualEffectView()
+        configure(view)
+        return view
+    }
+
+    func updateNSView(_ view: NSVisualEffectView, context: Context) {
+        configure(view)
+    }
+
+    private func configure(_ view: NSVisualEffectView) {
+        view.material = material
+        view.blendingMode = blendingMode
+        view.state = .active
     }
 }
 

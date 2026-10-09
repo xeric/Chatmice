@@ -22,26 +22,35 @@ struct ProviderBrandIcon: View {
     }
 
     var body: some View {
-        if identifier.contains("anthropic") || identifier.contains("claude") {
-            brandImage("logo_claude", color: Color(red: 0.94, green: 0.42, blue: 0.16))
+        if identifier.contains("openrouter") {
+            brandImage("logo_openrouter", color: .primary)
+        }
+        else if identifier.contains("perplexity") {
+            brandImage("logo_perplexity", color: Color(red: 0.13, green: 0.68, blue: 0.65))
+        }
+        else if identifier.contains("anthropic") || identifier.contains("claude") {
+            brandImage("logo_claude", color: Color(red: 0.84, green: 0.35, blue: 0.20))
         }
         else if identifier.contains("gemini") || identifier.contains("google") {
-            brandImage("logo_gemini", color: Color(red: 0.20, green: 0.76, blue: 0.42))
-        }
-        else if identifier.contains("openai") || identifier.contains("chatgpt") || identifier.contains("gpt") {
-            brandImage("logo_openai-responses", color: Color(red: 0.18, green: 0.55, blue: 0.96))
+            brandImage("logo_gemini", color: Color(red: 0.35, green: 0.48, blue: 0.96))
         }
         else if identifier.contains("deepseek") {
-            Image(systemName: "bolt.fill")
-                .resizable()
-                .scaledToFit()
-                .foregroundStyle(Color.cyan)
+            brandImage("logo_deepseek", color: Color(red: 0.30, green: 0.42, blue: 0.996))
+        }
+        else if identifier.contains("xai") || identifier.contains("grok") {
+            brandImage("logo_xai", color: .primary)
         }
         else if identifier.contains("ollama") {
-            Image(systemName: "terminal.fill")
-                .resizable()
-                .scaledToFit()
-                .foregroundStyle(Color.purple)
+            brandImage("logo_ollama", color: .primary)
+        }
+        else if identifier.contains("openai") || identifier.contains("gpt") {
+            brandImage("logo_openai-responses", color: .primary)
+        }
+        else if identifier.contains("docker") {
+            brandImage("logo_docker", color: Color(red: 0.15, green: 0.53, blue: 0.94))
+        }
+        else if type.lowercased() == "chatgpt" {
+            brandImage("logo_chatgpt", color: Color.accentColor)
         }
         else {
             Image(systemName: "network")

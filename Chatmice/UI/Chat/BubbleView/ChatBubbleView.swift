@@ -52,6 +52,7 @@ struct ChatBubbleView: View, Equatable {
     var message: MessageEntity?
     var color: String?
     var onEdit: (() -> Void)?
+    var retryChatID: UUID?
     @Binding var searchText: String
     var currentSearchOccurrence: SearchOccurrence?
     var activitySnapshot: ChatActivitySnapshot? = nil
@@ -192,10 +193,11 @@ struct ChatBubbleView: View, Equatable {
                 ErrorBubbleView(
                     error: errorMessage,
                     onRetry: {
+                        let chatID = retryChatID ?? message?.chat?.id
                         NotificationCenter.default.post(
                             name: NSNotification.Name("RetryMessage"),
                             object: nil,
-                            userInfo: ["chatId": message?.chat?.id as Any]
+                            userInfo: chatID.map { ["chatId": $0] }
                         )
                     },
                     onIgnore: {
