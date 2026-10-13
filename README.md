@@ -57,7 +57,9 @@ Chatmice is derived from [macai](https://github.com/Renset/macai), created by Re
 - **Window appearance**: **Settings → Appearance → Background Opacity / Blur** controls the window background. The workspace sidebar extends to the top of the window, retaining native window controls, its system toggle, and bottom actions. The conversation title, model picker, search, and file-panel toggle belong to a separate 52-point header inside the main content column; the file inspector owns its full-height right column. Use **⌘S** to toggle the sidebar and drag its divider to resize it.
   The file inspector uses its native boundary and panel background, matching the workspace sidebar without an additional separator or material overlay.
   Model selection and chat search are 36 points high and use capsule-shaped Liquid Glass backgrounds on macOS 26 and later, with translucent capsule borders on earlier macOS versions. The file-panel toggle uses a circular Liquid Glass button; when the inspector opens, the toggle moves to its top-right header above the workspace title and file content.
+  The model picker sizes to its model name and expands leftward while remaining next to chat search.
   A single shared behind-window frosted-glass background uses AppKit's under-window material at full effect opacity, without a second material layer on the main content. Appearance settings adjust its tint rather than exposing an unblurred background by fading the visual-effect view. The inspector-header toggle is the only file-panel close control; the file-tree title retains its refresh action.
+  The main-content header uses within-window frosted material with a 44-point fade into the conversation below and a 48-point fade-in at its left edge to avoid an abrupt material seam beside the sidebar. This visual overlay does not intercept clicks or scrolling and does not extend into the side panels.
 
 
 ## Workspaces

@@ -80,7 +80,17 @@ struct ContentView: View {
                     .padding(.leading, 18)
                     .padding(.trailing, 8)
                     .frame(height: 52)
-                    .background(Color.clear)
+                    .background {
+                        WindowVisualEffectView(material: .headerView, blendingMode: .withinWindow)
+                            .mask {
+                                HStack(spacing: 0) {
+                                    LinearGradient(colors: [.clear, .black], startPoint: .leading, endPoint: .trailing)
+                                        .frame(width: 48)
+                                    Color.black
+                                }
+                            }
+                            .allowsHitTesting(false)
+                    }
                     Group {
                         if previewStateManager.isPreviewVisible {
                             HSplitView {
@@ -93,6 +103,30 @@ struct ContentView: View {
                     }
                     .frame(minWidth: 400, maxWidth: .infinity, maxHeight: .infinity)
                     .clipped()
+                    .overlay(alignment: .top) {
+                        WindowVisualEffectView(material: .headerView, blendingMode: .withinWindow)
+                            .frame(height: 44)
+                            .mask {
+                                LinearGradient(
+                                    stops: [
+                                        .init(color: .black, location: 0),
+                                        .init(color: .black.opacity(0.65), location: 0.35),
+                                        .init(color: .clear, location: 1)
+                                    ],
+                                    startPoint: .top,
+                                    endPoint: .bottom
+                                )
+                            }
+                            .mask {
+                                HStack(spacing: 0) {
+                                    LinearGradient(colors: [.clear, .black], startPoint: .leading, endPoint: .trailing)
+                                        .frame(width: 48)
+                                    Color.black
+                                }
+                            }
+                            .allowsHitTesting(false)
+                            .accessibilityHidden(true)
+                    }
                     }
                 }
                 // The file inspector owns its full-height column.
@@ -426,7 +460,8 @@ struct ContentView: View {
                         .foregroundStyle(.secondary)
                 }
                 .padding(.horizontal, 10)
-                .frame(width: 160, height: 36)
+                .frame(height: 36)
+                .fixedSize(horizontal: true, vertical: false)
                 .background { headerControlBackground }
             }
             .buttonStyle(.plain)
