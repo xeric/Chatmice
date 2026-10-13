@@ -15,6 +15,7 @@ import UniformTypeIdentifiers
 final class ChatmiceTextInputControl {
     weak var textView: NSTextView?
     var flush: (() -> Void)?
+    var onReferenceDragHover: ((Bool) -> Void)?
     private var referenceValues = Set<String>()
 
     func referenceRanges(in text: String) -> [NSRange] {
@@ -211,6 +212,9 @@ private struct ChatmiceTextFieldRep: NSViewRepresentable {
         context.coordinator.textView = textView
         inputControl?.textView = textView
         inputControl?.flush = { [weak coordinator = context.coordinator] in coordinator?.flushText() }
+        textView.onReferenceDragHover = { [weak inputControl] hovering in
+            inputControl?.onReferenceDragHover?(hovering)
+        }
         updateHeight(for: textView)
         return scrollView
     }
@@ -273,6 +277,7 @@ private struct ChatmiceTextFieldRep: NSViewRepresentable {
         textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         textView.minSize = NSSize(width: 0, height: minHeight)
         textView.focusRingType = NSFocusRingType.none
+        textView.registerForDraggedTypes([WorkspaceReferenceTransfer.pasteboardType])
 
         return textView
     }
@@ -429,6 +434,7 @@ private final class ChatmiceNSTextView: NSTextView {
     var focusBinding: Binding<Bool>?
     var onSizeChange: (() -> Void)?
     var onPasteImage: ((NSImage) -> Void)?
+    var onReferenceDragHover: ((Bool) -> Void)?
     private var isUpdatingSize = false
 
 
@@ -479,13 +485,33 @@ private final class ChatmiceNSTextView: NSTextView {
     }
 
     override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        if sender.draggingPasteboard.string(forType: WorkspaceReferenceTransfer.pasteboardType) != nil {
+            onReferenceDragHover?(true)
+            return .copy
+        }
         if shouldIgnoreFileDrop(sender) {
             return []
         }
         return super.draggingEntered(sender)
     }
+    override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
+        if sender.draggingPasteboard.string(forType: WorkspaceReferenceTransfer.pasteboardType) != nil {
+            onReferenceDragHover?(true)
+            return .copy
+        }
+        if shouldIgnoreFileDrop(sender) { return [] }
+        return super.draggingUpdated(sender)
+    }
+    override func draggingExited(_ sender: NSDraggingInfo?) {
+        onReferenceDragHover?(false)
+        super.draggingExited(sender)
+    }
+
 
     override func prepareForDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        if sender.draggingPasteboard.string(forType: WorkspaceReferenceTransfer.pasteboardType) != nil {
+            return true
+        }
         if shouldIgnoreFileDrop(sender) {
             return false
         }
@@ -493,6 +519,12 @@ private final class ChatmiceNSTextView: NSTextView {
     }
 
     override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        if let path = sender.draggingPasteboard.string(forType: WorkspaceReferenceTransfer.pasteboardType) {
+            onReferenceDragHover?(false)
+            NotificationCenter.default.post(name: WorkspaceReferenceTransfer.notification,
+                                            object: window, userInfo: ["path": path])
+            return true
+        }
         if shouldIgnoreFileDrop(sender) {
             return false
         }

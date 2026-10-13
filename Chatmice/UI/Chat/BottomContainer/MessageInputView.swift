@@ -527,6 +527,7 @@ struct MessageInputView: View {
     private let inputPlaceholderText: String
     private let cornerRadius: Double
     @State private var isHoveringDropZone = false
+    @State private var isHoveringReferenceText = false
     @State private var attachmentOrder: [AttachmentKey] = []
     @State private var draggingAttachment: AttachmentKey?
     @State private var isShowingPhotosPicker = false
@@ -608,13 +609,13 @@ struct MessageInputView: View {
         CGFloat(initialInputSize + inputPadding * 2)
     }
     private var inputBorderColor: Color {
-        if isHoveringDropZone { return Color.green.opacity(0.8) }
+        if isHoveringDropZone || isHoveringReferenceText { return Color.accentColor }
         if isFocused == .focused { return Color.blue.opacity(0.6) }
         return Color.primary.opacity(0.12)
     }
 
     private var inputBorderWidth: CGFloat {
-        isHoveringDropZone ? 2 : 1
+        (isHoveringDropZone || isHoveringReferenceText) ? 3 : 1
     }
 
     private var toolbarControlForegroundColor: Color {
@@ -1285,6 +1286,8 @@ struct MessageInputView: View {
 
                 inputToolbar
             }
+            .frame(maxWidth: .infinity)
+            .contentShape(Rectangle())
             .background(
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
                     .fill(Color.primary.opacity(0.06))
@@ -1295,15 +1298,53 @@ struct MessageInputView: View {
             )
             .padding(.horizontal, 6)
         }
-        .scaleEffect(isHoveringDropZone ? 1.02 : 1.0)
-        .animation(.spring(response: 0.3, dampingFraction: 0.6), value: isHoveringDropZone)
-        .onDrop(of: [.image, .pdf, .audio, .fileURL], isTargeted: $isHoveringDropZone) { providers in
+        .frame(maxWidth: .infinity)
+        .contentShape(Rectangle())
+        .onDrop(of: [UTType(exportedAs: WorkspaceReferenceTransfer.pasteboardType.rawValue), .image, .pdf, .audio, .fileURL], isTargeted: $isHoveringDropZone) { providers in
+            let references = providers.filter {
+                $0.hasItemConformingToTypeIdentifier(WorkspaceReferenceTransfer.pasteboardType.rawValue)
+            }
+            if !references.isEmpty {
+                guard !isEditingSystemMessage, let window = referenceInputControl.textView?.window else { return false }
+                for provider in references {
+                    provider.loadDataRepresentation(forTypeIdentifier: WorkspaceReferenceTransfer.pasteboardType.rawValue) { data, _ in
+                        guard let data, let path = String(data: data, encoding: .utf8) else { return }
+                        DispatchQueue.main.async {
+                            NotificationCenter.default.post(name: WorkspaceReferenceTransfer.notification,
+                                                            object: window, userInfo: ["path": path])
+                        }
+                    }
+                }
+                return true
+            }
             guard imageUploadsAllowed || pdfUploadsAllowed || audioInputAllowed || !isInferenceInProgress else {
                 return false
             }
             return handleDrop(providers: providers)
         }
+        .onReceive(NotificationCenter.default.publisher(for: WorkspaceReferenceTransfer.notification)) { notification in
+            guard !isEditingSystemMessage, let editor = referenceInputControl.textView,
+                  let sourceWindow = notification.object as? NSWindow, editor.window === sourceWindow,
+                  let path = notification.userInfo?["path"] as? String,
+                  let workspace = chat?.workspace else { return }
+            let url = URL(fileURLWithPath: path)
+            let root = workspace.rootURL.standardizedFileURL
+            guard WorkspacePathPolicy.contains(url, in: root),
+                  url.standardizedFileURL.path.hasPrefix(root.path + "/"),
+                  let values = try? url.resourceValues(forKeys: [.isDirectoryKey]) else { return }
+            let relativePath = String(url.standardizedFileURL.path.dropFirst(root.path.count + 1))
+            let reference = WorkspaceReference(relativePath: relativePath, isDirectory: values.isDirectory == true)
+            let selection = editor.selectedRange()
+            let prefix = selection.location > 0
+                && !(editor.string as NSString).substring(with: NSRange(location: selection.location - 1, length: 1))
+                    .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? " " : ""
+            if !prefix.isEmpty { editor.insertText(prefix, replacementRange: selection) }
+            referenceInputControl.replaceReference(in: editor.selectedRange(), with: reference.insertionText)
+            isFocused = .focused
+            onTextSettled()
+        }
         .onAppear {
+            referenceInputControl.onReferenceDragHover = { hovering in isHoveringReferenceText = hovering }
             syncAttachmentOrder()
         }
         .onChange(of: attachedImages.map { $0.id }) {

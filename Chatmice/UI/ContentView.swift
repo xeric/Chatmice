@@ -67,30 +67,7 @@ struct ContentView: View {
                     .navigationSplitViewColumnWidth(min: 180, ideal: 220, max: 400)
             } detail: {
                     VStack(spacing: 0) {
-                    HStack(spacing: 12) {
-                        if !isSidebarVisible {
-                            Color.clear.frame(width: 132)
-                        }
-                        conversationTitle
-                        Spacer()
-                        modelPickerButton
-                        chatSearchField
-                        if !isFileBrowserVisible { fileBrowserToggle }
-                    }
-                    .padding(.leading, 18)
-                    .padding(.trailing, 8)
-                    .frame(height: 52)
-                    .background {
-                        WindowVisualEffectView(material: .headerView, blendingMode: .withinWindow)
-                            .mask {
-                                HStack(spacing: 0) {
-                                    LinearGradient(colors: [.clear, .black], startPoint: .leading, endPoint: .trailing)
-                                        .frame(width: 48)
-                                    Color.black
-                                }
-                            }
-                            .allowsHitTesting(false)
-                    }
+                    Color.clear.frame(height: 52)
                     Group {
                         if previewStateManager.isPreviewVisible {
                             HSplitView {
@@ -103,14 +80,16 @@ struct ContentView: View {
                     }
                     .frame(minWidth: 400, maxWidth: .infinity, maxHeight: .infinity)
                     .clipped()
+                    }
                     .overlay(alignment: .top) {
                         WindowVisualEffectView(material: .headerView, blendingMode: .withinWindow)
-                            .frame(height: 44)
+                            .frame(height: 96)
                             .mask {
                                 LinearGradient(
                                     stops: [
                                         .init(color: .black, location: 0),
-                                        .init(color: .black.opacity(0.65), location: 0.35),
+                                        .init(color: .black.opacity(0.85), location: 0.35),
+                                        .init(color: .black.opacity(0.45), location: 0.65),
                                         .init(color: .clear, location: 1)
                                     ],
                                     startPoint: .top,
@@ -127,10 +106,27 @@ struct ContentView: View {
                             .allowsHitTesting(false)
                             .accessibilityHidden(true)
                     }
+                    .overlay(alignment: .top) {
+                    HStack(spacing: 12) {
+                        if !isSidebarVisible {
+                            Color.clear.frame(width: 132)
+                        }
+                        conversationTitle
+                        Spacer()
+                        modelPickerButton
+                        chatSearchField
+                        if !isFileBrowserVisible || displayedChat?.workspace?.isTemporary == true { fileBrowserToggle }
+                    }
+                    .padding(.leading, 18)
+                    .padding(.trailing, 8)
+                    .frame(height: 52)
                     }
                 }
                 // The file inspector owns its full-height column.
-                .inspector(isPresented: $isFileBrowserVisible) {
+                .inspector(isPresented: Binding(
+                    get: { isFileBrowserVisible && displayedChat?.workspace?.isTemporary == false },
+                    set: { isFileBrowserVisible = $0 }
+                )) {
                     Group {
                         VStack(spacing: 0) {
                             HStack {
@@ -319,7 +315,7 @@ struct ContentView: View {
                 .buttonStyle(.plain)
             }
         }
-        .disabled(headerChat?.workspace == nil)
+        .disabled(headerChat?.workspace == nil || headerChat?.workspace?.isTemporary == true)
         .help(isFileBrowserVisible ? "Hide workspace files" : "Show workspace files")
         .accessibilityIdentifier("toggle-workspace-file-browser")
     }
@@ -399,7 +395,7 @@ struct ContentView: View {
                 .font(.system(size: 13, weight: .semibold))
                 .lineLimit(1)
 
-            if let workspace = headerChat?.workspace {
+            if let workspace = headerChat?.workspace, !workspace.isTemporary {
                 ConversationWorkspacePath(workspace: workspace)
             }
         }

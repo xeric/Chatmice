@@ -241,7 +241,7 @@ struct ChatListView: View {
                 }
             }
             .contentShape(Rectangle())
-            .help(workspace.path)
+            .help(workspace.isTemporary ? workspace.name : workspace.path)
 
             if expandedWorkspaceIDs.contains(workspace.id) {
                 if workspaceChats.isEmpty {

@@ -191,6 +191,7 @@ private struct WorkspaceFileOutline: NSViewRepresentable {
         outline.onPreview = { [weak coordinator = context.coordinator] in coordinator?.preview() }
         outline.onOpen = { [weak coordinator = context.coordinator] in coordinator?.open() }
         outline.menu = context.coordinator.makeMenu()
+        outline.setDraggingSourceOperationMask(.copy, forLocal: true)
         outline.setAccessibilityIdentifier("workspace-file-tree")
         let scroll = NSScrollView()
         scroll.drawsBackground = false
@@ -241,6 +242,20 @@ private struct WorkspaceFileOutline: NSViewRepresentable {
 
         func outlineView(_ outlineView: NSOutlineView, isItemExpandable item: Any) -> Bool {
             (item as? WorkspaceFileTree.Node)?.isDirectory == true
+        }
+
+        func outlineView(_ outlineView: NSOutlineView, pasteboardWriterForItem item: Any) -> NSPasteboardWriting? {
+            guard let node = item as? WorkspaceFileTree.Node, let root = tree.root,
+                  WorkspacePathPolicy.contains(node.url, in: root.url) else { return nil }
+            let item = NSPasteboardItem()
+            item.setString(node.url.path, forType: WorkspaceReferenceTransfer.pasteboardType)
+            return item
+        }
+
+        @objc func insertReference() {
+            guard let node = selected, let outline else { return }
+            NotificationCenter.default.post(name: WorkspaceReferenceTransfer.notification,
+                                            object: outline.window, userInfo: ["path": node.url.path])
         }
 
         func outlineView(_ outlineView: NSOutlineView, viewFor tableColumn: NSTableColumn?, item: Any) -> NSView? {
@@ -315,7 +330,8 @@ private struct WorkspaceFileOutline: NSViewRepresentable {
         func makeMenu() -> NSMenu {
             let menu = NSMenu()
             menu.delegate = self
-            for (title, action) in [("Quick Look", #selector(preview)), ("Open", #selector(open)),
+            for (title, action) in [("Reference in Message", #selector(insertReference)),
+                                    ("Quick Look", #selector(preview)), ("Open", #selector(open)),
                                     ("Reveal in Finder", #selector(reveal)), ("Copy Relative Path", #selector(copyPath))] {
                 let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
                 item.target = self

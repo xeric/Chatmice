@@ -2,6 +2,11 @@ import Foundation
 import SwiftUI
 import CoreServices
 
+enum WorkspaceReferenceTransfer {
+    static let pasteboardType = NSPasteboard.PasteboardType("com.chatmice.workspace-reference")
+    static let notification = Notification.Name("InsertWorkspaceFileReference")
+}
+
 struct WorkspaceReference: Identifiable, Sendable {
     let relativePath: String
     let isDirectory: Bool
