@@ -122,6 +122,14 @@ struct ChatView: View {
     // MARK: - Body
     var body: some View {
         VStack(spacing: 0) {
+            if !searchText.isEmpty && !chatViewModel.searchOccurrences.isEmpty {
+                HStack {
+                    Spacer()
+                    SearchNavigationView(chatViewModel: chatViewModel)
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 6)
+            }
             chatMessagesView
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             chatInputView
@@ -202,11 +210,6 @@ struct ChatView: View {
         .onReceive(reasoningTimer) { _ in
             updateLiveReasoningDurationIfNeeded()
         }
-        .toolbar {
-            if !searchText.isEmpty && !chatViewModel.searchOccurrences.isEmpty {
-                SearchNavigationView(chatViewModel: chatViewModel)
-            }
-        }
         .onChange(of: searchText) { _, newSearchText in
             chatViewModel.updateSearchOccurrences(searchText: newSearchText)
         }
@@ -245,7 +248,6 @@ struct ChatView: View {
             editSystemMessage: $editSystemMessage,
             isStreaming: $logicHandler.isStreaming,
             currentError: $logicHandler.currentError,
-            userIsScrolling: $logicHandler.userIsScrolling,
             searchText: $searchText,
             reasoningDurations: reasoningDurations,
             activeReasoningMessageID: activeReasoningMessageID

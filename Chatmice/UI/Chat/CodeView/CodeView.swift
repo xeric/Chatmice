@@ -5,7 +5,6 @@
 //  Created by Renat on 07.06.2024.
 //
 
-import AttributedText
 import Foundation
 import Highlightr
 import SwiftUI
@@ -50,8 +49,7 @@ struct CodeView: View {
             if let highlighted = highlightedCode {
                 
                 let finalAttributedString = searchText == "" ? highlighted : applySearchHighlighting(to: highlighted)
-                AttributedText(finalAttributedString)
-                    .textSelection(.enabled)
+                SelectableRichText(finalAttributedString)
                     .padding([.horizontal, .bottom], 12)
             }
             else {

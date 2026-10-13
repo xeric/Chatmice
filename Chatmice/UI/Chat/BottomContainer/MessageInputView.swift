@@ -542,6 +542,13 @@ struct MessageInputView: View {
     @State private var reasoningSelectionRevision = 0
     @StateObject private var voiceRecorder = VoiceRecordingController()
     @State private var voiceRecordingError: String?
+    @State private var workspaceReferences: [WorkspaceReference] = []
+    @State private var isLoadingWorkspaceReferences = false
+    @State private var referenceInputControl = ChatmiceTextInputControl()
+    @State private var referenceEditingText: String?
+    @State private var referenceSelection: NSRange?
+    @State private var selectedWorkspaceReferenceID: String?
+    @State private var dismissedMentionQuery: String?
 
     private let maxInputHeight = 160.0
     private let initialInputSize = 16.0
@@ -561,6 +568,40 @@ struct MessageInputView: View {
             return "Ask anything or describe an image to generate"
         }
         return inputPlaceholderText
+    }
+
+    private var mentionQuery: String? {
+        guard !isEditingSystemMessage else { return nil }
+        if let selection = referenceSelection, selection.length == 0,
+           referenceInputControl.referenceRanges(in: referenceEditingText ?? text).contains(where: {
+               selection.location >= $0.location && selection.location <= NSMaxRange($0)
+           }) { return nil }
+        let value = WorkspaceMentionQuery.value(in: referenceEditingText ?? text, selection: referenceSelection)
+        return value == dismissedMentionQuery ? nil : value
+    }
+
+    private var filteredWorkspaceReferences: [WorkspaceReference] {
+        guard let mentionQuery else { return [] }
+        guard !mentionQuery.isEmpty else { return workspaceReferences }
+        return workspaceReferences.filter {
+            $0.relativePath.localizedCaseInsensitiveContains(mentionQuery)
+        }
+    }
+
+    private var visibleWorkspaceReferences: [WorkspaceReference] {
+        Array(filteredWorkspaceReferences.prefix(8))
+    }
+
+    private var highlightedWorkspaceReferenceID: String? {
+        if let selectedWorkspaceReferenceID,
+           visibleWorkspaceReferences.contains(where: { $0.id == selectedWorkspaceReferenceID }) {
+            return selectedWorkspaceReferenceID
+        }
+        return visibleWorkspaceReferences.first?.id
+    }
+
+    private var showsWorkspaceReferences: Bool {
+        mentionQuery != nil && chat?.workspace != nil
     }
 
     private var defaultInputHeight: CGFloat {
@@ -1120,6 +1161,22 @@ struct MessageInputView: View {
         }
 
         VStack(spacing: 0) {
+            if showsWorkspaceReferences, let workspace = chat?.workspace {
+                WorkspaceMentionSuggestionsView(
+                    workspace: workspace,
+                    references: visibleWorkspaceReferences,
+                    isLoading: isLoadingWorkspaceReferences,
+                    selectedID: highlightedWorkspaceReferenceID,
+                    onSelect: insertWorkspaceReference,
+                    onListingChange: { references in
+                        isLoadingWorkspaceReferences = references == nil
+                        workspaceReferences = references ?? []
+                    }
+                )
+                .padding(.horizontal, 10)
+                .padding(.bottom, 8)
+            }
+
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
                     ForEach(orderedAttachments) { attachment in
@@ -1211,6 +1268,9 @@ struct MessageInputView: View {
                     onEscape: isEditingSystemMessage ? onCancelEdit : nil,
                     onTextSettled: onTextSettled,
                     onPasteImage: addPastedImage,
+                    inputControl: referenceInputControl,
+                    onEditingChange: updateReferenceEditingState,
+                    onCommand: handleReferenceCommand,
                     onCommit: {
                         guard !isInferenceInProgress else { return }
                         onEnter()
@@ -1251,6 +1311,11 @@ struct MessageInputView: View {
         }
         .onChange(of: attachedFiles.map { $0.id }) {
             syncAttachmentOrder()
+        }
+        .onChange(of: text) { _, newValue in
+            if let editor = referenceInputControl.textView, editor.string == newValue {
+                updateReferenceEditingState(newValue, selection: editor.selectedRange())
+            }
         }
         .onAppear {
             DispatchQueue.main.async {
@@ -1547,6 +1612,50 @@ struct MessageInputView: View {
 
         attachedImages = newImages
         attachedFiles = newFiles
+    }
+
+    private func insertWorkspaceReference(_ reference: WorkspaceReference) {
+        guard let editor = referenceInputControl.textView,
+              let range = WorkspaceMentionQuery.replacementRange(in: editor.string, selection: editor.selectedRange()) else { return }
+        referenceInputControl.replaceReference(in: NSRange(range, in: editor.string), with: reference.insertionText)
+        isFocused = .focused
+        onTextSettled()
+    }
+
+    private func updateReferenceEditingState(_ value: String, selection: NSRange) {
+        let oldQuery = WorkspaceMentionQuery.value(in: referenceEditingText ?? text, selection: referenceSelection)
+        let newQuery = WorkspaceMentionQuery.value(in: value, selection: selection)
+        referenceEditingText = value
+        referenceSelection = selection
+        if oldQuery != newQuery {
+            selectedWorkspaceReferenceID = nil
+            dismissedMentionQuery = nil
+        }
+    }
+
+    private func handleReferenceCommand(_ command: Selector, editor: NSTextView) -> Bool {
+        updateReferenceEditingState(editor.string, selection: editor.selectedRange())
+        guard showsWorkspaceReferences else { return false }
+        if command == #selector(NSResponder.moveDown(_:)) || command == #selector(NSResponder.moveUp(_:)) {
+            let references = visibleWorkspaceReferences
+            guard !references.isEmpty else { return true }
+            let current = references.firstIndex(where: { $0.id == highlightedWorkspaceReferenceID }) ?? 0
+            let offset = command == #selector(NSResponder.moveDown(_:)) ? 1 : -1
+            selectedWorkspaceReferenceID = references[(current + offset + references.count) % references.count].id
+            return true
+        }
+        if command == #selector(NSResponder.insertNewline(_:)),
+           !(NSApp.currentEvent?.modifierFlags.contains(.shift) ?? false) {
+            if let reference = visibleWorkspaceReferences.first(where: { $0.id == highlightedWorkspaceReferenceID }) {
+                insertWorkspaceReference(reference)
+            }
+            return true
+        }
+        if command == #selector(NSResponder.cancelOperation(_:)) {
+            dismissedMentionQuery = mentionQuery
+            return true
+        }
+        return false
     }
 
     private enum AttachmentKey: Hashable {

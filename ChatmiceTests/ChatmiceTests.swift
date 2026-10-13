@@ -742,6 +742,160 @@ final class ChatmiceTests: XCTestCase {
         XCTAssertEqual(resolved.identifier, serviceIdentifier)
     }
 
+    func testWorkspacePathPolicyRejectsTraversalAndSymlinkEscape() throws {
+        let base = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Chatmice-WorkspacePolicy-\(UUID().uuidString)", isDirectory: true)
+        let root = base.appendingPathComponent("root", isDirectory: true)
+        let outside = base.appendingPathComponent("outside", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: base) }
+
+        let child = try WorkspacePathPolicy.containedURL(for: "Sources/App.swift", root: root)
+        XCTAssertEqual(child.path, root.appendingPathComponent("Sources/App.swift").path)
+
+        XCTAssertThrowsError(try WorkspacePathPolicy.containedURL(for: "../outside/secret.txt", root: root))
+
+        let link = root.appendingPathComponent("external", isDirectory: true)
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: outside)
+        XCTAssertThrowsError(try WorkspacePathPolicy.containedURL(for: "external/secret.txt", root: root))
+    }
+
+    func testWorkspaceMentionOnlyMatchesActiveAtToken() throws {
+        XCTAssertEqual(WorkspaceMentionQuery.value(in: "Review @Sources/App"), "Sources/App")
+        XCTAssertEqual(
+            try XCTUnwrap(WorkspaceMentionQuery.replacementRange(in: "Review @Sources/App")),
+            "Review @Sources/App".range(of: "@Sources/App")
+        )
+        XCTAssertNil(WorkspaceMentionQuery.value(in: "email@example.com"))
+        XCTAssertNil(WorkspaceMentionQuery.value(in: "Review @Sources App"))
+    }
+
+    @MainActor
+    func testTemporaryWorkspaceClaimsLegacyChats() throws {
+        let persistence = PersistenceController(inMemory: true)
+        let context = persistence.container.viewContext
+        let chat = ChatEntity(context: context)
+        chat.id = UUID()
+        chat.name = "Legacy"
+        chat.workspace = nil
+
+        let workspace = try WorkspaceManager.prepare(in: context)
+
+        XCTAssertEqual(workspace.id, WorkspaceManager.temporaryWorkspaceID)
+        XCTAssertEqual(workspace.path, "/tmp/chatmice")
+        XCTAssertEqual(chat.workspace, workspace)
+    }
+
+    func testBashExecutorCannotEscapeWorkspace() async throws {
+        let base = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Chatmice-BashWorkspace-\(UUID().uuidString)", isDirectory: true)
+        let root = base.appendingPathComponent("root", isDirectory: true)
+        let outsideFile = base.appendingPathComponent("secret.txt")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try Data("inside".utf8).write(to: root.appendingPathComponent("inside.txt"))
+        try Data("secret".utf8).write(to: outsideFile)
+        defer { try? FileManager.default.removeItem(at: base) }
+
+        let executor = BashExecutor()
+        let inside = await executor.run(
+            command: "cat inside.txt",
+            cwd: root,
+            workspaceRoot: root,
+            timeout: 5
+        )
+        XCTAssertEqual(inside.exitCode, 0)
+        XCTAssertEqual(inside.stdout, "inside")
+
+        let created = await executor.run(
+            command: "printf '# Sample\\n' > sample.md && cat sample.md",
+            cwd: root,
+            workspaceRoot: root,
+            timeout: 5
+        )
+        XCTAssertEqual(created.exitCode, 0)
+        XCTAssertEqual(created.stdout, "# Sample")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: root.appendingPathComponent("sample.md").path))
+
+        let escaped = await executor.run(
+            command: "cat ../secret.txt",
+            cwd: root,
+            workspaceRoot: root,
+            timeout: 5
+        )
+        XCTAssertNotEqual(escaped.exitCode, 0)
+        XCTAssertFalse(escaped.stdout.contains("secret"))
+
+        let signaled = await executor.run(
+            command: "kill -TERM $$",
+            cwd: root,
+            workspaceRoot: root,
+            timeout: 5
+        )
+        XCTAssertFalse(signaled.timedOut, "A process signal is not a watchdog timeout")
+
+        let timedOut = await executor.run(
+            command: "sleep 2",
+            cwd: root,
+            workspaceRoot: root,
+            timeout: 0.05
+        )
+        XCTAssertTrue(timedOut.timedOut)
+    }
+
+    func testBashToolReportsNonzeroExitAsFailure() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Chatmice-BashTool-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let arguments = #"{"command":"printf failure >&2; exit 7"}"#
+        do {
+            _ = try await BashTool().call(
+                arguments: arguments,
+                context: ToolContext(cwd: root, ask: { _ in true })
+            )
+            XCTFail("A nonzero shell exit must be reported as a failed tool call")
+        }
+        catch ToolError.executionFailed(let message) {
+            XCTAssertTrue(message.contains("failure"))
+            XCTAssertTrue(message.contains("[exit code: 7]"))
+            XCTAssertFalse(message.contains("[timed out]"))
+        }
+    }
+
+    func testPythonInterpreterRunsInsideWorkspaceSandbox() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Chatmice-PythonTool-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let output = try await PythonInterpreterTool().call(
+            arguments: #"{"code":"print('sandbox-ok')"}"#,
+            context: ToolContext(cwd: root, ask: { _ in true })
+        )
+        XCTAssertTrue(output.contains("sandbox-ok"))
+        XCTAssertTrue(output.contains("[exit code: 0]"))
+        XCTAssertFalse(output.contains("[timed out]"))
+    }
+
+    func testBashExecutorSupportsTemporaryWorkspaceAlias() async throws {
+        let root = URL(fileURLWithPath: "/tmp/Chatmice-BashAlias-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        XCTAssertTrue(SandboxProfilePathRules.resolvedRoot(root).path.hasPrefix("/private/tmp/"))
+
+        let output = await BashExecutor().run(
+            command: "printf alias-ok > sample.md && cat sample.md",
+            cwd: root,
+            workspaceRoot: root,
+            timeout: 5
+        )
+        XCTAssertEqual(output.exitCode, 0)
+        XCTAssertEqual(output.stdout, "alias-ok")
+        XCTAssertFalse(output.timedOut)
+    }
+
 }
 
 

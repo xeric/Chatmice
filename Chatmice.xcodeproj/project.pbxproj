@@ -7,6 +7,14 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		C4A700022026101100000002 /* Workspace.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4A700012026101100000001 /* Workspace.swift */; };
+		C4A700042026101100000004 /* WorkspaceCreationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4A700032026101100000003 /* WorkspaceCreationView.swift */; };
+		C4A700062026101100000006 /* WorkspaceMentionSuggestions.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4A700052026101100000005 /* WorkspaceMentionSuggestions.swift */; };
+		C4A700082026101200000008 /* WorkspaceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4A700072026101200000007 /* WorkspaceTests.swift */; };
+		C4A7000A202610120000000A /* SelectableRichText.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4A700092026101200000009 /* SelectableRichText.swift */; };
+		C4A7000C202610120000000C /* ChatLayoutTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4A7000B202610120000000B /* ChatLayoutTests.swift */; };
+		C4A7000E202610130000000E /* WorkspaceReferenceInputTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4A7000D202610130000000D /* WorkspaceReferenceInputTests.swift */; };
+		C4A700102026101300000010 /* WorkspaceFileBrowser.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4A7000F202610130000000F /* WorkspaceFileBrowser.swift */; };
 		33F57FB60DEE4CB8234F35B4 /* AudioAttachmentPlayerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A4ACF5465AEC95EC533B619C /* AudioAttachmentPlayerView.swift */; };
 		C76E55386D88A8A2D014F983 /* AudioAttachmentConverter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5423D86ECA9E5591AC636F93 /* AudioAttachmentConverter.swift */; };
 		AA91B830D4CC520CC3B66C28 /* VoiceRecordingController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8034B2BAB55881DBAA730B11 /* VoiceRecordingController.swift */; };
@@ -67,7 +75,6 @@
 		4A4F204B2D62650800D1F57F /* FiraCode-VF.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 4A4F204A2D62650800D1F57F /* FiraCode-VF.ttf */; };
 		4A4F204C2D62651900D1F57F /* FiraCode-VF.ttf in CopyFiles */ = {isa = PBXBuildFile; fileRef = 4A4F204A2D62650800D1F57F /* FiraCode-VF.ttf */; };
 		4A51EC6229C32AF700973D83 /* Highlightr in Frameworks */ = {isa = PBXBuildFile; productRef = 4A51EC6129C32AF700973D83 /* Highlightr */; };
-		4A51EC6529C32B0B00973D83 /* AttributedText in Frameworks */ = {isa = PBXBuildFile; productRef = 4A51EC6429C32B0B00973D83 /* AttributedText */; };
 		4A54E85B2ED6500F0068C25E /* CloudSyncManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A54E85A2ED6500F0068C25E /* CloudSyncManager.swift */; };
 		4A55DCA729C264BC00A3800C /* TableView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A55DCA629C264BC00A3800C /* TableView.swift */; };
 		4A5F64B829C64E21000403F7 /* ChatBubbleView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A5F64B729C64E21000403F7 /* ChatBubbleView.swift */; };
@@ -166,6 +173,14 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		C4A700012026101100000001 /* Workspace.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Workspace.swift; sourceTree = "<group>"; };
+		C4A700032026101100000003 /* WorkspaceCreationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceCreationView.swift; sourceTree = "<group>"; };
+		C4A700052026101100000005 /* WorkspaceMentionSuggestions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceMentionSuggestions.swift; sourceTree = "<group>"; };
+		C4A700072026101200000007 /* WorkspaceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceTests.swift; sourceTree = "<group>"; };
+		C4A700092026101200000009 /* SelectableRichText.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SelectableRichText.swift; sourceTree = "<group>"; };
+		C4A7000B202610120000000B /* ChatLayoutTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatLayoutTests.swift; sourceTree = "<group>"; };
+		C4A7000D202610130000000D /* WorkspaceReferenceInputTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceReferenceInputTests.swift; sourceTree = "<group>"; };
+		C4A7000F202610130000000F /* WorkspaceFileBrowser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceFileBrowser.swift; sourceTree = "<group>"; };
 		A4ACF5465AEC95EC533B619C /* AudioAttachmentPlayerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioAttachmentPlayerView.swift; sourceTree = "<group>"; };
 		5423D86ECA9E5591AC636F93 /* AudioAttachmentConverter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioAttachmentConverter.swift; sourceTree = "<group>"; };
 		8034B2BAB55881DBAA730B11 /* VoiceRecordingController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceRecordingController.swift; sourceTree = "<group>"; };
@@ -210,6 +225,8 @@
 		4A315DB12C8CD8410095ABD1 /* TabAIPersonasView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabAIPersonasView.swift; sourceTree = "<group>"; };
 		4A366F612EEFFA5E00128E19 /* macaiDataModel 2.xcdatamodel */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcdatamodel; path = "macaiDataModel 2.xcdatamodel"; sourceTree = "<group>"; };
 		4A366F622EEFFA5E00128E19 /* macaiDataModel 3.xcdatamodel */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcdatamodel; path = "macaiDataModel 3.xcdatamodel"; sourceTree = "<group>"; };
+		C4A700072026101100000007 /* macaiDataModel 4.xcdatamodel */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcdatamodel; path = "macaiDataModel 4.xcdatamodel"; sourceTree = "<group>"; };
+		D5B800012026101200000001 /* macaiDataModel 5.xcdatamodel */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcdatamodel; path = "macaiDataModel 5.xcdatamodel"; sourceTree = "<group>"; };
 		4A37B8542C2A399800F36CC4 /* Credits.rtf */ = {isa = PBXFileReference; lastKnownFileType = text.rtf; path = Credits.rtf; sourceTree = "<group>"; };
 		4A399C9529BC8FEF00E98796 /* Chatmice.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Chatmice.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		4A399C9829BC8FEF00E98796 /* ChatmiceApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatmiceApp.swift; sourceTree = "<group>"; };
@@ -304,7 +321,6 @@
 				4A471B862C29C56800C66926 /* SwiftMath in Frameworks */,
 				4B0000022E00000100000002 /* MermaidRender in Frameworks */,
 				4A7E1BDB29C910F900E57DC2 /* Sparkle in Frameworks */,
-				4A51EC6529C32B0B00973D83 /* AttributedText in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -344,6 +360,7 @@
 		4A1614162D46C88900A1EF8D /* BottomContainer */ = {
 			isa = PBXGroup;
 			children = (
+				C4A700052026101100000005 /* WorkspaceMentionSuggestions.swift */,
 				4A1614142D46C86800A1EF8D /* PersonaSelectorView.swift */,
 				4AA681C62D3DAB40005C4E6E /* ChatBottomContainerView.swift */,
 				4A27FF902DA1C43E0075D730 /* MessageInputView.swift */,
@@ -379,6 +396,7 @@
 		4A164BB92C962E520060ECFE /* Components */ = {
 			isa = PBXGroup;
 			children = (
+				C4A700092026101200000009 /* SelectableRichText.swift */,
 				FC48E933415526988C090899 /* ModelPickerPopoverView.swift */,
 				4A4918792D9F4186007EB4A2 /* ToolbarButton.swift */,
 				4A2D3CEA2D5794B00082A262 /* ThemeMode.swift */,
@@ -474,9 +492,11 @@
 		4A272A6D29F5CE0D00F93D0D /* UI */ = {
 			isa = PBXGroup;
 			children = (
+				C4A700032026101100000003 /* WorkspaceCreationView.swift */,
 				4A885C532CEA3D960018BBED /* PreviewStateManager.swift */,
 				4A164BB92C962E520060ECFE /* Components */,
 				4A399C9A29BC8FEF00E98796 /* ContentView.swift */,
+				C4A7000F202610130000000F /* WorkspaceFileBrowser.swift */,
 				4A272A6C29F5CD9D00F93D0D /* WelcomeScreen */,
 				4A272A6B29F5CD7500F93D0D /* ChatList */,
 				4A272A6929F5CD4700F93D0D /* Preferences */,
@@ -488,6 +508,7 @@
 		4A272A6E29F5CE3900F93D0D /* Models */ = {
 			isa = PBXGroup;
 			children = (
+				C4A700012026101100000001 /* Workspace.swift */,
 				4A146A012F103E3E004249A2 /* DocumentAttachment.swift */,
 				4A27FF922DA1C4640075D730 /* ImageAttachment.swift */,
 				4A27FF932DA1C4640075D730 /* MessageContent.swift */,
@@ -585,6 +606,9 @@
 			isa = PBXGroup;
 			children = (
 				16D75E6599084CC8A6C8587C /* APIServiceTemplateProviderTests.swift */,
+				C4A700072026101200000007 /* WorkspaceTests.swift */,
+				C4A7000B202610120000000B /* ChatLayoutTests.swift */,
+				C4A7000D202610130000000D /* WorkspaceReferenceInputTests.swift */,
 				0E7C2F293A4D4E5F9B8C7D6E /* UI */,
 				4ABDBE6729F86E6300661B2D /* Utilities */,
 			);
@@ -666,7 +690,6 @@
 			name = Chatmice;
 			packageProductDependencies = (
 				4A51EC6129C32AF700973D83 /* Highlightr */,
-				4A51EC6429C32B0B00973D83 /* AttributedText */,
 				4A7E1BDA29C910F900E57DC2 /* Sparkle */,
 				4A471B852C29C56800C66926 /* SwiftMath */,
 				4A2842482C87014800E5C920 /* KeychainAccess */,
@@ -746,7 +769,6 @@
 			mainGroup = 4A399C8C29BC8FEF00E98796;
 			packageReferences = (
 				4A51EC6029C32AF600973D83 /* XCRemoteSwiftPackageReference "Highlightr" */,
-				4A51EC6329C32B0B00973D83 /* XCRemoteSwiftPackageReference "AttributedText" */,
 				4A7E1BD929C910F800E57DC2 /* XCRemoteSwiftPackageReference "Sparkle" */,
 				4A471B842C29C56800C66926 /* XCRemoteSwiftPackageReference "SwiftMath" */,
 				4A2842472C87014800E5C920 /* XCRemoteSwiftPackageReference "KeychainAccess" */,
@@ -798,6 +820,11 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				C4A700022026101100000002 /* Workspace.swift in Sources */,
+				C4A700042026101100000004 /* WorkspaceCreationView.swift in Sources */,
+				C4A700062026101100000006 /* WorkspaceMentionSuggestions.swift in Sources */,
+				C4A7000A202610120000000A /* SelectableRichText.swift in Sources */,
+				C4A700102026101300000010 /* WorkspaceFileBrowser.swift in Sources */,
 				33F57FB60DEE4CB8234F35B4 /* AudioAttachmentPlayerView.swift in Sources */,
 				C76E55386D88A8A2D014F983 /* AudioAttachmentConverter.swift in Sources */,
 				AA91B830D4CC520CC3B66C28 /* VoiceRecordingController.swift in Sources */,
@@ -910,6 +937,9 @@
 			buildActionMask = 2147483647;
 			files = (
 				0E7C2F2B3A4D4E5F9B8C7D6E /* MessageCellTests.swift in Sources */,
+				C4A700082026101200000008 /* WorkspaceTests.swift in Sources */,
+				C4A7000C202610120000000C /* ChatLayoutTests.swift in Sources */,
+				C4A7000E202610130000000E /* WorkspaceReferenceInputTests.swift in Sources */,
 				4ABDBE6B29F86E8D00661B2D /* MessageParserTests.swift in Sources */,
 				4F432A6BC5E64A3390D5F2C5 /* PDFHandlingTests.swift in Sources */,
 				7CEEFA33B4C841A2AC2BFBA2 /* APIServiceTemplateProviderTests.swift in Sources */,
@@ -1310,14 +1340,6 @@
 				kind = branch;
 			};
 		};
-		4A51EC6329C32B0B00973D83 /* XCRemoteSwiftPackageReference "AttributedText" */ = {
-			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/gonzalezreal/AttributedText";
-			requirement = {
-				kind = upToNextMajorVersion;
-				minimumVersion = 1.0.0;
-			};
-		};
 		4A7E1BD929C910F800E57DC2 /* XCRemoteSwiftPackageReference "Sparkle" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/sparkle-project/Sparkle";
@@ -1352,11 +1374,6 @@
 			package = 4A51EC6029C32AF600973D83 /* XCRemoteSwiftPackageReference "Highlightr" */;
 			productName = Highlightr;
 		};
-		4A51EC6429C32B0B00973D83 /* AttributedText */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = 4A51EC6329C32B0B00973D83 /* XCRemoteSwiftPackageReference "AttributedText" */;
-			productName = AttributedText;
-		};
 		4A7E1BDA29C910F900E57DC2 /* Sparkle */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = 4A7E1BD929C910F800E57DC2 /* XCRemoteSwiftPackageReference "Sparkle" */;
@@ -1376,8 +1393,10 @@
 				4A751D2429CBA70B006B983B /* macaiDataModel.xcdatamodel */,
 				4A366F612EEFFA5E00128E19 /* macaiDataModel 2.xcdatamodel */,
 				4A366F622EEFFA5E00128E19 /* macaiDataModel 3.xcdatamodel */,
+				C4A700072026101100000007 /* macaiDataModel 4.xcdatamodel */,
+				D5B800012026101200000001 /* macaiDataModel 5.xcdatamodel */,
 			);
-			currentVersion = 4A366F622EEFFA5E00128E19 /* macaiDataModel 3.xcdatamodel */;
+			currentVersion = D5B800012026101200000001 /* macaiDataModel 5.xcdatamodel */;
 			path = macaiDataModel.xcdatamodeld;
 			sourceTree = "<group>";
 			versionGroupType = wrapper.xcdatamodel;

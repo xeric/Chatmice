@@ -8,6 +8,28 @@
 import CoreData
 import SwiftUI
 
+struct ChatScrollFollowState {
+    private(set) var followsBottom = true
+
+    mutating func followLatest() { followsBottom = true }
+    mutating func detach() { followsBottom = false }
+
+    mutating func phaseChanged(from oldPhase: ScrollPhase, to newPhase: ScrollPhase, distanceFromBottom: CGFloat) {
+        switch newPhase {
+        case .tracking, .interacting, .decelerating:
+            followsBottom = false
+        case .idle:
+            if oldPhase == .tracking || oldPhase == .interacting || oldPhase == .decelerating {
+                followsBottom = distanceFromBottom <= 24
+            }
+        case .animating:
+            break
+        @unknown default:
+            break
+        }
+    }
+}
+
 struct ChatMessagesView: View {
     @ObservedObject var chat: ChatEntity
     @ObservedObject var chatViewModel: ChatViewModel
@@ -15,13 +37,13 @@ struct ChatMessagesView: View {
     @Binding var editSystemMessage: Bool
     @Binding var isStreaming: Bool
     @Binding var currentError: ErrorMessage?
-    @Binding var userIsScrolling: Bool
     @Binding var searchText: String
     let reasoningDurations: [NSManagedObjectID: TimeInterval]
     let activeReasoningMessageID: NSManagedObjectID?
     @ObservedObject private var activityStore = ChatActivityStore.shared
     @ObservedObject private var streamingResponseStore = StreamingResponseStore.shared
     @State private var scrollPosition = ScrollPosition(edge: .bottom)
+    @State private var scrollFollow = ChatScrollFollowState()
 
 
     private var liveResponse: String? {
@@ -50,7 +72,7 @@ struct ChatMessagesView: View {
 
     var body: some View {
         ScrollView {
-            LazyVStack {
+            VStack {
                     SystemMessageBubbleView(
                         message: chat.systemMessage,
                         color: chat.persona?.color,
@@ -118,10 +140,11 @@ struct ChatMessagesView: View {
                     }
 
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(24)
                 .onChange(of: chatViewModel.currentSearchOccurrence) { _, newOccurrence in
                     if let occurrence = newOccurrence {
-                        userIsScrolling = true
+                        scrollFollow.detach()
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                             let messageIDString = occurrence.messageID.uriRepresentation().absoluteString
                             let elementID = "\(messageIDString)_element_\(occurrence.elementIndex)"
@@ -132,20 +155,33 @@ struct ChatMessagesView: View {
         }
         .defaultScrollAnchor(.bottom, for: .initialOffset)
         .defaultScrollAnchor(.bottom, for: .alignment)
-        .defaultScrollAnchor(userIsScrolling ? nil : .bottom, for: .sizeChanges)
+        // Use measured message heights: lazy estimates can place the viewport several pages past visible content.
+        .defaultScrollAnchor(scrollFollow.followsBottom ? .bottom : nil, for: .sizeChanges)
         .scrollPosition($scrollPosition)
-        .onScrollGeometryChange(for: Bool.self) { geometry in
-            geometry.contentSize.height - geometry.visibleRect.maxY > 24
-        } action: { _, isDetachedFromBottom in
-            if userIsScrolling != isDetachedFromBottom {
-                userIsScrolling = isDetachedFromBottom
+        .onScrollPhaseChange { oldPhase, newPhase, context in
+            scrollFollow.phaseChanged(
+                from: oldPhase,
+                to: newPhase,
+                distanceFromBottom: context.geometry.contentSize.height - context.geometry.visibleRect.maxY
+            )
+        }
+        .onChange(of: chat.waitingForResponse) { _, waiting in
+            if waiting {
+                scrollFollow.followLatest()
+                scrollPosition.scrollTo(edge: .bottom)
             }
+        }
+        .onChange(of: chat.id) {
+            scrollFollow.followLatest()
+            scrollPosition.scrollTo(edge: .bottom)
         }
         .padding(.bottom, 6)
     }
 
 
+
 }
+
 
 struct AssistantTurnActivityView: View {
     let snapshot: ChatActivitySnapshot

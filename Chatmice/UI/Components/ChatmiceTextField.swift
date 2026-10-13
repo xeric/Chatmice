@@ -11,6 +11,38 @@ import SwiftUI
 import AppKit
 import UniformTypeIdentifiers
 
+@MainActor
+final class ChatmiceTextInputControl {
+    weak var textView: NSTextView?
+    var flush: (() -> Void)?
+    private var referenceValues = Set<String>()
+
+    func referenceRanges(in text: String) -> [NSRange] {
+        var ranges: [NSRange] = []
+        for value in referenceValues {
+            var search = text.startIndex..<text.endIndex
+            while let match = text.range(of: value, range: search) {
+                let startsToken = match.lowerBound == text.startIndex || text[text.index(before: match.lowerBound)].isWhitespace
+                let endsToken = match.upperBound == text.endIndex || text[match.upperBound].isWhitespace
+                if startsToken && endsToken { ranges.append(NSRange(match, in: text)) }
+                search = match.upperBound..<text.endIndex
+            }
+        }
+        return ranges
+    }
+
+    func replaceReference(in range: NSRange, with value: String) {
+        guard let textView, !textView.hasMarkedText() else { return }
+        textView.window?.makeFirstResponder(textView)
+        textView.insertText(value, replacementRange: range)
+        let end = range.location + (value as NSString).length
+        referenceValues.insert(String(value.dropLast()))
+        textView.setSelectedRange(NSRange(location: end, length: 0))
+        textView.scrollRangeToVisible(textView.selectedRange())
+        flush?()
+    }
+}
+
 struct ChatmiceTextField: View {
     var title: String
     @Binding var text: String
@@ -25,6 +57,9 @@ struct ChatmiceTextField: View {
     var onEscape: (() -> Void)?
     var onTextSettled: (() -> Void)?
     var onPasteImage: ((NSImage) -> Void)?
+    var inputControl: ChatmiceTextInputControl?
+    var onEditingChange: ((String, NSRange) -> Void)?
+    var onCommand: ((Selector, NSTextView) -> Bool)?
 
     @State private var measuredHeight: CGFloat
     @State private var placeholderHeight: CGFloat = 0
@@ -42,6 +77,9 @@ struct ChatmiceTextField: View {
         onEscape: (() -> Void)? = nil,
         onTextSettled: (() -> Void)? = nil,
         onPasteImage: ((NSImage) -> Void)? = nil,
+        inputControl: ChatmiceTextInputControl? = nil,
+        onEditingChange: ((String, NSRange) -> Void)? = nil,
+        onCommand: ((Selector, NSTextView) -> Bool)? = nil,
         onCommit: (() -> Void)? = nil
     ) {
         self.title = String(title)
@@ -57,6 +95,9 @@ struct ChatmiceTextField: View {
         self.onTextSettled = onTextSettled
         self.onPasteImage = onPasteImage
         self.onEscape = onEscape
+        self.inputControl = inputControl
+        self.onEditingChange = onEditingChange
+        self.onCommand = onCommand
         _measuredHeight = State(initialValue: minHeight)
     }
 
@@ -93,6 +134,9 @@ struct ChatmiceTextField: View {
                 onEscape: onEscape,
                 onTextSettled: onTextSettled,
                 onPasteImage: onPasteImage,
+                inputControl: inputControl,
+                onEditingChange: onEditingChange,
+                onCommand: onCommand,
             )
         }
         .frame(height: min(max(currentHeight, minHeight), maxHeight))
@@ -131,12 +175,17 @@ private struct ChatmiceTextFieldRep: NSViewRepresentable {
     var onEscape: (() -> Void)?
     var onTextSettled: (() -> Void)?
     var onPasteImage: ((NSImage) -> Void)?
+    var inputControl: ChatmiceTextInputControl?
+    var onEditingChange: ((String, NSRange) -> Void)?
+    var onCommand: ((Selector, NSTextView) -> Bool)?
 
     func makeCoordinator() -> Coordinator {
         Coordinator(self)
     }
 
     func makeNSView(context: Context) -> NSScrollView {
+        context.coordinator.isUpdatingView = true
+        defer { context.coordinator.isUpdatingView = false }
         let textView = makeTextView()
         textView.focusBinding = isFocused
         textView.delegate = context.coordinator
@@ -160,6 +209,8 @@ private struct ChatmiceTextFieldRep: NSViewRepresentable {
         scrollView.documentView = textView
 
         context.coordinator.textView = textView
+        inputControl?.textView = textView
+        inputControl?.flush = { [weak coordinator = context.coordinator] in coordinator?.flushText() }
         updateHeight(for: textView)
         return scrollView
     }
@@ -168,6 +219,8 @@ private struct ChatmiceTextFieldRep: NSViewRepresentable {
         context.coordinator.parent = self
 
         guard let textView = scrollView.documentView as? ChatmiceNSTextView else { return }
+        context.coordinator.isUpdatingView = true
+        defer { context.coordinator.isUpdatingView = false }
         textView.focusBinding = isFocused
         textView.onPasteImage = onPasteImage
 
@@ -178,6 +231,12 @@ private struct ChatmiceTextFieldRep: NSViewRepresentable {
             textView.string = text
             let clampedLocation = min(selectedRange.location, (text as NSString).length)
             textView.setSelectedRange(NSRange(location: clampedLocation, length: 0))
+            let value = textView.string
+            let selection = textView.selectedRange()
+            DispatchQueue.main.async { [weak textView] in
+                guard textView?.string == value else { return }
+                onEditingChange?(value, selection)
+            }
         }
 
         if let fontSize {
@@ -256,17 +315,48 @@ private struct ChatmiceTextFieldRep: NSViewRepresentable {
         weak var textView: NSTextView?
         private var textPublishWorkItem: DispatchWorkItem?
         private(set) var hasPendingLocalText = false
+        var isUpdatingView = false
 
         init(_ parent: ChatmiceTextFieldRep) {
             self.parent = parent
         }
 
         func textDidChange(_ notification: Notification) {
-            guard notification.object is NSTextView else { return }
+            guard let textView = notification.object as? NSTextView else { return }
+            parent.onEditingChange?(textView.string, textView.selectedRange())
             scheduleTextPublish()
-            if let textView = notification.object as? NSTextView {
-                updateHeightIfNeeded(for: textView)
+            updateHeightIfNeeded(for: textView)
+        }
+
+        func textViewDidChangeSelection(_ notification: Notification) {
+            guard !isUpdatingView, let textView = notification.object as? NSTextView, !textView.hasMarkedText() else { return }
+            parent.onEditingChange?(textView.string, textView.selectedRange())
+        }
+
+        func textView(_ textView: NSTextView, willChangeSelectionFromCharacterRange oldRange: NSRange,
+                      toCharacterRange newRange: NSRange) -> NSRange {
+            guard !isUpdatingView, !textView.hasMarkedText() else { return newRange }
+            var result = newRange
+            for token in parent.inputControl?.referenceRanges(in: textView.string) ?? [] {
+                if result.length == 0, result.location > token.location, result.location < NSMaxRange(token) {
+                    let movingLeft = result.location < oldRange.location
+                    result.location = movingLeft ? token.location : NSMaxRange(token)
+                } else if result.length > 0, NSIntersectionRange(result, token).length > 0 {
+                    result = NSUnionRange(result, token)
+                }
             }
+            return result
+        }
+
+        func textView(_ textView: NSTextView, shouldChangeTextIn affectedRange: NSRange, replacementString: String?) -> Bool {
+            guard affectedRange.length > 0, let replacementString, !textView.hasMarkedText() else { return true }
+            var expanded = affectedRange
+            for token in parent.inputControl?.referenceRanges(in: textView.string) ?? [] {
+                if NSIntersectionRange(affectedRange, token).length > 0 { expanded = NSUnionRange(expanded, token) }
+            }
+            guard expanded != affectedRange else { return true }
+            textView.insertText(replacementString, replacementRange: expanded)
+            return false
         }
 
         private func scheduleTextPublish() {
@@ -284,14 +374,19 @@ private struct ChatmiceTextFieldRep: NSViewRepresentable {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.2, execute: workItem)
         }
 
-        private func flushText() {
+        func flushText() {
             textPublishWorkItem?.cancel()
             hasPendingLocalText = false
             guard let value = textView?.string, parent.text != value else { return }
             parent.text = value
         }
 
-        func textView(_: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+        func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+            if textView.hasMarkedText() { return false }
+            if parent.onCommand?(commandSelector, textView) == true {
+                flushText()
+                return true
+            }
             if let onCommit = parent.onCommit,
                commandSelector == #selector(NSResponder.insertNewline(_:)),
                !(NSApp.currentEvent?.modifierFlags.contains(.shift) ?? false)
@@ -358,12 +453,12 @@ private final class ChatmiceNSTextView: NSTextView {
         super.paste(sender)
     }
     override func becomeFirstResponder() -> Bool {
-        focusBinding?.wrappedValue = true
+        if focusBinding?.wrappedValue != true { focusBinding?.wrappedValue = true }
         return super.becomeFirstResponder()
     }
 
     override func resignFirstResponder() -> Bool {
-        focusBinding?.wrappedValue = false
+        if focusBinding?.wrappedValue != false { focusBinding?.wrappedValue = false }
         return super.resignFirstResponder()
     }
 

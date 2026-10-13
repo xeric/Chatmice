@@ -51,84 +51,71 @@ struct ContentView: View {
     @State private var searchText = ""
     @State private var isSearchPresented = false
     @State private var isShowingModelPickerPopover = false
+    @State private var isCreatingWorkspace = false
+    @State private var isFileBrowserVisible = false
     @FocusState private var isSearchFieldFocused: Bool
 
     var body: some View {
-        NavigationSplitView(
-            columnVisibility: Binding(
+        ZStack {
+            MainGlassBackground(opacity: mainWindowBackgroundOpacity, blurLevel: mainWindowBlurLevel)
+                .ignoresSafeArea()
+            NavigationSplitView(columnVisibility: Binding(
                 get: { isSidebarVisible ? .all : .detailOnly },
                 set: { isSidebarVisible = $0 != .detailOnly }
-            )
-        ) {
-            VStack(spacing: 0) {
-                sidebarHeader
-                ChatListView(selectedChat: $selectedChat, searchText: $searchText)
-                    .environmentObject(activityStore)
-
-                Divider()
-
-                // Sidebar bottom footer bar: Settings ⚙️ on left, New Chat 📝 on right
-                HStack(spacing: 12) {
-                    Button {
-                        openWindow(id: "settings")
-                    } label: {
-                        settingsGearIcon
-                    }
-                    .buttonStyle(.plain)
-                    .help("Settings (⌘,)")
-
-                    Spacer()
-
-                    Button(action: newChat) {
-                        HStack(spacing: 4) {
-                            Image(systemName: "square.and.pencil")
-                                .font(.system(size: 13, weight: .medium))
-                            Text("New Chat")
-                                .font(.system(size: 12, weight: .medium))
+            )) {
+                chatSidebar
+                    .navigationSplitViewColumnWidth(min: 180, ideal: 220, max: 400)
+            } detail: {
+                    VStack(spacing: 0) {
+                    HStack(spacing: 12) {
+                        if !isSidebarVisible {
+                            Color.clear.frame(width: 132)
                         }
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 5)
-                        .background(
-                            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                .fill(Color.accentColor.opacity(0.15))
-                        )
-                        .foregroundStyle(Color.accentColor)
+                        conversationTitle
+                        Spacer()
+                        modelPickerButton
+                        chatSearchField
+                        if !isFileBrowserVisible { fileBrowserToggle }
                     }
-                    .buttonStyle(.plain)
-                    .help("New Chat (⌘N)")
-                }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 10)
-                .background(Color.clear)
-            }
-            .background {
-                MainGlassBackground(
-                    opacity: mainWindowBackgroundOpacity,
-                    blurLevel: mainWindowBlurLevel
-                )
-            }
-            .navigationSplitViewColumnWidth(
-                min: 180,
-                ideal: 220,
-                max: 400
-            )
-        } detail: {
-            VStack(spacing: 0) {
-                detailHeader
-                HSplitView {
-                    conversationDetail
-
-                    if previewStateManager.isPreviewVisible {
-                        PreviewPane(stateManager: previewStateManager)
+                    .padding(.leading, 18)
+                    .padding(.trailing, 8)
+                    .frame(height: 52)
+                    .background(Color.clear)
+                    Group {
+                        if previewStateManager.isPreviewVisible {
+                            HSplitView {
+                                conversationDetail
+                                PreviewPane(stateManager: previewStateManager)
+                            }
+                        } else {
+                            conversationDetail
+                        }
+                    }
+                    .frame(minWidth: 400, maxWidth: .infinity, maxHeight: .infinity)
+                    .clipped()
                     }
                 }
-            }
-            .background {
-                MainGlassBackground(
-                    opacity: mainWindowBackgroundOpacity,
-                    blurLevel: mainWindowBlurLevel
-                )
-            }
+                // The file inspector owns its full-height column.
+                .inspector(isPresented: $isFileBrowserVisible) {
+                    Group {
+                        VStack(spacing: 0) {
+                            HStack {
+                                Spacer()
+                                fileBrowserToggle
+                            }
+                            .padding(.horizontal, 12)
+                            .frame(height: 52)
+                        if let workspace = displayedChat?.workspace {
+                            WorkspaceFileBrowser(workspace: workspace)
+                                .id(workspace.objectID)
+                        } else {
+                            ContentUnavailableView("No Workspace", systemImage: "folder")
+                        }
+                        }
+                    }
+                    .inspectorColumnWidth(min: 220, ideal: 260, max: 360)
+                }
+        }
             .onSubmit(of: .search) {
                 // Handle Enter key in search field - go to next occurrence
                 NotificationCenter.default.post(
@@ -144,9 +131,12 @@ struct ContentView: View {
             .onAppear {
                 installLocalKeyMonitor()
             }
-        }
         .onAppear(perform: {
-            if chats.count == 0 { isSidebarVisible = false }
+            do {
+                _ = try WorkspaceManager.prepare(in: viewContext)
+            } catch {
+                print("Error preparing temporary workspace: \(error.localizedDescription)")
+            }
             lastChatCount = chats.count
             if let lastOpenedChatId = UUID(uuidString: lastOpenedChatId) {
                 if let lastOpenedChat = chats.first(where: { $0.id == lastOpenedChatId }) {
@@ -165,6 +155,10 @@ struct ContentView: View {
             lastChatCount = newCount
         }
         .background(WindowAccessor(window: $window))
+        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("ToggleChatSidebar"))) { _ in
+            guard window === NSApp.keyWindow else { return }
+            isSidebarVisible.toggle()
+        }
         .onAppear {
             NotificationCenter.default.addObserver(
                 forName: AppConstants.newChatNotification,
@@ -217,13 +211,6 @@ struct ContentView: View {
         }
         .navigationTitle("")
         .ignoresSafeArea(.container, edges: .top)
-        .background {
-            MainGlassBackground(
-                opacity: mainWindowBackgroundOpacity,
-                blurLevel: mainWindowBlurLevel
-            )
-                .ignoresSafeArea()
-        }
 
         .onChange(of: scenePhase) { _, phase in
             activityStore.updatePresentationContext(
@@ -272,56 +259,149 @@ struct ContentView: View {
             }
         }
         .environmentObject(previewStateManager)
-    }
-
-    private var sidebarHeader: some View {
-        Color.clear
-            .frame(height: 38)
-    }
-
-    private var detailHeader: some View {
-        HStack(spacing: 12) {
-            if !isSidebarVisible {
-                // Reserve only the traffic-light and sidebar-toggle area.
-                Color.clear.frame(width: 132)
-            }
-
-            Text(headerChat.map { $0.name.isEmpty ? ($0.persona?.name ?? "Chatmice") : $0.name } ?? "")
-                .font(.system(size: 15, weight: .semibold))
-                .lineLimit(1)
-
-            Spacer(minLength: 24)
-
-            modelPickerButton
-
-            HStack(spacing: 7) {
-                Image(systemName: "magnifyingglass")
-                    .foregroundStyle(.secondary)
-                TextField("Search in chat…", text: $searchText)
-                    .textFieldStyle(.plain)
-                    .focused($isSearchFieldFocused)
-                    .onSubmit {
-                        NotificationCenter.default.post(name: NSNotification.Name("FindNext"), object: nil)
-                    }
-            }
-            .padding(.horizontal, 11)
-            .frame(minWidth: 180, idealWidth: 320, maxWidth: 320, minHeight: 36, maxHeight: 36)
-            .background(
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .fill(Color.primary.opacity(0.045))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 16, style: .continuous)
-                            .stroke(Color.primary.opacity(0.10), lineWidth: 1)
-                    )
-            )
-            .onChange(of: isSearchFieldFocused) { _, focused in
-                isSearchPresented = focused
+        .sheet(isPresented: $isCreatingWorkspace) {
+            WorkspaceCreationView { _ in
+                isSidebarVisible = true
             }
         }
-        .padding(.leading, 18)
-        .padding(.trailing, 8)
-        .frame(height: 52)
-        .background(Color.clear)
+    }
+
+
+
+    @ViewBuilder
+    private var fileBrowserToggle: some View {
+        Group {
+            if #available(macOS 26.0, *) {
+                Button { isFileBrowserVisible.toggle() } label: {
+                    Image(systemName: "sidebar.right").frame(width: 28, height: 28)
+                }
+                .buttonStyle(.glass)
+                .buttonBorderShape(.circle)
+            } else {
+                Button { isFileBrowserVisible.toggle() } label: {
+                    Image(systemName: "sidebar.right").frame(width: 32, height: 32)
+                        .background(.regularMaterial, in: Circle())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .disabled(headerChat?.workspace == nil)
+        .help(isFileBrowserVisible ? "Hide workspace files" : "Show workspace files")
+        .accessibilityIdentifier("toggle-workspace-file-browser")
+    }
+    private var chatSidebar: some View {
+            VStack(spacing: 0) {
+                Color.clear.frame(height: 38)
+                ChatListView(
+                    selectedChat: $selectedChat,
+                    searchText: $searchText,
+                    onNewChat: { workspace in newChat(in: workspace) }
+                )
+                .environmentObject(activityStore)
+
+                Divider()
+
+                HStack(spacing: 12) {
+                    Button {
+                        openWindow(id: "settings")
+                    } label: {
+                        settingsGearIcon
+                    }
+                    .buttonStyle(.plain)
+                    .help("Settings (⌘,)")
+
+                    Spacer()
+
+                    HStack(spacing: 0) {
+                        Button(action: newChat) {
+                            HStack(spacing: 4) {
+                                Image(systemName: "square.and.pencil")
+                                    .font(.system(size: 13, weight: .medium))
+                                Text("New Chat")
+                                    .font(.system(size: 12, weight: .medium))
+                            }
+                            .padding(.leading, 10)
+                            .padding(.trailing, 8)
+                            .padding(.vertical, 5)
+                        }
+                        .buttonStyle(.plain)
+                        .help("New Chat in \(selectedChat?.workspace?.name ?? WorkspaceManager.temporaryWorkspaceName) (⌘N)")
+
+                        Divider()
+                            .frame(height: 18)
+
+                        Menu {
+                            Button {
+                                isCreatingWorkspace = true
+                            } label: {
+                                Label("New Workspace…", systemImage: "folder.badge.plus")
+                            }
+                        } label: {
+                            Image(systemName: "chevron.down")
+                                .font(.system(size: 9, weight: .semibold))
+                                .foregroundStyle(Color.accentColor)
+                                .frame(width: 24, height: 24)
+                        }
+                        .menuStyle(.borderlessButton)
+                        .menuIndicator(.hidden)
+                        .tint(Color.accentColor)
+                        .help("More New Options")
+                    }
+                    .foregroundStyle(Color.accentColor)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .fill(Color.accentColor.opacity(0.15))
+                    )
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+                .background(Color.clear)
+            }
+    }
+
+    private var conversationTitle: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(headerChat.map { $0.name.isEmpty ? ($0.persona?.name ?? "Chatmice") : $0.name } ?? "Chatmice")
+                .font(.system(size: 13, weight: .semibold))
+                .lineLimit(1)
+
+            if let workspace = headerChat?.workspace {
+                ConversationWorkspacePath(workspace: workspace)
+            }
+        }
+        .frame(maxWidth: 180, alignment: .leading)
+    }
+
+    @ViewBuilder
+    private var headerControlBackground: some View {
+        if #available(macOS 26.0, *) {
+            Capsule()
+                .fill(Color.clear)
+                .glassEffect(.regular, in: Capsule())
+        } else {
+            Capsule()
+                .fill(Color.primary.opacity(0.045))
+                .overlay(Capsule().stroke(Color.primary.opacity(0.10), lineWidth: 1))
+        }
+    }
+
+    private var chatSearchField: some View {
+        HStack(spacing: 7) {
+            Image(systemName: "magnifyingglass")
+                .foregroundStyle(.secondary)
+            TextField("Search in chat…", text: $searchText)
+                .textFieldStyle(.plain)
+                .focused($isSearchFieldFocused)
+                .onSubmit {
+                    NotificationCenter.default.post(name: NSNotification.Name("FindNext"), object: nil)
+                }
+        }
+        .padding(.horizontal, 11)
+        .frame(width: 180, height: 36)
+        .background { headerControlBackground }
+        .onChange(of: isSearchFieldFocused) { _, focused in
+            isSearchPresented = focused
+        }
     }
 
     @ViewBuilder
@@ -335,34 +415,19 @@ struct ContentView: View {
                     )
                     .frame(width: 14, height: 14)
 
-                    VStack(alignment: .leading, spacing: 0) {
-                        HStack(spacing: 3) {
-                            Text(
-                                headerChat.gptModel.isEmpty
-                                    ? (headerChat.apiService?.model ?? "Select Model") : headerChat.gptModel
-                            )
-                            .font(.system(size: 11, weight: .semibold))
-                            .lineLimit(1)
-                            Image(systemName: "chevron.right")
-                                .font(.system(size: 7, weight: .bold))
-                                .foregroundStyle(.secondary)
-                        }
-                        Text(headerChat.apiService?.name ?? "Select Provider")
-                            .font(.system(size: 9))
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                    }
+                    Text(
+                        headerChat.gptModel.isEmpty
+                            ? (headerChat.apiService?.model ?? "Select Model") : headerChat.gptModel
+                    )
+                    .font(.system(size: 12, weight: .medium))
+                    .lineLimit(1)
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(.secondary)
                 }
                 .padding(.horizontal, 10)
-                .frame(height: 36)
-                .background(
-                    RoundedRectangle(cornerRadius: 16, style: .continuous)
-                        .fill(Color.primary.opacity(0.045))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                                .stroke(Color.primary.opacity(0.10), lineWidth: 1)
-                        )
-                )
+                .frame(width: 160, height: 36)
+                .background { headerControlBackground }
             }
             .buttonStyle(.plain)
             .popover(isPresented: $isShowingModelPickerPopover, arrowEdge: .bottom) {
@@ -415,12 +480,29 @@ struct ContentView: View {
     }
 
     func newChat() {
-        newChat(using: nil)
+        newChat(in: selectedChat?.workspace, using: nil)
+    }
+
+    private func newChat(in workspace: WorkspaceEntity) {
+        newChat(in: workspace, using: nil)
     }
 
     private func newChat(using preferredService: APIServiceEntity?) {
+        newChat(in: selectedChat?.workspace, using: preferredService)
+    }
+
+    private func newChat(in workspace: WorkspaceEntity?, using preferredService: APIServiceEntity?) {
+        let targetWorkspace: WorkspaceEntity
+        do {
+            targetWorkspace = try workspace ?? WorkspaceManager.prepare(in: viewContext)
+        } catch {
+            print("Error resolving workspace for new chat: \(error.localizedDescription)")
+            return
+        }
+
         let uuid = UUID()
         let newChat = ChatEntity(context: viewContext)
+        newChat.workspace = targetWorkspace
 
         newChat.id = uuid
         newChat.newChat = true
@@ -615,10 +697,6 @@ struct ContentView: View {
     }
 
     private func updateSidebarVisibilityForChatCount(previousCount: Int, newCount: Int) {
-        if newCount == 0 {
-            isSidebarVisible = false
-            return
-        }
 
         if previousCount == 0 && newCount > 0 {
             isSidebarVisible = true
@@ -706,6 +784,19 @@ struct PreviewPane: View {
 
 }
 
+private struct ConversationWorkspacePath: View {
+    @ObservedObject var workspace: WorkspaceEntity
+
+    var body: some View {
+        Text(workspace.path)
+            .font(.system(size: 10))
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+            .truncationMode(.middle)
+            .help(workspace.path)
+    }
+}
+
 private struct MainGlassBackground: View {
     let opacity: Double
     let blurLevel: Double
@@ -713,13 +804,13 @@ private struct MainGlassBackground: View {
     var body: some View {
         ZStack {
             WindowVisualEffectView(
-                material: .fullScreenUI,
+                material: .underWindowBackground,
                 blendingMode: .behindWindow
             )
-            .opacity(blurLevel / 10)
+            .opacity(1)
 
             Color(NSColor.windowBackgroundColor)
-                .opacity(opacity / 100)
+                .opacity((opacity / 100) * (0.5 + 0.5 * blurLevel / 10))
         }
     }
 }
@@ -773,10 +864,9 @@ struct WindowAccessor: NSViewRepresentable {
         window.backgroundColor = .clear
         window.contentView?.wantsLayer = true
         window.contentView?.layer?.backgroundColor = NSColor.clear.cgColor
-        window.isMovableByWindowBackground = false
+        window.isMovableByWindowBackground = true
         window.titleVisibility = .hidden
         window.contentView?.additionalSafeAreaInsets = NSEdgeInsets(top: -52, left: 0, bottom: 0, right: 0)
         window.titlebarSeparatorStyle = .none
-        window.toolbar?.showsBaselineSeparator = false
     }
 }

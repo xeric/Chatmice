@@ -42,6 +42,7 @@ public class ChatEntity: NSManagedObject, Identifiable {
     @NSManaged public var apiService: APIServiceEntity?
     @NSManaged public var isPinned: Bool
     @NSManaged public var lastSequence: Int64
+    @NSManaged public var workspace: WorkspaceEntity?
 
     // Cache for supportsSequencing check - computed once per app lifecycle
     private static var _supportsSequencingCache: Bool?

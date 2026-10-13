@@ -13,12 +13,11 @@ private enum FileToolSupport {
     static let maxOutputCharacters = 100_000
 
     static func url(path: String, context: ToolContext) throws -> URL {
-        let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { throw ToolError.invalidArguments("path must not be empty") }
-        let expanded = NSString(string: trimmed).expandingTildeInPath
-        let url = URL(fileURLWithPath: expanded, relativeTo: context.cwd).standardizedFileURL
-        guard url.isFileURL else { throw ToolError.invalidArguments("path must be a local file URL") }
-        return url
+        do {
+            return try WorkspacePathPolicy.containedURL(for: path, root: context.cwd)
+        } catch let error as WorkspacePathError {
+            throw ToolError.invalidArguments(error.localizedDescription)
+        }
     }
 
     static func object(_ arguments: String) throws -> [String: Any] {

@@ -107,15 +107,17 @@ struct ChatBubbleView: View, Equatable {
 
                     if hasBodyContent || (content.waitingForResponse ?? false) || content.errorMessage != nil {
                         bubbleContent(prefetchedElements: prefetchedElements)
+                            .frame(maxWidth: content.own ? nil : .infinity, alignment: .leading)
                             .frame(
                                 maxWidth: content.own ? nil : ChatTypography.assistantContentMaxWidth,
                                 alignment: content.own ? .trailing : .leading
                             )
                     }
                 }
+                .layoutPriority(content.own ? 0 : 1)
 
                 if !content.own {
-                    Spacer()
+                    Spacer(minLength: 0)
                 }
             }
 
@@ -141,7 +143,7 @@ struct ChatBubbleView: View, Equatable {
                 .frame(height: 24)
                 .contentShape(Rectangle())
                 .transition(.opacity)
-                .opacity(isHovered || isToolbarHovered ? 1 : 0)
+                .opacity(isHovered || isToolbarHovered ? 1 : 0.5)
                 .animation(.easeInOut(duration: 0.15), value: isHovered || isToolbarHovered)
             }
             else {
@@ -224,6 +226,7 @@ struct ChatBubbleView: View, Equatable {
                         searchText: $searchText,
                         currentSearchOccurrence: currentSearchOccurrence
                     )
+                    .frame(maxWidth: content.own ? nil : .infinity, alignment: .leading)
 
                     if let activitySnapshot, activitySnapshot.phase.isActive, !content.own, content.isLatestMessage {
                         AssistantTurnActivityView(snapshot: activitySnapshot)

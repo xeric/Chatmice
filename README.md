@@ -24,6 +24,7 @@ Chatmice is a simple yet powerful native macOS AI chat client that supports most
   - [Manual](#manual)
 - [Contributions](#contributions)
 - [Why Chatmice](#why-chatmice)
+- [Workspaces](#workspaces)
 - [Run with ChatGPT, Claude, xAI or Google Gemini](#run-with-chatgpt-claude-xai-or-google-gemini)
 - [Run with Ollama](#run-with-ollama)
 - [System requirements](#system-requirements)
@@ -48,8 +49,34 @@ Chatmice is derived from [macai](https://github.com/Renset/macai), created by Re
 - **User-friendly**: simple setup, minimalist light/dark UI
 - **Feature-rich**: vision, image generation, search, reasoning, import/export and more
 - **iCloud Sync**: keep chats, messages, and settings in sync across devices
+- **Workspace-aware**: group chats by project, keep local tools inside a selected folder, and reference files with `@`
 - **Private and secure**: no telemetry or usage tracking by Chatmice (Note: Apple may collect anonymized telemetry when iCloud Sync is enabled)
+- **Native Markdown rendering**: selectable rich text and code use AppKit TextKit; SwiftMath formulas use their native fitting size. Message layout uses measured heights rather than lazy estimates, keeping the latest turn visible when sending or retrying below long content, from waiting for the first token through streaming growth and completion. Scrolling away pauses bottom-following; reaching the bottom or sending another request resumes it. Completing a response does not move a reader who has scrolled away.
+  Assistant content fills the available message column up to 720 points. TextKit measurement probes do not replace the final drawing width, so stopping a window resize does not leave long paragraphs or numbered lists wrapped into a narrow column.
+- **Persistent message actions**: completed messages keep their action bar and timestamp visible at 50% opacity. Hovering over the message or action bar restores full opacity.
+- **Window appearance**: **Settings → Appearance → Background Opacity / Blur** controls the window background. The workspace sidebar extends to the top of the window, retaining native window controls, its system toggle, and bottom actions. The conversation title, model picker, search, and file-panel toggle belong to a separate 52-point header inside the main content column; the file inspector owns its full-height right column. Use **⌘S** to toggle the sidebar and drag its divider to resize it.
+  The file inspector uses its native boundary and panel background, matching the workspace sidebar without an additional separator or material overlay.
+  Model selection and chat search are 36 points high and use capsule-shaped Liquid Glass backgrounds on macOS 26 and later, with translucent capsule borders on earlier macOS versions. The file-panel toggle uses a circular Liquid Glass button; when the inspector opens, the toggle moves to its top-right header above the workspace title and file content.
+  A single shared behind-window frosted-glass background uses AppKit's under-window material at full effect opacity, without a second material layer on the main content. Appearance settings adjust its tint rather than exposing an unblurred background by fading the visual-effect view. The inspector-header toggle is the only file-panel close control; the file-tree title retains its refresh action.
 
+
+## Workspaces
+
+Use the chevron beside **New Chat** to create a workspace and choose its required local folder. The sidebar groups chats by workspace; click a workspace title or its chevron to expand and collapse its chats, drag the title to reorder workspaces, or use the `+` button to start a chat there. The main conversation header shows the workspace path beneath the conversation title; sidebar chat rows do not show paths. File tools, Bash working directories, and Python execution are restricted to that workspace folder.
+
+When reordering workspaces or draggable settings lists, a rounded dashed **Drop here** placeholder marks the insertion position. The source item fades to 60% opacity while the drag preview keeps its original size and 100% opacity. Drop on the indicated position to reorder; leaving the list or pressing **Esc** removes the hint without changing the order. The source returns to full opacity when the drag ends, including cancellation or release outside the window.
+
+Bash and Python commands run in a macOS sandbox. Workspace data access is limited to the selected folder, and Python network access is denied. A non-zero exit or watchdog timeout is reported to the model as a failed tool call instead of a successful result.
+
+Type `@` in the message box to search for and insert a relative file or directory reference from the current workspace. Keep typing to filter (including Chinese names), use **↑/↓** to change the highlighted candidate, and press **Return** to insert it rather than send the message. Clicking a candidate does the same; the caret stays after the complete reference and its separating space. Inserted references are edited as a unit: arrow keys skip their path and Backspace removes the complete reference. **Esc** dismisses the candidate list; Return then sends normally. **New Chat** and **⌘N** follow the selected chat's workspace; with no chat selected, they use **Temporary Chats** at `/tmp/chatmice`. Each workspace's `+` always creates a chat in that group. Creating a chat expands its workspace, selects the new chat in the sidebar, and displays it on the right, even if that workspace was collapsed.
+
+The `@` candidate list rescans the workspace each time it opens and watches recursive filesystem changes while visible, so newly created, renamed, and deleted files are reflected without restarting the app. Changing the workspace folder cancels the old listing and loads the new folder. Hidden files, symlinks, and package contents remain excluded from suggestions.
+
+Use the native toolbar's right-sidebar button to show or hide the current workspace's file browser. The full-height macOS inspector has its own toolbar section: chat search stays to the left of its divider, while the inspector button stays at the window's trailing edge in both states. Drag the divider to resize it (220–360 points; initially 260); macOS restores the chosen width. The native AppKit outline loads each directory when expanded, includes hidden files, and updates loaded directories on filesystem changes while preserving expansion and selection. Symlinks and application packages are shown as leaves rather than traversed. Double-click a folder to expand or collapse it; double-click a file or press **Space** for Quick Look, or press **Return** to open it. The context menu also offers **Reveal in Finder** and **Copy Relative Path**. The panel follows workspace changes and its header provides refresh and close buttons. No additional package is required.
+
+Use a workspace's **… → Edit…** menu to change its name or folder. Changing the folder affects subsequent tool requests in all its chats; it does not move files. **Delete…** asks for confirmation and permanently deletes every chat in that workspace while leaving its local folder and files untouched. Temporary Chats cannot be edited or deleted, and active conversations must finish or be stopped before their workspace can be changed.
+
+The global **Enable File Tool** switch controls availability, not selection. New chats inherit **Default Tool List**, and each chat can override it in the input toolbar's **Tools** menu. File Tool must be enabled in both layers. When selected, the agent is instructed to use `read_file`, `write_file`, `edit_file`, `list_directory`, and `sql_query` for supported file operations rather than equivalent shell commands. Code Execution remains available for builds, Git, other command-line programs, and computation.
 
 ## Run with ChatGPT, Claude, xAI or Google Gemini
 To run Chatmice with ChatGPT or Claude, you need an API token. Treat API tokens like passwords. Most commercial providers offer trial credits for new accounts.

@@ -44,6 +44,7 @@ class ChatmiceEngine: APIService, AgentActivityReporting {
     private let baseService: APIService
     private let config: APIServiceConfiguration
     private let chatID: UUID?
+    private let workspaceURL: URL
     private let session: URLSession
     private var activeTask: Task<Void, Never>?
     private let activityHandlerLock = NSLock()
@@ -60,11 +61,15 @@ class ChatmiceEngine: APIService, AgentActivityReporting {
         baseService: APIService,
         config: APIServiceConfiguration,
         chatID: UUID? = nil,
+        workspaceURL: URL? = nil,
         session: URLSession = .shared
     ) {
         self.baseService = baseService
         self.config = config
         self.chatID = chatID
+        self.workspaceURL = (workspaceURL ?? WorkspaceManager.temporaryWorkspaceURL)
+            .standardizedFileURL
+            .resolvingSymlinksInPath()
         self.session = session
         self.name = config.name
         self.baseURL = config.apiUrl
@@ -343,14 +348,27 @@ class ChatmiceEngine: APIService, AgentActivityReporting {
             "When using tools, briefly tell the user what you are about to verify before each tool-call round. "
                 + "Keep it to one concise sentence and report only user-facing progress, never hidden chain-of-thought.",
             "After every tool-call round, use the returned results to continue working on the user's original request. "
-                + "Do not stop after showing tool output; finish with a direct answer unless another tool call is required."
+                + "Do not stop after showing tool output; finish with a direct answer unless another tool call is required.",
+            "The current workspace root is \(workspaceURL.path). Resolve relative paths from this directory. "
+                + "All file reads, writes, edits, directory listings, and command working directories must stay inside it."
 
         ]
 
+        if fileToolsEnabled {
+            agentInstructions.append(
+                "For workspace file operations, use read_file to read text, write_file to create or replace text files "
+                    + "(including Markdown and missing parent folders), edit_file for line-range changes, "
+                    + "list_directory to inspect folders, and sql_query for read-only SQLite queries. "
+                    + "Use these tools instead of equivalent bash or Python operations such as cat, ls, sed, "
+                    + "or printf/echo redirection. Use Code Execution only when the task requires capabilities "
+                    + "these file tools do not provide, or when the user explicitly requests a command. "
+                    + "Do not bypass a file-tool permission denial with Code Execution."
+            )
+        }
         if codeExecutionEnabled {
             agentInstructions.append(
-                "You can use Code Execution for shell commands and sandboxed Python computation. "
-                    + "Prefer File Tool for direct file operations and Python for data processing or calculations."
+                "Use Code Execution for builds, tests, Git, other command-line programs, and sandboxed Python "
+                    + "computation. Prefer Python for data processing or calculations."
             )
         }
         if skillsEnabled {
@@ -371,7 +389,7 @@ class ChatmiceEngine: APIService, AgentActivityReporting {
         }
         let context = ToolContext(
             depth: 0,
-            cwd: FileManager.default.homeDirectoryForCurrentUser,
+            cwd: workspaceURL,
             ask: { prompt in
                 switch approvalMode {
                 case .alwaysAllow:

@@ -18,7 +18,6 @@ final class ChatLogicHandler: ObservableObject {
     
     @Published var currentError: ErrorMessage?
     @Published var isStreaming: Bool = false
-    @Published var userIsScrolling: Bool = false
     private var activeRequestID: UUID?
     
     init(viewContext: NSManagedObjectContext, chat: ChatEntity, chatViewModel: ChatViewModel) {
@@ -90,7 +89,6 @@ final class ChatLogicHandler: ObservableObject {
         }
 
         saveNewMessageInStore(with: messageBody)
-        userIsScrolling = false
 
         if chat.apiService?.useStreamResponse ?? true {
             sendStreamMessage(messageBody)
@@ -172,7 +170,6 @@ final class ChatLogicHandler: ObservableObject {
         guard let userMessage, !userMessage.body.isEmpty else { return }
 
         resetError()
-        userIsScrolling = false
 
         if chat.apiService?.useStreamResponse ?? true {
             sendStreamMessage(userMessage.body, replacing: responseToReplace)
@@ -266,7 +263,6 @@ final class ChatLogicHandler: ObservableObject {
         activeRequestID = nil
         isStreaming = false
         chat.waitingForResponse = false
-        userIsScrolling = false
         viewContext.saveWithRetry(attempts: 1)
     }
 

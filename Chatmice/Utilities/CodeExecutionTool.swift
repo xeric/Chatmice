@@ -12,25 +12,41 @@ import Foundation
 private actor SandboxedPythonExecutor {
     private let maxOutputBytes = 100 * 1024
 
-    func run(code: String, timeout: TimeInterval) async throws -> BashOutput {
-        let workspace = FileManager.default.temporaryDirectory
-            .appendingPathComponent("Chatmice-CodeExecution-\(UUID().uuidString)", isDirectory: true)
+    func run(code: String, workspaceRoot: URL, timeout: TimeInterval) async throws -> BashOutput {
+        let workspace = workspaceRoot
+            .appendingPathComponent(".chatmice", isDirectory: true)
+            .appendingPathComponent("python-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: workspace) }
 
         let script = workspace.appendingPathComponent("main.py")
         try Data(code.utf8).write(to: script, options: .atomic)
 
+        let resolvedRoot = SandboxProfilePathRules.resolvedRoot(workspaceRoot)
+        let rootPath = SandboxProfilePathRules.escaped(resolvedRoot.path)
+        let ancestorReadRules = SandboxProfilePathRules.ancestorReadRules(for: resolvedRoot)
         let profile = """
         (version 1)
         (deny default)
         (allow process*)
         (allow sysctl-read)
         (allow mach-lookup)
-        (allow file-read*)
-        (deny file-read* (subpath "\(escapedProfilePath(FileManager.default.homeDirectoryForCurrentUser.path))"))
+        (allow file-read*
+            (literal "/")
+            \(ancestorReadRules)
+            (subpath "\(rootPath)")
+            (subpath "/System")
+            (subpath "/usr")
+            (subpath "/bin")
+            (subpath "/sbin")
+            (subpath "/opt/homebrew")
+            (subpath "/usr/local")
+            (subpath "/private/etc")
+            (subpath "/Library/Apple")
+            (subpath "/Library/Developer")
+            (subpath "/dev"))
         (allow file-write*
-            (subpath "\(escapedProfilePath(workspace.path))")
+            (subpath "\(rootPath)")
             (literal "/dev/null"))
         (deny network*)
         """
@@ -39,9 +55,9 @@ private actor SandboxedPythonExecutor {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/sandbox-exec")
         process.arguments = ["-p", profile, python, script.path]
-        process.currentDirectoryURL = workspace
+        process.currentDirectoryURL = workspaceRoot
         process.environment = [
-            "HOME": workspace.path,
+            "HOME": workspaceRoot.path,
             "PATH": "/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin:/usr/local/bin",
             "PYTHONDONTWRITEBYTECODE": "1",
             "PYTHONUNBUFFERED": "1",
@@ -58,20 +74,23 @@ private actor SandboxedPythonExecutor {
         async let stdout = readLimited(output.fileHandleForReading)
         async let stderr = readLimited(errors.fileHandleForReading)
         let pid = process.processIdentifier
-        let watchdog = Task.detached {
+        let watchdog = Task.detached { () -> Bool in
+            var didTimeout = false
             do {
                 try await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
+                didTimeout = true
                 kill(pid, SIGTERM)
                 try await Task.sleep(nanoseconds: 500_000_000)
                 kill(pid, SIGKILL)
             } catch {}
+            return didTimeout
         }
 
         let outData = await stdout
         let errorData = await stderr
         process.waitUntilExit()
         watchdog.cancel()
-        let timedOut = process.terminationReason == .uncaughtSignal
+        let timedOut = await watchdog.value
         return BashOutput(
             exitCode: process.terminationStatus,
             stdout: String(decoding: outData, as: UTF8.self).trimmingCharacters(in: .newlines),
@@ -84,10 +103,6 @@ private actor SandboxedPythonExecutor {
     private func pythonExecutable() -> String {
         let candidates = ["/opt/homebrew/bin/python3", "/usr/local/bin/python3", "/usr/bin/python3"]
         return candidates.first(where: { FileManager.default.isExecutableFile(atPath: $0) }) ?? "/usr/bin/python3"
-    }
-
-    private func escapedProfilePath(_ path: String) -> String {
-        path.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
     }
 
     private func readLimited(_ handle: FileHandle) async -> Data {
@@ -131,6 +146,14 @@ struct PythonInterpreterTool: AgentTool {
         guard await context.ask("Run sandboxed Python code:\n\(code.prefix(500))") else {
             throw ToolError.confirmationDenied("User denied Python execution")
         }
-        return try await executor.run(code: code, timeout: timeout).modelFacingText
+        let output = try await executor.run(
+            code: code,
+            workspaceRoot: context.cwd,
+            timeout: timeout
+        )
+        guard output.exitCode == 0, !output.timedOut else {
+            throw ToolError.executionFailed(output.modelFacingText)
+        }
+        return output.modelFacingText
     }
 }

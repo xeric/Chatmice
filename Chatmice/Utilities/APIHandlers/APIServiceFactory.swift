@@ -18,7 +18,8 @@ class APIServiceFactory {
     static func createAPIService(
         config: APIServiceConfiguration,
         imageGenerationSupported: Bool? = nil,
-        chatID: UUID? = nil
+        chatID: UUID? = nil,
+        workspaceURL: URL? = nil
     ) -> APIService {
         let typeCandidate: String = {
             if let c = config as? APIServiceConfig, !c.type.isEmpty {
@@ -27,7 +28,8 @@ class APIServiceFactory {
             if let entity = config as? APIServiceEntity, let t = entity.type, !t.isEmpty {
                 return t.lowercased()
             }
-            return AppConstants.defaultApiConfigurations[config.name.lowercased()]?.inherits ?? config.name.lowercased()
+            return AppConstants.defaultApiConfigurations[config.name.lowercased()]?.inherits
+                ?? config.name.lowercased()
         }()
 
         let configName = AppConstants.defaultApiConfigurations[typeCandidate]?.inherits ?? typeCandidate
@@ -58,6 +60,12 @@ class APIServiceFactory {
         default:
             base = ChatGPTHandler(config: config, session: session)
         }
-        return ChatmiceEngine(baseService: base, config: config, chatID: chatID, session: session)
+        return ChatmiceEngine(
+            baseService: base,
+            config: config,
+            chatID: chatID,
+            workspaceURL: workspaceURL,
+            session: session
+        )
     }
 }

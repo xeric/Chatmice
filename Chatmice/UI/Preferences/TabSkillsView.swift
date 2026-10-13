@@ -40,7 +40,7 @@ struct TabToolsView: View {
                     Toggle("Enable File Tool", isOn: $fileToolsEnabled)
                         .toggleStyle(.switch)
                     Text(
-                        "Lets the agent inspect files and folders you select, including reading file contents and listing directory entries."
+                        "Makes file reading, writing, editing, directory listing, and read-only SQLite available. Also select File Tool in Default Tool List below or in each chat's Tools menu. When selected, the agent is instructed to use it instead of equivalent shell commands."
                     )
                     .font(.caption)
                     .foregroundStyle(.secondary)

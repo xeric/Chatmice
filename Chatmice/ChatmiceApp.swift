@@ -953,10 +953,7 @@ struct ChatmiceApp: App {
 
             CommandGroup(after: .sidebar) {
                 Button("Toggle Sidebar") {
-                    NSApp.keyWindow?.firstResponder?.tryToPerform(
-                        #selector(NSSplitViewController.toggleSidebar(_:)),
-                        with: nil
-                    )
+                    NotificationCenter.default.post(name: NSNotification.Name("ToggleChatSidebar"), object: nil)
                 }
                 .keyboardShortcut("s", modifiers: [.command])
             }
@@ -1008,8 +1005,7 @@ struct ChatmiceApp: App {
             }
             .preferredColorScheme(preferredColorScheme)
         }
-        .windowStyle(.titleBar)
-        .windowToolbarStyle(.unified(showsTitle: false))
+        .windowStyle(.hiddenTitleBar)
         .defaultSize(width: 960, height: 680)
         .windowResizability(.contentSize)
     }

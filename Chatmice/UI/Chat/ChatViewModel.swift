@@ -49,10 +49,12 @@ class ChatViewModel: NSObject, ObservableObject, NSFetchedResultsControllerDeleg
     private let fetchedResultsController: NSFetchedResultsController<MessageEntity>
 
     private var _messageManager: MessageManager?
+    private var messageManagerWorkspacePath: String?
     private var messageManager: MessageManager {
         get {
-            if _messageManager == nil {
+            if _messageManager == nil || messageManagerWorkspacePath != chat.workspace?.path {
                 _messageManager = createMessageManager()
+                messageManagerWorkspacePath = chat.workspace?.path
             }
             return _messageManager!
         }
@@ -175,7 +177,8 @@ class ChatViewModel: NSObject, ObservableObject, NSFetchedResultsControllerDeleg
             apiService: APIServiceFactory.createAPIService(
                 config: config,
                 imageGenerationSupported: supportsImageGeneration,
-                chatID: chat.id
+                chatID: chat.id,
+                workspaceURL: chat.workspace?.rootURL
             ),
             viewContext: self.viewContext
         )

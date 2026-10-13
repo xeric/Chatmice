@@ -6,7 +6,6 @@
 //
 
 import AppKit
-import AttributedText
 import CoreData
 import MermaidRender
 import SwiftMath
@@ -359,6 +358,7 @@ struct MessageContentView: View {
                 }
             }
         }
+        .frame(maxWidth: own ? nil : .infinity, alignment: .leading)
         .onAppear {
             if isStreaming {
                 hasUsedStreamingLayout = true
@@ -831,13 +831,14 @@ struct MessageContentView: View {
         }()
 
         if !inlineMath.formulas.isEmpty || text.count > AppConstants.longStringCount {
-            AttributedText(attributedString)
-                .textSelection(.enabled)
+            SelectableRichText(attributedString)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
         else {
             Text(.init(attributedString))
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: own ? nil : .infinity, alignment: .leading)
         }
     }
 
