@@ -202,6 +202,155 @@ private struct PreparedInlineMath {
     }
 }
 
+private enum InlineScriptKind {
+    case subscriptText
+    case superscriptText
+}
+
+private struct InlineScriptPlaceholder {
+    let marker: String
+    let content: String
+    let kind: InlineScriptKind
+}
+
+private struct PreparedInlineScripts {
+    let markdownSource: String
+    let scripts: [InlineScriptPlaceholder]
+
+    init(source: String) {
+        var output = ""
+        output.reserveCapacity(source.count)
+        var scripts: [InlineScriptPlaceholder] = []
+        var index = source.startIndex
+        var textStart = index
+
+        func appendText(until end: String.Index) {
+            guard textStart < end else { return }
+            output.append(contentsOf: source[textStart..<end])
+        }
+
+        while index < source.endIndex {
+            if source[index] == "`" {
+                index = Self.indexAfterCodeSpan(startingAt: index, in: source)
+                continue
+            }
+
+            let delimiter = source[index]
+            let kind: InlineScriptKind?
+            if delimiter == "~", Self.isSingleTilde(at: index, in: source) {
+                kind = .subscriptText
+            }
+            else if delimiter == "^", !Self.isEscaped(index, in: source) {
+                kind = .superscriptText
+            }
+            else {
+                kind = nil
+            }
+
+            if let kind,
+                let closing = Self.closingDelimiter(delimiter, after: index, in: source)
+            {
+                let contentStart = source.index(after: index)
+                let content = String(source[contentStart..<closing])
+                if !content.isEmpty,
+                    content.first?.isWhitespace == false,
+                    content.last?.isWhitespace == false
+                {
+                    appendText(until: index)
+                    let marker = "\u{E000}chatmice-inline-script-\(scripts.count)\u{E001}"
+                    output.append(marker)
+                    scripts.append(InlineScriptPlaceholder(marker: marker, content: content, kind: kind))
+                    index = source.index(after: closing)
+                    textStart = index
+                    continue
+                }
+            }
+            index = source.index(after: index)
+        }
+
+        appendText(until: source.endIndex)
+        markdownSource = output
+        self.scripts = scripts
+    }
+
+    private static func isSingleTilde(at index: String.Index, in source: String) -> Bool {
+        guard !isEscaped(index, in: source) else { return false }
+        let previousIsTilde = index > source.startIndex && source[source.index(before: index)] == "~"
+        let next = source.index(after: index)
+        let nextIsTilde = next < source.endIndex && source[next] == "~"
+        return !previousIsTilde && !nextIsTilde
+    }
+
+    private static func closingDelimiter(
+        _ delimiter: Character,
+        after opening: String.Index,
+        in source: String
+    ) -> String.Index? {
+        var index = source.index(after: opening)
+        while index < source.endIndex {
+            guard source[index] != "\n" else { return nil }
+            if source[index] == delimiter, !isEscaped(index, in: source) {
+                if delimiter != "~" || isSingleTilde(at: index, in: source) {
+                    return index
+                }
+            }
+            index = source.index(after: index)
+        }
+        return nil
+    }
+
+    private static func indexAfterCodeSpan(
+        startingAt opening: String.Index,
+        in source: String
+    ) -> String.Index {
+        var openingEnd = opening
+        var delimiterLength = 0
+        while openingEnd < source.endIndex, source[openingEnd] == "`" {
+            delimiterLength += 1
+            openingEnd = source.index(after: openingEnd)
+        }
+        let delimiter = String(repeating: "`", count: delimiterLength)
+        return source.range(of: delimiter, range: openingEnd..<source.endIndex)?.upperBound
+            ?? source.endIndex
+    }
+
+    private static func isEscaped(_ index: String.Index, in source: String) -> Bool {
+        var cursor = index
+        var count = 0
+        while cursor > source.startIndex {
+            let previous = source.index(before: cursor)
+            guard source[previous] == "\\" else { break }
+            count += 1
+            cursor = previous
+        }
+        return count.isMultiple(of: 2) == false
+    }
+}
+
+enum MarkdownLinkTitleSupport {
+    static let alternateDescriptionKey = NSAttributedString.Key("NSAlternateDescription")
+    static let toolTipKey = NSAttributedString.Key("NSToolTip")
+
+    static func apply(to attributedString: NSMutableAttributedString) {
+        let range = NSRange(location: 0, length: attributedString.length)
+        attributedString.enumerateAttribute(alternateDescriptionKey, in: range) { value, valueRange, _ in
+            guard let title = value as? String, !title.isEmpty else { return }
+            attributedString.addAttribute(toolTipKey, value: title, range: valueRange)
+        }
+    }
+
+    static func firstTitle(in attributedString: NSAttributedString) -> String? {
+        var title: String?
+        let range = NSRange(location: 0, length: attributedString.length)
+        attributedString.enumerateAttribute(alternateDescriptionKey, in: range) { value, _, stop in
+            guard let candidate = value as? String, !candidate.isEmpty else { return }
+            title = candidate
+            stop.pointee = true
+        }
+        return title
+    }
+}
+
 private final class InlineMathRenderResult: NSObject {
     let image: NSImage
     let descent: CGFloat
@@ -303,6 +452,109 @@ extension ChatFontWeightPreference {
     }
 }
 
+private struct MarkdownFootnoteText: View {
+    let source: String
+    let fontSize: CGFloat
+
+    private func renderedContent() -> (text: AttributedString, title: String?) {
+        let options = AttributedString.MarkdownParsingOptions(
+            interpretedSyntax: .inlineOnlyPreservingWhitespace
+        )
+        let parsed =
+            (try? NSAttributedString(markdown: source, options: options))
+            ?? NSAttributedString(string: source)
+        let attributedString = NSMutableAttributedString(attributedString: parsed)
+        MarkdownLinkTitleSupport.apply(to: attributedString)
+        return (
+            AttributedString(attributedString),
+            MarkdownLinkTitleSupport.firstTitle(in: attributedString)
+        )
+    }
+
+    @ViewBuilder
+    var body: some View {
+        let rendered = renderedContent()
+        let text = Text(rendered.text)
+            .font(.system(size: fontSize))
+            .foregroundStyle(.secondary)
+            .textSelection(.enabled)
+        if let title = rendered.title {
+            text.help(title)
+        }
+        else {
+            text
+        }
+    }
+}
+
+private final class MessageTextRenderCache {
+    struct Key: Equatable {
+        let source: String
+        let fontSize: Double
+        let own: Bool
+        let fontWeight: String
+        let dark: Bool
+        let search: String
+        let messageID: NSManagedObjectID?
+        let occurrence: SearchOccurrence?
+    }
+
+    final class Entry {
+        let key: Key
+        let text: NSAttributedString
+        let usesTextKit: Bool
+
+        init(key: Key, text: NSAttributedString, usesTextKit: Bool) {
+            self.key = key
+            self.text = NSAttributedString(attributedString: text)
+            self.usesTextKit = usesTextKit
+        }
+    }
+
+    private let entries = NSCache<NSNumber, Entry>()
+    private var parsedSource: String?
+    private var parsedScheme: ColorScheme?
+    private var parsedElements: [MessageElements] = []
+    private var truncationSource: String?
+    private var truncationRequired = false
+
+    init() {
+        entries.countLimit = 64
+        entries.totalCostLimit = 4 * 1024 * 1024
+    }
+
+    func requiresTruncation(_ source: String) -> Bool {
+        if truncationSource == source { return truncationRequired }
+        truncationRequired = source.count > AppConstants.largeMessageSymbolsThreshold
+            && !source.contains("<image-uuid>") && !source.contains("<file-uuid>")
+            && !source.contains(ToolActivityRecord.openingTag)
+        truncationSource = source
+        return truncationRequired
+    }
+
+    func elements(for source: String, colorScheme: ColorScheme) -> [MessageElements] {
+        if parsedSource == source, parsedScheme == colorScheme { return parsedElements }
+        // Attachment resolution consults Core Data; an unchanged UUID tag need not mean unchanged data.
+        if source.contains("<image-uuid>") || source.contains("<file-uuid>") {
+            return MessageParser(colorScheme: colorScheme).parseMessageFromString(input: source)
+        }
+        parsedElements = MessageParser(colorScheme: colorScheme).parseMessageFromString(input: source)
+        parsedSource = source
+        parsedScheme = colorScheme
+        return parsedElements
+    }
+
+
+    func entry(for index: Int, key: Key) -> Entry? {
+        guard let entry = entries.object(forKey: NSNumber(value: index)), entry.key == key else { return nil }
+        return entry
+    }
+
+    func store(_ entry: Entry, at index: Int) {
+        entries.setObject(entry, forKey: NSNumber(value: index), cost: entry.text.length * 16)
+    }
+}
+
 struct MessageContentView: View {
     var message: MessageEntity?
     let content: String
@@ -324,6 +576,7 @@ struct MessageContentView: View {
     @State private var expandedToolElements: Set<String> = []
     @State private var copiedMermaidItem: String?
     @State private var hasUsedStreamingLayout = false
+    @State private var textRenderCache = MessageTextRenderCache()
     @AppStorage("chatFontWeight") private var chatFontWeight = ChatFontWeightPreference.light.rawValue
 
     private var preferredFontWeight: ChatFontWeightPreference {
@@ -349,7 +602,7 @@ struct MessageContentView: View {
             }
             else {
                 VStack(alignment: .leading, spacing: ChatTypography.contentBlockSpacing) {
-                    if content.count > largeMessageSymbolsThreshold && !showFullMessage && !containsImageData(content) {
+                    if !showFullMessage && textRenderCache.requiresTruncation(content) {
                         renderPartialContent()
                     }
                     else {
@@ -371,23 +624,11 @@ struct MessageContentView: View {
         }
     }
 
-    private func containsImageData(_ message: String) -> Bool {
-        if message.contains("<image-uuid>") || message.contains("<file-uuid>")
-            || message.contains(ToolActivityRecord.openingTag)
-        {
-            return true
-        }
-        return false
-    }
 
     @ViewBuilder
     private func renderPartialContent() -> some View {
         let truncatedMessage = String(content.prefix(largeMessageSymbolsThreshold))
-        let parser = MessageParser(colorScheme: colorScheme)
-        let parsedElements =
-            content.count <= largeMessageSymbolsThreshold
-            ? (prefetchedElements ?? parser.parseMessageFromString(input: truncatedMessage))
-            : parser.parseMessageFromString(input: truncatedMessage)
+        let parsedElements = textRenderCache.elements(for: truncatedMessage, colorScheme: colorScheme)
 
         let elementsToRender = filterInlineAttachments(parsedElements)
         let attachmentElements = extractAttachmentElements(from: elementsToRender)
@@ -440,8 +681,7 @@ struct MessageContentView: View {
 
     @ViewBuilder
     private func renderFullContent() -> some View {
-        let parser = MessageParser(colorScheme: colorScheme)
-        let parsedElements = prefetchedElements ?? parser.parseMessageFromString(input: content)
+        let parsedElements = prefetchedElements ?? textRenderCache.elements(for: content, colorScheme: colorScheme)
         let elementsToRender = filterInlineAttachments(parsedElements)
         let attachmentElements = extractAttachmentElements(from: elementsToRender)
         let attachmentIndexMap = buildAttachmentIndexMap(for: elementsToRender)
@@ -539,9 +779,10 @@ struct MessageContentView: View {
         case .text(let text):
             renderText(text, elementIndex: elementIndex)
 
-        case .table(let header, let data):
+        case .table(let header, let alignments, let data):
             TableView(
                 header: header,
+                alignments: alignments,
                 tableData: data,
                 searchText: $searchText,
                 message: message,
@@ -549,6 +790,14 @@ struct MessageContentView: View {
                 elementIndex: elementIndex
             )
             .padding(.bottom, 12)
+
+        case .horizontalRule:
+            Divider()
+                .overlay(Color.secondary.opacity(0.35))
+                .padding(.vertical, 10)
+
+        case .footnotes(let footnotes):
+            renderFootnotes(footnotes)
 
         case .code(let code, let lang, let indent):
             if lang.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "mermaid",
@@ -625,19 +874,66 @@ struct MessageContentView: View {
     }
 
     @ViewBuilder
+    private func renderFootnotes(_ footnotes: [MarkdownFootnote]) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Divider().padding(.bottom, 2)
+            ForEach(footnotes) { footnote in
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text("\(footnote.index).")
+                        .font(.system(size: max(10, effectiveFontSize - 2), weight: .semibold))
+                        .foregroundStyle(.secondary)
+                    MarkdownFootnoteText(
+                        source: footnote.text,
+                        fontSize: max(10, effectiveFontSize - 1)
+                    )
+                }
+                .id("footnote-\(footnote.identifier)")
+            }
+        }
+        .padding(.top, 8)
+    }
+
+    @ViewBuilder
     private func renderText(_ text: String, elementIndex: Int = 0) -> some View {
-        let inlineMath = PreparedInlineMath(source: text)
+        let rendered = renderedText(text, elementIndex: elementIndex)
+        if rendered.usesTextKit {
+            SelectableRichText(rendered.text)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        else {
+            Text(.init(rendered.text))
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: own ? nil : .infinity, alignment: .leading)
+        }
+    }
+
+    private func renderedText(_ text: String, elementIndex: Int) -> MessageTextRenderCache.Entry {
+        let key = MessageTextRenderCache.Key(
+            source: text, fontSize: effectiveFontSize, own: own,
+            fontWeight: chatFontWeight, dark: colorScheme == .dark,
+            search: searchText, messageID: message?.objectID, occurrence: currentSearchOccurrence
+        )
+        if let cached = textRenderCache.entry(for: elementIndex, key: key) { return cached }
+        let normalizedText = text.replacingOccurrences(
+            of: "(?i)<br\\s*/?>",
+            with: "  \n",
+            options: .regularExpression
+        )
+        let inlineMath = PreparedInlineMath(source: normalizedText)
+        let inlineScripts = PreparedInlineScripts(source: inlineMath.markdownSource)
         let attributedString: NSAttributedString = {
             let options = AttributedString.MarkdownParsingOptions(
                 interpretedSyntax: .inlineOnlyPreservingWhitespace
             )
             let initialAttributedString =
-                (try? NSAttributedString(markdown: inlineMath.markdownSource, options: options))
-                ?? NSAttributedString(string: inlineMath.markdownSource)
+                (try? NSAttributedString(markdown: inlineScripts.markdownSource, options: options))
+                ?? NSAttributedString(string: inlineScripts.markdownSource)
 
             let mutableAttributedString = NSMutableAttributedString(
                 attributedString: initialAttributedString
             )
+            MarkdownLinkTitleSupport.apply(to: mutableAttributedString)
             let fullRange = NSRange(location: 0, length: mutableAttributedString.length)
             let systemFont = NSFont.systemFont(
                 ofSize: effectiveFontSize,
@@ -679,6 +975,59 @@ struct MessageContentView: View {
             paragraphStyle.paragraphSpacing = paragraphMetrics.paragraphSpacingEm * effectiveFontSize
             paragraphStyle.lineBreakMode = .byWordWrapping
             mutableAttributedString.addAttribute(.paragraphStyle, value: paragraphStyle, range: fullRange)
+
+            // Setext headings use an underline on the following source line.
+            if let setextRegex = try? NSRegularExpression(
+                pattern: "^([^\\n]+)\\n(=+|-+)[ \\t]*$",
+                options: .anchorsMatchLines
+            ) {
+                let matches = setextRegex.matches(
+                    in: mutableAttributedString.string,
+                    range: NSRange(location: 0, length: mutableAttributedString.length)
+                )
+                for match in matches.reversed() {
+                    let fullRange = match.range(at: 0)
+                    let titleRange = match.range(at: 1)
+                    let markerRange = match.range(at: 2)
+                    let marker = (mutableAttributedString.string as NSString).substring(with: markerRange)
+                    let level = marker.first == "=" ? 1 : 2
+                    let headingFontSize = max(effectiveFontSize + 10 - pow(CGFloat(level), 1.5), 6)
+                    mutableAttributedString.addAttribute(
+                        .font,
+                        value: NSFont.systemFont(
+                            ofSize: headingFontSize,
+                            weight: own ? .medium : preferredFontWeight.emphasizedNSFontWeight
+                        ),
+                        range: titleRange
+                    )
+                    mutableAttributedString.addAttribute(
+                        .foregroundColor,
+                        value: resolvedLabelColor.withAlphaComponent(
+                            colorScheme == .dark
+                                ? ChatTypography.headingTextOpacityDark
+                                : ChatTypography.headingTextOpacityLight
+                        ),
+                        range: titleRange
+                    )
+                    let headingStyle = paragraphStyle.mutableCopy() as? NSMutableParagraphStyle
+                    headingStyle?.paragraphSpacingBefore =
+                        effectiveFontSize * ChatTypography.majorHeadingSpacingBeforeEm
+                    headingStyle?.paragraphSpacing = effectiveFontSize * ChatTypography.headingSpacingAfterEm
+                    if let headingStyle {
+                        mutableAttributedString.addAttribute(
+                            .paragraphStyle,
+                            value: headingStyle,
+                            range: titleRange
+                        )
+                    }
+                    mutableAttributedString.deleteCharacters(
+                        in: NSRange(
+                            location: NSMaxRange(titleRange),
+                            length: NSMaxRange(fullRange) - NSMaxRange(titleRange)
+                        )
+                    )
+                }
+            }
 
             // Handle headers
             guard let headerRegex = try? NSRegularExpression(pattern: "^(#{1,6})\\s+(.*)", options: .anchorsMatchLines)
@@ -729,56 +1078,146 @@ struct MessageContentView: View {
                 mutableAttributedString.deleteCharacters(in: prefixToDeleteRange)
             }
 
-            // Handle quote blocks
-            guard let quoteRegex = try? NSRegularExpression(pattern: "^\\s*>\\s*(.*)", options: .anchorsMatchLines)
-            else { return mutableAttributedString }
+            // Render every quote depth and replace GitHub callout markers with a styled label.
+            guard let quoteRegex = try? NSRegularExpression(
+                pattern: "^([ \\t]*)((?:>[ \\t]*)+)(.*)$",
+                options: .anchorsMatchLines
+            ) else { return mutableAttributedString }
             let quoteMatches = quoteRegex.matches(
                 in: mutableAttributedString.string,
-                options: [],
-                range: NSRange(location: 0, length: mutableAttributedString.string.utf16.count)
+                range: NSRange(location: 0, length: mutableAttributedString.length)
             )
+            let calloutStyles: [(marker: String, label: String, color: NSColor)] = [
+                ("[!NOTE]", "NOTE", .systemBlue),
+                ("[!TIP]", "TIP", .systemGreen),
+                ("[!IMPORTANT]", "IMPORTANT", .systemPurple),
+                ("[!WARNING]", "WARNING", .systemOrange),
+                ("[!CAUTION]", "CAUTION", .systemRed),
+            ]
 
             for match in quoteMatches.reversed() {
+                let source = mutableAttributedString.string as NSString
                 let fullMatchRange = match.range(at: 0)
-                let contentTextRange = match.range(at: 1)
+                let markerRange = match.range(at: 2)
+                let contentRange = match.range(at: 3)
+                let quoteDepth = source.substring(with: markerRange).filter { $0 == ">" }.count
+                let quoteBars = String(repeating: "│ ", count: quoteDepth)
+                let prefixRange = NSRange(
+                    location: fullMatchRange.location,
+                    length: contentRange.location - fullMatchRange.location
+                )
+                mutableAttributedString.replaceCharacters(in: prefixRange, with: quoteBars)
 
+                let barsRange = NSRange(location: fullMatchRange.location, length: quoteBars.utf16.count)
+                let adjustedContentRange = NSRange(
+                    location: NSMaxRange(barsRange),
+                    length: contentRange.length
+                )
                 let italicDescriptor = systemFont.fontDescriptor.withSymbolicTraits(.italic)
                 let italicFont = NSFont(descriptor: italicDescriptor, size: effectiveFontSize) ?? systemFont
-                mutableAttributedString.addAttribute(.font, value: italicFont, range: contentTextRange)
-
+                mutableAttributedString.addAttribute(.font, value: italicFont, range: adjustedContentRange)
                 mutableAttributedString.addAttribute(
                     .foregroundColor,
                     value: NSColor.secondaryLabelColor,
-                    range: contentTextRange
+                    range: adjustedContentRange
+                )
+                mutableAttributedString.addAttributes(
+                    [
+                        .font: NSFont.systemFont(ofSize: effectiveFontSize, weight: .semibold),
+                        .foregroundColor: NSColor.tertiaryLabelColor,
+                    ],
+                    range: barsRange
                 )
 
-                let prefixToDeleteRange = NSRange(
-                    location: fullMatchRange.location,
-                    length: contentTextRange.location - fullMatchRange.location
-                )
-                mutableAttributedString.deleteCharacters(in: prefixToDeleteRange)
+                let quoteStyle = paragraphStyle.mutableCopy() as? NSMutableParagraphStyle
+                quoteStyle?.paragraphSpacing = effectiveFontSize * ChatTypography.listItemSpacingEm
+                if let quoteStyle {
+                    let renderedLineRange = (mutableAttributedString.string as NSString)
+                        .paragraphRange(for: NSRange(location: fullMatchRange.location, length: 0))
+                    mutableAttributedString.addAttribute(
+                        .paragraphStyle,
+                        value: quoteStyle,
+                        range: renderedLineRange
+                    )
+                }
+
+                let content = source.substring(with: contentRange)
+                if let callout = calloutStyles.first(where: {
+                    content.uppercased().hasPrefix($0.marker)
+                }) {
+                    let renderedMarkerRange = NSRange(
+                        location: adjustedContentRange.location,
+                        length: callout.marker.utf16.count
+                    )
+                    mutableAttributedString.replaceCharacters(
+                        in: renderedMarkerRange,
+                        with: callout.label
+                    )
+                    mutableAttributedString.addAttributes(
+                        [
+                            .font: NSFont.systemFont(ofSize: effectiveFontSize - 1, weight: .semibold),
+                            .foregroundColor: callout.color,
+                        ],
+                        range: NSRange(
+                            location: renderedMarkerRange.location,
+                            length: callout.label.utf16.count
+                        )
+                    )
+                }
             }
 
-            // Keep wrapped list lines aligned with their content instead of the marker.
+            // Preserve nesting, render task markers, and align wrapped list lines with their content.
             if let listRegex = try? NSRegularExpression(
-                pattern: "^\\s*(?:[-*+] |\\d+[.)] )",
+                pattern: "^([ \\t]*)((?:[-*+] (?:\\[[ xX]\\] )?)|(?:\\d+[.)] ))",
                 options: .anchorsMatchLines
             ) {
                 let listMatches = listRegex.matches(
                     in: mutableAttributedString.string,
                     range: NSRange(location: 0, length: mutableAttributedString.length)
                 )
-                let source = mutableAttributedString.string as NSString
-                for match in listMatches {
+                for match in listMatches.reversed() {
+                    let leadingWhitespaceRange = match.range(at: 1)
+                    let markerRange = match.range(at: 2)
+                    let source = mutableAttributedString.string as NSString
+                    let indentationSource = source.substring(with: leadingWhitespaceRange)
+                    let marker = source.substring(with: markerRange)
+                    let indentationColumns = indentationSource.reduce(0) { total, character in
+                        total + (character == "\t" ? 4 : 1)
+                    }
+                    if leadingWhitespaceRange.length > 0 {
+                        mutableAttributedString.deleteCharacters(in: leadingWhitespaceRange)
+                    }
+
+                    if marker.range(of: "\\[[ xX]\\]", options: .regularExpression) != nil {
+                        let checked = marker.lowercased().contains("[x]")
+                        let replacement = checked ? "☑︎ " : "☐ "
+                        let adjustedMarkerRange = NSRange(
+                            location: match.range.location,
+                            length: markerRange.length
+                        )
+                        mutableAttributedString.replaceCharacters(in: adjustedMarkerRange, with: replacement)
+                        mutableAttributedString.addAttribute(
+                            .foregroundColor,
+                            value: checked ? NSColor.systemGreen : NSColor.secondaryLabelColor,
+                            range: NSRange(
+                                location: adjustedMarkerRange.location,
+                                length: replacement.utf16.count
+                            )
+                        )
+                    }
+
+                    let indentation = CGFloat(indentationColumns) * effectiveFontSize * 0.5
                     let listStyle = paragraphStyle.mutableCopy() as? NSMutableParagraphStyle
-                    listStyle?.firstLineHeadIndent = 0
-                    listStyle?.headIndent = effectiveFontSize * ChatTypography.listHangingIndentEm
+                    listStyle?.firstLineHeadIndent = indentation
+                    listStyle?.headIndent = indentation + effectiveFontSize * ChatTypography.listHangingIndentEm
                     listStyle?.paragraphSpacing = effectiveFontSize * ChatTypography.listItemSpacingEm
                     if let listStyle {
+                        let paragraphRange = (mutableAttributedString.string as NSString)
+                            .paragraphRange(for: NSRange(location: match.range.location, length: 0))
                         mutableAttributedString.addAttribute(
                             .paragraphStyle,
                             value: listStyle,
-                            range: source.paragraphRange(for: match.range)
+                            range: paragraphRange
                         )
                     }
                 }
@@ -821,6 +1260,13 @@ struct MessageContentView: View {
                 }
             }
 
+            replaceInlineScriptPlaceholders(
+                in: mutableAttributedString,
+                prepared: inlineScripts,
+                fallbackFont: systemFont,
+                fallbackColor: textColor
+            )
+
             replaceInlineMathPlaceholders(
                 in: mutableAttributedString,
                 prepared: inlineMath,
@@ -830,15 +1276,49 @@ struct MessageContentView: View {
             return mutableAttributedString
         }()
 
-        if !inlineMath.formulas.isEmpty || text.count > AppConstants.longStringCount {
-            SelectableRichText(attributedString)
-                .frame(maxWidth: .infinity, alignment: .leading)
-        }
-        else {
-            Text(.init(attributedString))
-                .textSelection(.enabled)
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: own ? nil : .infinity, alignment: .leading)
+        let usesTextKit = !inlineMath.formulas.isEmpty || !inlineScripts.scripts.isEmpty
+            || MarkdownLinkTitleSupport.firstTitle(in: attributedString) != nil
+            || text.count > AppConstants.longStringCount
+        let rendered = MessageTextRenderCache.Entry(key: key, text: attributedString, usesTextKit: usesTextKit)
+        textRenderCache.store(rendered, at: elementIndex)
+        return rendered
+    }
+
+    private func replaceInlineScriptPlaceholders(
+        in attributedString: NSMutableAttributedString,
+        prepared: PreparedInlineScripts,
+        fallbackFont: NSFont,
+        fallbackColor: NSColor
+    ) {
+        for script in prepared.scripts {
+            let markerRange = (attributedString.string as NSString).range(of: script.marker)
+            guard markerRange.location != NSNotFound else { continue }
+            let attributes = attributedString.attributes(
+                at: markerRange.location,
+                effectiveRange: nil
+            )
+            let sourceFont = attributes[.font] as? NSFont ?? fallbackFont
+            let sourceColor = attributes[.foregroundColor] as? NSColor ?? fallbackColor
+            let scriptFont = NSFont(
+                descriptor: sourceFont.fontDescriptor,
+                size: max(sourceFont.pointSize * 0.75, 8)
+            ) ?? sourceFont
+            let baselineOffset: CGFloat
+            switch script.kind {
+            case .subscriptText:
+                baselineOffset = -sourceFont.pointSize * 0.2
+            case .superscriptText:
+                baselineOffset = sourceFont.pointSize * 0.35
+            }
+            let replacement = NSMutableAttributedString(
+                string: script.content,
+                attributes: [
+                    .font: scriptFont,
+                    .foregroundColor: sourceColor,
+                    .baselineOffset: baselineOffset,
+                ]
+            )
+            attributedString.replaceCharacters(in: markerRange, with: replacement)
         }
     }
 
@@ -895,6 +1375,14 @@ struct MessageContentView: View {
         ) { value, range, _ in
             guard let rawValue = value as? Int else { return }
             let intent = InlinePresentationIntent(rawValue: UInt(rawValue))
+            if intent.contains(.strikethrough) {
+                attributedString.addAttribute(
+                    .strikethroughStyle,
+                    value: NSUnderlineStyle.single.rawValue,
+                    range: range
+                )
+            }
+
 
             if intent.contains(.code) {
                 let codeFont = NSFont.monospacedSystemFont(
@@ -1272,6 +1760,7 @@ private struct StreamingMarkdownContentView: View {
                     colorScheme: colorScheme,
                     reasoningDuration: reasoningDuration,
                     isActiveReasoning: isActiveReasoning,
+                    isStreaming: isStreaming,
                     searchText: $searchText,
                     currentSearchOccurrence: currentSearchOccurrence
                 )
@@ -1293,6 +1782,7 @@ private struct StreamingMarkdownContentView: View {
                         colorScheme: colorScheme,
                         reasoningDuration: reasoningDuration,
                         isActiveReasoning: isActiveReasoning,
+                        isStreaming: isStreaming,
                         searchText: $searchText,
                         currentSearchOccurrence: currentSearchOccurrence
                     )
@@ -1309,6 +1799,7 @@ private struct StableStreamingMarkdownBlock: View, Equatable {
     let colorScheme: ColorScheme
     let reasoningDuration: TimeInterval?
     let isActiveReasoning: Bool
+    let isStreaming: Bool
     @Binding var searchText: String
     let currentSearchOccurrence: SearchOccurrence?
 
@@ -1319,6 +1810,7 @@ private struct StableStreamingMarkdownBlock: View, Equatable {
             && lhs.colorScheme == rhs.colorScheme
             && lhs.reasoningDuration == rhs.reasoningDuration
             && lhs.isActiveReasoning == rhs.isActiveReasoning
+            && lhs.isStreaming == rhs.isStreaming
             && lhs.searchText == rhs.searchText
             && lhs.currentSearchOccurrence == rhs.currentSearchOccurrence
     }
@@ -1327,7 +1819,7 @@ private struct StableStreamingMarkdownBlock: View, Equatable {
         MessageContentView(
             message: message,
             content: content,
-            isStreaming: false,
+            isStreaming: isStreaming,
             own: false,
             effectiveFontSize: effectiveFontSize,
             colorScheme: colorScheme,

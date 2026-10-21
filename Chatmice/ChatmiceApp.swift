@@ -673,7 +673,6 @@ private final class ThinScrollerController: NSObject {
         super.init()
         for name in [
             NSWindow.didBecomeKeyNotification,
-            NSWindow.didUpdateNotification,
         ] {
             NotificationCenter.default.addObserver(
                 self,
@@ -699,28 +698,17 @@ private final class ThinScrollerController: NSObject {
         let windowID = ObjectIdentifier(window)
         guard scheduledWindows.insert(windowID).inserted else { return }
 
-        for delay in [0.0, 0.25, 1.0] {
-            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self, weak window] in
-                guard let self else { return }
-                if delay == 1.0 {
-                    self.scheduledWindows.remove(windowID)
-                }
-                guard let contentView = window?.contentView else { return }
-                self.configure(contentView)
-            }
+        DispatchQueue.main.async { [weak self, weak window] in
+            guard let self else { return }
+            self.scheduledWindows.remove(windowID)
+            guard let contentView = window?.contentView else { return }
+            self.configure(contentView)
         }
     }
 
     private func configure(_ view: NSView) {
         if let scrollView = view as? NSScrollView {
-            if scrollView.scrollerStyle != .overlay { scrollView.scrollerStyle = .overlay }
-            if !scrollView.autohidesScrollers { scrollView.autohidesScrollers = true }
-            if scrollView.verticalScroller?.controlSize != .mini {
-                scrollView.verticalScroller?.controlSize = .mini
-            }
-            if scrollView.horizontalScroller?.controlSize != .mini {
-                scrollView.horizontalScroller?.controlSize = .mini
-            }
+            Self.configure(scrollView)
         }
         else if let scroller = view as? NSScroller, scroller.controlSize != .mini {
             scroller.controlSize = .mini
@@ -729,6 +717,41 @@ private final class ThinScrollerController: NSObject {
             configure(subview)
         }
     }
+
+    static func configure(_ scrollView: NSScrollView) {
+        if scrollView.scrollerStyle != .overlay { scrollView.scrollerStyle = .overlay }
+        if !scrollView.autohidesScrollers { scrollView.autohidesScrollers = true }
+        if scrollView.verticalScroller?.controlSize != .mini { scrollView.verticalScroller?.controlSize = .mini }
+        if scrollView.horizontalScroller?.controlSize != .mini { scrollView.horizontalScroller?.controlSize = .mini }
+    }
+}
+
+/// Configure a newly mounted SwiftUI scroll container without scanning the conversation on window redraws.
+struct ThinScrollbarConfiguration: NSViewRepresentable {
+    final class Probe: NSView {
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            DispatchQueue.main.async { [weak self] in self?.configureAncestor() }
+        }
+
+        func configureAncestor() {
+            var ancestor = superview
+            while let view = ancestor {
+                if let scroll = view as? NSScrollView {
+                    ThinScrollerController.configure(scroll)
+                    return
+                }
+                ancestor = view.superview
+            }
+        }
+    }
+
+    func makeNSView(context: Context) -> Probe {
+        let view = Probe()
+        view.setAccessibilityElement(false)
+        return view
+    }
+    func updateNSView(_ nsView: Probe, context: Context) { nsView.configureAncestor() }
 }
 
 

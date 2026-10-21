@@ -10,9 +10,25 @@ import CoreData
 import Foundation
 import SwiftUI
 
+enum MarkdownTableAlignment: Equatable {
+    case leading
+    case center
+    case trailing
+}
+struct MarkdownFootnote: Equatable, Identifiable {
+    let index: Int
+    let identifier: String
+    let text: String
+
+    var id: String { identifier }
+}
+
+
 enum MessageElements {
     case text(String)
-    case table(header: [String], data: [[String]])
+    case table(header: [String], alignments: [MarkdownTableAlignment], data: [[String]])
+    case horizontalRule
+    case footnotes([MarkdownFootnote])
     case code(code: String, lang: String, indent: Int)
     case formula(String)
     case thinking(String, isExpanded: Bool)

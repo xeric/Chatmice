@@ -9,15 +9,299 @@ import Foundation
 import Highlightr
 import SwiftUI
 
+private struct PreparedMarkdownDocument {
+    let body: String
+    let footnotes: [MarkdownFootnote]
+}
+
+private enum MarkdownDocumentPreprocessor {
+    private struct LinkDefinition {
+        let destination: String
+        let title: String?
+    }
+
+    private static let footnoteDefinitionRegex = try! NSRegularExpression(
+        pattern: "^[ \\t]{0,3}\\[\\^([^]\\n]+)\\]:[ \\t]*(.*)$"
+    )
+    private static let linkDefinitionRegex = try! NSRegularExpression(
+        pattern: #"^[ \t]{0,3}\[([^]^][^]]*)\]:[ \t]*(\S+)(?:[ \t]+(?:\"([^\"]*)\"|'([^']*)'|\(([^)]*)\)))?[ \t]*$"#
+    )
+    private static let footnoteReferenceRegex = try! NSRegularExpression(
+        pattern: "\\[\\^([^]\\n]+)\\]"
+    )
+    private static let fullReferenceRegex = try! NSRegularExpression(
+        pattern: "(?<!!)\\[([^]\\n]+)\\]\\[([^]\\n]*)\\]"
+    )
+    private static let shortcutReferenceRegex = try! NSRegularExpression(
+        pattern: "(?<!!)(?<!\\])\\[([^]\\n]+)\\](?![\\[(])"
+    )
+
+    static func process(_ input: String) -> PreparedMarkdownDocument {
+        let lines = input.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        var linkDefinitions: [String: LinkDefinition] = [:]
+        var footnoteDefinitions: [String: String] = [:]
+        var hiddenLineIndices = Set<Int>()
+        var isInsideCodeFence = false
+        var index = 0
+
+        while index < lines.count {
+            let line = lines[index]
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed.hasPrefix("```") {
+                isInsideCodeFence.toggle()
+                index += 1
+                continue
+            }
+            guard !isInsideCodeFence else {
+                index += 1
+                continue
+            }
+
+            if let match = firstMatch(of: footnoteDefinitionRegex, in: line),
+                let identifier = capture(match, group: 1, in: line),
+                let firstLine = capture(match, group: 2, in: line)
+            {
+                hiddenLineIndices.insert(index)
+                var definitionLines = [firstLine]
+                var continuationIndex = index + 1
+                while continuationIndex < lines.count {
+                    let continuation = lines[continuationIndex]
+                    if continuation.hasPrefix("    ") {
+                        definitionLines.append(String(continuation.dropFirst(4)))
+                    }
+                    else if continuation.hasPrefix("\t") {
+                        definitionLines.append(String(continuation.dropFirst()))
+                    }
+                    else {
+                        break
+                    }
+                    hiddenLineIndices.insert(continuationIndex)
+                    continuationIndex += 1
+                }
+                footnoteDefinitions[normalizedIdentifier(identifier)] = definitionLines.joined(separator: "\n")
+                index = continuationIndex
+                continue
+            }
+
+            if let match = firstMatch(of: linkDefinitionRegex, in: line),
+                let identifier = capture(match, group: 1, in: line),
+                var destination = capture(match, group: 2, in: line)
+            {
+                if destination.hasPrefix("<"), destination.hasSuffix(">") {
+                    destination.removeFirst()
+                    destination.removeLast()
+                }
+                let title = (3...5).lazy.compactMap { capture(match, group: $0, in: line) }.first
+                linkDefinitions[normalizedIdentifier(identifier)] = LinkDefinition(
+                    destination: destination,
+                    title: title
+                )
+                hiddenLineIndices.insert(index)
+            }
+            index += 1
+        }
+
+        var footnoteIndices: [String: Int] = [:]
+        var orderedFootnoteIDs: [String] = []
+        isInsideCodeFence = false
+        let renderedLines = lines.enumerated().map { lineIndex, line -> String in
+            guard !hiddenLineIndices.contains(lineIndex) else { return "" }
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed.hasPrefix("```") {
+                isInsideCodeFence.toggle()
+                return line
+            }
+            guard !isInsideCodeFence else { return line }
+
+            return transformOutsideCodeSpans(line) { segment in
+                let withFootnotes = replaceFootnoteReferences(
+                    in: segment,
+                    definitions: footnoteDefinitions,
+                    indices: &footnoteIndices,
+                    orderedIDs: &orderedFootnoteIDs
+                )
+                return replaceReferenceLinks(in: withFootnotes, definitions: linkDefinitions)
+            }
+        }
+
+        let footnotes = orderedFootnoteIDs.compactMap { identifier -> MarkdownFootnote? in
+            guard let definition = footnoteDefinitions[identifier],
+                let footnoteIndex = footnoteIndices[identifier]
+            else { return nil }
+            return MarkdownFootnote(
+                index: footnoteIndex,
+                identifier: identifier,
+                text: replaceReferenceLinks(in: definition, definitions: linkDefinitions)
+            )
+        }
+        return PreparedMarkdownDocument(body: renderedLines.joined(separator: "\n"), footnotes: footnotes)
+    }
+
+    private static func replaceFootnoteReferences(
+        in source: String,
+        definitions: [String: String],
+        indices: inout [String: Int],
+        orderedIDs: inout [String]
+    ) -> String {
+        let matches = footnoteReferenceRegex.matches(
+            in: source,
+            range: NSRange(location: 0, length: source.utf16.count)
+        )
+        guard !matches.isEmpty else { return source }
+        let result = NSMutableString(string: source)
+        for match in matches {
+            guard let rawIdentifier = capture(match, group: 1, in: source) else { continue }
+            let identifier = normalizedIdentifier(rawIdentifier)
+            guard definitions[identifier] != nil, indices[identifier] == nil else { continue }
+            indices[identifier] = orderedIDs.count + 1
+            orderedIDs.append(identifier)
+        }
+        for match in matches.reversed() {
+            guard let rawIdentifier = capture(match, group: 1, in: source) else { continue }
+            let identifier = normalizedIdentifier(rawIdentifier)
+            guard let index = indices[identifier], let definition = definitions[identifier] else { continue }
+            let title = escapedTitle(definition.replacingOccurrences(of: "\n", with: " "))
+            result.replaceCharacters(
+                in: match.range,
+                with: "[\(superscript(index))](chatmice-footnote:\(index) \"\(title)\")"
+            )
+        }
+        return result as String
+    }
+
+    private static func replaceReferenceLinks(
+        in source: String,
+        definitions: [String: LinkDefinition]
+    ) -> String {
+        var result = source
+        result = replacingMatches(in: result, regex: fullReferenceRegex) { match, current in
+            guard let label = capture(match, group: 1, in: current) else { return nil }
+            let explicitIdentifier = capture(match, group: 2, in: current) ?? ""
+            let identifier = normalizedIdentifier(explicitIdentifier.isEmpty ? label : explicitIdentifier)
+            guard let definition = definitions[identifier] else { return nil }
+            return inlineLink(label: label, definition: definition)
+        }
+        result = replacingMatches(in: result, regex: shortcutReferenceRegex) { match, current in
+            guard let label = capture(match, group: 1, in: current),
+                let definition = definitions[normalizedIdentifier(label)]
+            else { return nil }
+            return inlineLink(label: label, definition: definition)
+        }
+        return result
+    }
+
+    private static func inlineLink(label: String, definition: LinkDefinition) -> String {
+        let title = definition.title.map { " \"\(escapedTitle($0))\"" } ?? ""
+        return "[\(label)](<\(definition.destination)>\(title))"
+    }
+
+    private static func replacingMatches(
+        in source: String,
+        regex: NSRegularExpression,
+        replacement: (NSTextCheckingResult, String) -> String?
+    ) -> String {
+        let matches = regex.matches(
+            in: source,
+            range: NSRange(location: 0, length: source.utf16.count)
+        )
+        guard !matches.isEmpty else { return source }
+        let result = NSMutableString(string: source)
+        for match in matches.reversed() {
+            if let value = replacement(match, source) {
+                result.replaceCharacters(in: match.range, with: value)
+            }
+        }
+        return result as String
+    }
+
+    private static func transformOutsideCodeSpans(
+        _ line: String,
+        transform: (String) -> String
+    ) -> String {
+        var output = ""
+        var segment = ""
+        var activeDelimiterLength: Int?
+        var index = line.startIndex
+
+        func flushSegment() {
+            output += activeDelimiterLength == nil ? transform(segment) : segment
+            segment = ""
+        }
+
+        while index < line.endIndex {
+            guard line[index] == "`" else {
+                segment.append(line[index])
+                index = line.index(after: index)
+                continue
+            }
+            flushSegment()
+            var delimiterEnd = index
+            var delimiterLength = 0
+            while delimiterEnd < line.endIndex, line[delimiterEnd] == "`" {
+                delimiterLength += 1
+                delimiterEnd = line.index(after: delimiterEnd)
+            }
+            output += String(line[index..<delimiterEnd])
+            if activeDelimiterLength == nil {
+                activeDelimiterLength = delimiterLength
+            }
+            else if activeDelimiterLength == delimiterLength {
+                activeDelimiterLength = nil
+            }
+            index = delimiterEnd
+        }
+        flushSegment()
+        return output
+    }
+
+    private static func superscript(_ number: Int) -> String {
+        let digits: [Character: Character] = [
+            "0": "⁰", "1": "¹", "2": "²", "3": "³", "4": "⁴",
+            "5": "⁵", "6": "⁶", "7": "⁷", "8": "⁸", "9": "⁹",
+        ]
+        return String(String(number).map { digits[$0] ?? $0 })
+    }
+
+    private static func normalizedIdentifier(_ identifier: String) -> String {
+        identifier
+            .split(whereSeparator: { $0.isWhitespace })
+            .joined(separator: " ")
+            .lowercased()
+    }
+
+    private static func escapedTitle(_ title: String) -> String {
+        title.replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+    }
+
+    private static func firstMatch(
+        of regex: NSRegularExpression,
+        in source: String
+    ) -> NSTextCheckingResult? {
+        regex.firstMatch(in: source, range: NSRange(location: 0, length: source.utf16.count))
+    }
+
+    private static func capture(
+        _ match: NSTextCheckingResult,
+        group: Int,
+        in source: String
+    ) -> String? {
+        guard group < match.numberOfRanges else { return nil }
+        let range = match.range(at: group)
+        guard range.location != NSNotFound, let swiftRange = Range(range, in: source) else { return nil }
+        return String(source[swiftRange])
+    }
+}
+
 struct MessageParser {
     @State var colorScheme: ColorScheme
 
     enum BlockType {
         case text
-        case table
         case codeBlock
         case formulaBlock
         case formulaLine
+        case dollarFormulaDelimiter
         case thinking
         case toolActivity
         case imageUUID
@@ -36,8 +320,11 @@ struct MessageParser {
         else if trimmedLine.hasPrefix("```") {
             return .codeBlock
         }
-        else if trimmedLine.first == "|" {
-            return .table
+        else if trimmedLine == "$$" {
+            return .dollarFormulaDelimiter
+        }
+        else if trimmedLine.hasPrefix("$$"), trimmedLine.hasSuffix("$$"), trimmedLine.count > 4 {
+            return .formulaLine
         }
         else if trimmedLine.hasPrefix("\\[") {
             return trimmedLine.replacingOccurrences(of: " ", with: "") == "\\[" ? .formulaBlock : .formulaLine
@@ -58,14 +345,17 @@ struct MessageParser {
 
     func parseMessageFromString(input: String) -> [MessageElements] {
 
-        let lines = input.split(separator: "\n", omittingEmptySubsequences: false).map { String($0) }
+        let document = MarkdownDocumentPreprocessor.process(input)
+        let lines = document.body.split(separator: "\n", omittingEmptySubsequences: false).map { String($0) }
         var elements: [MessageElements] = []
         var currentHeader: [String] = []
+        var currentTableAlignments: [MarkdownTableAlignment] = []
         var currentTableData: [[String]] = []
+        var isTableOpen = false
+        var tableDelimiterLineIndex: Int?
         var textLines: [String] = []
         var codeLines: [String] = []
         var formulaLines: [String] = []
-        var firstTableRowProcessed = false
         var isCodeBlockOpened = false
         var isFormulaBlockOpened = false
         var codeBlockLanguage = ""
@@ -94,50 +384,83 @@ struct MessageParser {
         }
 
         func handleFormulaLine(line: String) {
-            let formulaString = line.replacingOccurrences(of: "\\[", with: "").replacingOccurrences(of: "\\]", with: "")
+            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            let formulaString: String
+            if trimmed.hasPrefix("$$"), trimmed.hasSuffix("$$"), trimmed.count > 4 {
+                formulaString = String(trimmed.dropFirst(2).dropLast(2))
+            }
+            else {
+                formulaString = line
+                    .replacingOccurrences(of: "\\[", with: "")
+                    .replacingOccurrences(of: "\\]", with: "")
+            }
             formulaLines.append(formulaString)
         }
 
         func appendFormulaLines() {
             let combinedLines = formulaLines.joined(separator: "\n")
-            elements.append(.formula(combinedLines))
+            if !combinedLines.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                elements.append(.formula(combinedLines))
+            }
+            formulaLines = []
         }
 
-        func handleTableLine(line: String) {
+        func parseTableRow(_ line: String) -> [String]? {
+            var cells = [""]
+            var sawSeparator = false
+            var consecutiveBackslashes = 0
 
-            combineTextLinesIfNeeded()
+            for character in line {
+                if character == "\\" {
+                    cells[cells.count - 1].append(character)
+                    consecutiveBackslashes += 1
+                    continue
+                }
 
-            let rowData = parseRowData(line: line)
-
-            if rowDataIsTableDelimiter(rowData: rowData) {
-                return
+                if character == "|" {
+                    if consecutiveBackslashes.isMultiple(of: 2) == false {
+                        cells[cells.count - 1].removeLast()
+                        cells[cells.count - 1].append(character)
+                    }
+                    else {
+                        cells.append("")
+                        sawSeparator = true
+                    }
+                }
+                else {
+                    cells[cells.count - 1].append(character)
+                }
+                consecutiveBackslashes = 0
             }
 
-            if !firstTableRowProcessed {
-                handleFirstRowData(rowData: rowData)
-            }
-            else {
-                handleSubsequentRowData(rowData: rowData)
-            }
+            guard sawSeparator else { return nil }
+            cells = cells.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            if cells.first?.isEmpty == true { cells.removeFirst() }
+            if cells.last?.isEmpty == true { cells.removeLast() }
+            return cells
         }
 
-        func rowDataIsTableDelimiter(rowData: [String]) -> Bool {
-            return rowData.allSatisfy({ $0.allSatisfy({ $0 == "-" || $0 == ":" }) })
+        func alignment(for delimiter: String) -> MarkdownTableAlignment? {
+            var marker = delimiter.trimmingCharacters(in: .whitespacesAndNewlines)
+            let alignsLeading = marker.first == ":"
+            let alignsTrailing = marker.last == ":"
+            if alignsLeading { marker.removeFirst() }
+            if alignsTrailing, !marker.isEmpty { marker.removeLast() }
+            guard marker.count >= 3, marker.allSatisfy({ $0 == "-" }) else { return nil }
+            if alignsLeading && alignsTrailing { return .center }
+            return alignsTrailing ? .trailing : .leading
         }
 
-        func parseRowData(line: String) -> [String] {
-            return line.split(separator: "|")
-                .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
-                .filter { !$0.isEmpty }
+        func parseTableDelimiter(_ line: String) -> [MarkdownTableAlignment]? {
+            guard let cells = parseTableRow(line), !cells.isEmpty else { return nil }
+            let alignments = cells.compactMap { alignment(for: $0) }
+            return alignments.count == cells.count ? alignments : nil
         }
 
-        func handleFirstRowData(rowData: [String]) {
-            currentHeader = rowData
-            firstTableRowProcessed = true
-        }
-
-        func handleSubsequentRowData(rowData: [String]) {
-            currentTableData.append(rowData)
+        func normalizedTableRow(_ cells: [String], columnCount: Int) -> [String] {
+            if cells.count == columnCount { return cells }
+            if cells.count > columnCount { return Array(cells.prefix(columnCount)) }
+            return cells + Array(repeating: "", count: columnCount - cells.count)
         }
 
         func combineTextLinesIfNeeded() {
@@ -156,16 +479,23 @@ struct MessageParser {
         }
 
         func appendTableIfNeeded() {
-            if !currentTableData.isEmpty {
+            if isTableOpen {
                 appendTable()
             }
         }
 
         func appendTable() {
-            elements.append(.table(header: currentHeader, data: currentTableData))
+            elements.append(
+                .table(
+                    header: currentHeader,
+                    alignments: currentTableAlignments,
+                    data: currentTableData
+                )
+            )
             currentHeader = []
+            currentTableAlignments = []
             currentTableData = []
-            firstTableRowProcessed = false
+            isTableOpen = false
         }
 
         func appendCodeBlockIfNeeded() {
@@ -384,8 +714,63 @@ struct MessageParser {
             appendThinkingBlockIfNeeded()
         }
 
+        func thematicBreakMarker(in line: String) -> Character? {
+            let marker = line.filter { !$0.isWhitespace }
+            guard marker.count >= 3, let first = marker.first,
+                first == "-" || first == "*" || first == "_",
+                marker.allSatisfy({ $0 == first })
+            else { return nil }
+            return first
+        }
+
         for (index, line) in lines.enumerated() {
             let isLastLine = index == lines.count - 1
+
+            if index == tableDelimiterLineIndex {
+                tableDelimiterLineIndex = nil
+                continue
+            }
+
+            let isInsideStructuredBlock = isCodeBlockOpened || isFormulaBlockOpened || isThinkingBlockOpened
+            if !isInsideStructuredBlock {
+                if isTableOpen {
+                    if !line.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                        let row = parseTableRow(line)
+                    {
+                        currentTableData.append(
+                            normalizedTableRow(row, columnCount: currentHeader.count)
+                        )
+                        continue
+                    }
+                    appendTable()
+                }
+
+                if index + 1 < lines.count,
+                    let header = parseTableRow(line),
+                    let alignments = parseTableDelimiter(lines[index + 1]),
+                    !header.isEmpty,
+                    header.count == alignments.count
+                {
+                    combineTextLinesIfNeeded()
+                    currentHeader = header
+                    currentTableAlignments = alignments
+                    currentTableData = []
+                    isTableOpen = true
+                    tableDelimiterLineIndex = index + 1
+                    continue
+                }
+            }
+
+            if !isInsideStructuredBlock, let marker = thematicBreakMarker(in: line) {
+                let previousLineIsSetextTitle = marker == "-"
+                    && textLines.last?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+                if !previousLineIsSetextTitle {
+                    combineTextLinesIfNeeded()
+                    elements.append(.horizontalRule)
+                    continue
+                }
+            }
+
             let blockType = detectBlockType(line: line)
 
             switch blockType {
@@ -399,13 +784,21 @@ struct MessageParser {
                 appendTableIfNeeded()
                 toggleCodeBlock(line: line)
 
-            case .table:
-                handleTableLine(line: line)
-
             case .formulaBlock:
                 combineTextLinesIfNeeded()
                 appendTableIfNeeded()
                 openFormulaBlock()
+
+            case .dollarFormulaDelimiter:
+                combineTextLinesIfNeeded()
+                appendTableIfNeeded()
+                if isFormulaBlockOpened {
+                    closeFormulaBlock()
+                    appendFormulaLines()
+                }
+                else {
+                    openFormulaBlock()
+                }
 
             case .formulaLine:
                 combineTextLinesIfNeeded()
@@ -497,15 +890,15 @@ struct MessageParser {
                         handleLineWithInlineAttachments(line, isLastLine: isLastLine)
                         continue
                     }
-                    if !currentTableData.isEmpty {
-                        appendTable()
-                    }
                     textLines.append(line)
                 }
             }
         }
 
         finalizeParsing()
+        if !document.footnotes.isEmpty {
+            elements.append(.footnotes(document.footnotes))
+        }
         return elements
     }
 }

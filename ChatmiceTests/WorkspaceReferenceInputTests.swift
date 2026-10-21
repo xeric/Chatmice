@@ -177,7 +177,9 @@ extension WorkspaceReferenceInputTests {
         workspace.name = "Workspace files"
         workspace.path = root.path
         try context.save()
-        let host = NSHostingView(rootView: WorkspaceFileBrowser(workspace: workspace, onClose: {}).environment(\.managedObjectContext, context))
+        let rootView = WorkspaceFileBrowser(workspace: workspace)
+            .environment(\.managedObjectContext, context)
+        let host = NSHostingView(rootView: rootView)
         let window = NSWindow(contentRect: NSRect(x: 120, y: 120, width: 320, height: 640), styleMask: [.titled], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
         window.contentView = host

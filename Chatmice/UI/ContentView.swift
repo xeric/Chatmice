@@ -11,6 +11,62 @@ import CoreData
 import Foundation
 import SwiftUI
 
+@MainActor
+final class ConversationPresentationController: ObservableObject {
+    @Published private(set) var displayedChat: ChatEntity?
+    @Published private(set) var isLoading = false
+    private var selectedID: NSManagedObjectID?
+    private var loadTask: Task<Void, Never>?
+
+    deinit { loadTask?.cancel() }
+
+    func select(_ chat: ChatEntity?, in viewContext: NSManagedObjectContext) {
+        loadTask?.cancel()
+        loadTask = nil
+        selectedID = chat?.objectID
+        guard let chat, !chat.isDeleted else {
+            selectedID = nil
+            displayedChat = nil
+            isLoading = false
+            return
+        }
+
+        let targetID = chat.objectID
+        isLoading = true
+        loadTask = Task { @MainActor [weak self] in
+            // Preserve the existing display-frame handoff before preparing destination data.
+            do { try await Task.sleep(for: .milliseconds(45)) }
+            catch { return }
+            await Self.warmConversation(targetID, in: viewContext)
+            guard !Task.isCancelled, let self, self.selectedID == targetID else { return }
+            let loadedChat = try? viewContext.existingObject(with: targetID) as? ChatEntity
+            self.displayedChat = loadedChat?.isDeleted == false ? loadedChat : nil
+            self.isLoading = false
+            self.loadTask = nil
+        }
+    }
+
+    private static func warmConversation(_ chatID: NSManagedObjectID, in viewContext: NSManagedObjectContext) async {
+        guard !chatID.isTemporaryID, let coordinator = viewContext.persistentStoreCoordinator else { return }
+        let context = NSManagedObjectContext(concurrencyType: .privateQueueConcurrencyType)
+        context.persistentStoreCoordinator = coordinator
+        context.undoManager = nil
+        await context.perform {
+            guard let chat = try? context.existingObject(with: chatID) as? ChatEntity else { return }
+            let request = NSFetchRequest<MessageEntity>(entityName: "MessageEntity")
+            request.predicate = NSPredicate(format: "chat == %@", chat)
+            request.sortDescriptors = chat.messageSortDescriptors
+            request.fetchBatchSize = 30
+            guard let messages = try? context.fetch(request) else { return }
+            for message in messages {
+                _ = message.body
+                _ = message.timestamp
+                _ = message.own
+            }
+        }
+    }
+}
+
 struct ContentView: View {
     private static var handledStartChatRequestIds = Set<String>()
     private static var handledResponseIds = Set<String>()
@@ -32,8 +88,7 @@ struct ContentView: View {
     private var personas: FetchedResults<PersonaEntity>
 
     @State var selectedChat: ChatEntity?
-    @State private var displayedChat: ChatEntity?
-    @State private var headerChat: ChatEntity?
+    @StateObject private var conversationPresentation = ConversationPresentationController()
     @AppStorage("gptToken") var gptToken = ""
     @AppStorage("gptModel") var gptModel = AppConstants.defaultPrimaryModel
     @AppStorage("systemMessage") var systemMessage = AppConstants.chatGptSystemMessage
@@ -115,7 +170,7 @@ struct ContentView: View {
                         Spacer()
                         modelPickerButton
                         chatSearchField
-                        if !isFileBrowserVisible || displayedChat?.workspace?.isTemporary == true { fileBrowserToggle }
+                        if !isFileBrowserVisible || conversationPresentation.displayedChat?.workspace?.isTemporary == true { fileBrowserToggle }
                     }
                     .padding(.leading, 18)
                     .padding(.trailing, 8)
@@ -124,7 +179,7 @@ struct ContentView: View {
                 }
                 // The file inspector owns its full-height column.
                 .inspector(isPresented: Binding(
-                    get: { isFileBrowserVisible && displayedChat?.workspace?.isTemporary == false },
+                    get: { isFileBrowserVisible && conversationPresentation.displayedChat?.workspace?.isTemporary == false },
                     set: { isFileBrowserVisible = $0 }
                 )) {
                     Group {
@@ -135,7 +190,7 @@ struct ContentView: View {
                             }
                             .padding(.horizontal, 12)
                             .frame(height: 52)
-                        if let workspace = displayedChat?.workspace {
+                        if let workspace = conversationPresentation.displayedChat?.workspace {
                             WorkspaceFileBrowser(workspace: workspace)
                                 .id(workspace.objectID)
                         } else {
@@ -315,7 +370,8 @@ struct ContentView: View {
                 .buttonStyle(.plain)
             }
         }
-        .disabled(headerChat?.workspace == nil || headerChat?.workspace?.isTemporary == true)
+        .disabled(conversationPresentation.isLoading || conversationPresentation.displayedChat?.workspace == nil
+                  || conversationPresentation.displayedChat?.workspace?.isTemporary == true)
         .help(isFileBrowserVisible ? "Hide workspace files" : "Show workspace files")
         .accessibilityIdentifier("toggle-workspace-file-browser")
     }
@@ -391,11 +447,11 @@ struct ContentView: View {
 
     private var conversationTitle: some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text(headerChat.map { $0.name.isEmpty ? ($0.persona?.name ?? "Chatmice") : $0.name } ?? "Chatmice")
+            Text(conversationPresentation.displayedChat.map { $0.name.isEmpty ? ($0.persona?.name ?? "Chatmice") : $0.name } ?? "Chatmice")
                 .font(.system(size: 13, weight: .semibold))
                 .lineLimit(1)
 
-            if let workspace = headerChat?.workspace, !workspace.isTemporary {
+            if let workspace = conversationPresentation.displayedChat?.workspace, !workspace.isTemporary {
                 ConversationWorkspacePath(workspace: workspace)
             }
         }
@@ -429,6 +485,7 @@ struct ContentView: View {
         .padding(.horizontal, 11)
         .frame(width: 180, height: 36)
         .background { headerControlBackground }
+        .disabled(conversationPresentation.isLoading)
         .onChange(of: isSearchFieldFocused) { _, focused in
             isSearchPresented = focused
         }
@@ -436,7 +493,7 @@ struct ContentView: View {
 
     @ViewBuilder
     private var modelPickerButton: some View {
-        if let headerChat {
+        if let headerChat = conversationPresentation.displayedChat {
             Button(action: { isShowingModelPickerPopover.toggle() }) {
                 HStack(spacing: 6) {
                     ProviderBrandIcon(
@@ -461,6 +518,7 @@ struct ContentView: View {
                 .background { headerControlBackground }
             }
             .buttonStyle(.plain)
+            .disabled(conversationPresentation.isLoading)
             .popover(isPresented: $isShowingModelPickerPopover, arrowEdge: .bottom) {
                 ModelPickerPopoverView(
                     apiServices: Array(apiServices),
@@ -477,7 +535,16 @@ struct ContentView: View {
     @ViewBuilder
     private var conversationDetail: some View {
         Group {
-            if let displayedChat {
+            if conversationPresentation.isLoading {
+                ProgressView("Loading conversation…")
+                    .controlSize(.small)
+                    .padding(.horizontal, 18)
+                    .padding(.vertical, 12)
+                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .accessibilityIdentifier("conversation-loading")
+            }
+            else if let displayedChat = conversationPresentation.displayedChat {
                 ChatView(
                     viewContext: viewContext,
                     chat: displayedChat,
@@ -717,15 +784,9 @@ struct ContentView: View {
             applicationIsActive: scenePhase == .active && NSApp.isActive
         )
 
-        guard let chat, !chat.isDeleted else {
-            displayedChat = nil
-            headerChat = nil
-            return
-        }
-
-        displayedChat = chat
-        headerChat = chat
+        conversationPresentation.select(chat, in: viewContext)
     }
+
 
     private func updateSidebarVisibilityForChatCount(previousCount: Int, newCount: Int) {
 

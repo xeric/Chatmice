@@ -3,6 +3,38 @@ import CoreData
 import SwiftUI
 import XCTest
 @testable import Chatmice
+@MainActor
+private final class StreamingMarkdownTestState: ObservableObject {
+    @Published var content: String
+    @Published var isStreaming: Bool
+
+    init(content: String, isStreaming: Bool) {
+        self.content = content
+        self.isStreaming = isStreaming
+    }
+}
+
+private struct StreamingMarkdownTestHarness: View {
+    @ObservedObject var state: StreamingMarkdownTestState
+
+    var body: some View {
+        MessageContentView(
+            message: nil,
+            content: state.content,
+            isStreaming: state.isStreaming,
+            own: false,
+            effectiveFontSize: 15,
+            colorScheme: .dark,
+            inlineAttachments: true,
+            reasoningDuration: nil,
+            isActiveReasoning: false,
+            prefetchedElements: nil,
+            searchText: .constant(""),
+            currentSearchOccurrence: nil
+        )
+        .frame(width: 720, alignment: .leading)
+    }
+}
 
 final class ChatLayoutTests: XCTestCase {
     func testAutomaticScrollingDoesNotChangeFollowIntent() {
@@ -98,6 +130,324 @@ final class ChatLayoutTests: XCTestCase {
             XCTAssertEqual(host.fittingSize.height, natural.height, accuracy: 1)
         }
     }
+    @MainActor
+    func testEnhancedMarkdownRendersInNativeMessageView() async throws {
+        let filler = String(repeating: "A paragraph keeps this text on the TextKit rendering path.\n", count: 24)
+        let markdown = """
+            \(filler)
+            Alternative Heading
+            ===================
+            ~~removed~~<br>next line
+            H~2~O and X^2^
+            [Reference Link][reference]
+            A footnote appears here[^note].
+            > [!NOTE]
+            > Callout body
+            > > Nested quote
+            - Top item
+              - Nested item
+            - [x] Completed task
+            - [ ] Pending task
+
+            ---
+
+            $$x^2 + y^2$$
+
+            Name | Role | Notes
+            :--- | :---: | ---:
+            **Alice** | `Developer` | A \\| B
+
+            [reference]: https://example.com "Reference title"
+            [^note]: Footnote **details**.
+            """
+        let root = MessageContentView(
+            message: nil,
+            content: markdown,
+            isStreaming: false,
+            own: false,
+            effectiveFontSize: 15,
+            colorScheme: .light,
+            inlineAttachments: true,
+            reasoningDuration: nil,
+            isActiveReasoning: false,
+            prefetchedElements: nil,
+            searchText: .constant(""),
+            currentSearchOccurrence: nil,
+            allowsStreamingLayout: false
+        )
+        let host = NSHostingView(rootView: root.frame(width: 760, alignment: .leading))
+        let window = NSWindow(
+            contentRect: NSRect(x: 100, y: 100, width: 800, height: 900),
+            styleMask: [.titled],
+            backing: .buffered,
+            defer: false
+        )
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        window.makeKeyAndOrderFront(nil)
+        defer { window.close() }
+        try await Task.sleep(for: .milliseconds(100))
+        host.layoutSubtreeIfNeeded()
+
+        func richTextViews(in view: NSView) -> [SelectableRichTextView] {
+            let current = (view as? SelectableRichTextView).map { [$0] } ?? []
+            return current + view.subviews.flatMap(richTextViews(in:))
+        }
+        let richText = try XCTUnwrap(richTextViews(in: host).first)
+        let rendered = try XCTUnwrap(richText.textStorage)
+        XCTAssertFalse(rendered.string.contains("<br>"))
+        XCTAssertTrue(rendered.string.contains("removed  \nnext line"))
+        XCTAssertTrue(rendered.string.contains("│ NOTE"))
+        XCTAssertTrue(rendered.string.contains("│ │ Nested quote"))
+        XCTAssertFalse(rendered.string.contains("[!NOTE]"))
+        XCTAssertTrue(rendered.string.contains("Alternative Heading"))
+        XCTAssertFalse(rendered.string.contains("==================="))
+        XCTAssertTrue(rendered.string.contains("☑︎ Completed task"))
+        XCTAssertTrue(rendered.string.contains("☐ Pending task"))
+        XCTAssertTrue(rendered.string.contains("H2O and X2"))
+        XCTAssertFalse(rendered.string.contains("H~2~O"))
+        XCTAssertFalse(rendered.string.contains("X^2^"))
+
+        let headingRange = (rendered.string as NSString).range(of: "Alternative Heading")
+        let headingFont = rendered.attribute(.font, at: headingRange.location, effectiveRange: nil) as? NSFont
+        XCTAssertGreaterThan(try XCTUnwrap(headingFont).pointSize, 15)
+        let chemicalRange = (rendered.string as NSString).range(of: "H2O")
+        let exponentRange = (rendered.string as NSString).range(of: "X2")
+        let subscriptOffset = rendered.attribute(
+            .baselineOffset,
+            at: chemicalRange.location + 1,
+            effectiveRange: nil
+        ) as? CGFloat
+        let superscriptOffset = rendered.attribute(
+            .baselineOffset,
+            at: exponentRange.location + 1,
+            effectiveRange: nil
+        ) as? CGFloat
+        XCTAssertLessThan(try XCTUnwrap(subscriptOffset), 0)
+        XCTAssertGreaterThan(try XCTUnwrap(superscriptOffset), 0)
+
+        let linkRange = (rendered.string as NSString).range(of: "Reference Link")
+        XCTAssertEqual(
+            rendered.attribute(
+                MarkdownLinkTitleSupport.toolTipKey,
+                at: linkRange.location,
+                effectiveRange: nil
+            ) as? String,
+            "Reference title"
+        )
+
+        let removedRange = (rendered.string as NSString).range(of: "removed")
+        XCTAssertNotEqual(removedRange.location, NSNotFound)
+        XCTAssertEqual(
+            rendered.attribute(.strikethroughStyle, at: removedRange.location, effectiveRange: nil) as? Int,
+            NSUnderlineStyle.single.rawValue
+        )
+        let topRange = (rendered.string as NSString).range(of: "- Top item")
+        let nestedRange = (rendered.string as NSString).range(of: "- Nested item")
+        let topStyle = rendered.attribute(.paragraphStyle, at: topRange.location, effectiveRange: nil)
+            as? NSParagraphStyle
+        let nestedStyle = rendered.attribute(.paragraphStyle, at: nestedRange.location, effectiveRange: nil)
+            as? NSParagraphStyle
+        XCTAssertGreaterThan(try XCTUnwrap(nestedStyle).firstLineHeadIndent, try XCTUnwrap(topStyle).firstLineHeadIndent)
+
+        var visited = Set<ObjectIdentifier>()
+        func accessibilityText(from object: AnyObject) -> [String] {
+            guard visited.insert(ObjectIdentifier(object)).inserted else { return [] }
+            var values: [String] = []
+            if let element = object as? any NSAccessibilityProtocol {
+                if let value = element.accessibilityValue() as? String { values.append(value) }
+                if let label = element.accessibilityLabel() { values.append(label) }
+                values += (element.accessibilityChildren() ?? []).flatMap {
+                    accessibilityText(from: $0 as AnyObject)
+                }
+            }
+            if let view = object as? NSView {
+                values += view.subviews.flatMap { accessibilityText(from: $0) }
+            }
+            return values
+        }
+        let visibleText = accessibilityText(from: host).joined(separator: "\n")
+        XCTAssertTrue(visibleText.contains("Alice"))
+        XCTAssertTrue(visibleText.contains("Developer"))
+        XCTAssertTrue(visibleText.contains("A | B"))
+        XCTAssertFalse(visibleText.contains("**Alice**"))
+        XCTAssertTrue(visibleText.contains("Footnote details."))
+    }
+    @MainActor
+    func testWidthProbesDoNotRewrapTheDisplayedText() throws {
+        let view = SelectableRichTextView()
+        view.setContent(NSAttributedString(
+            string: String(repeating: "A long displayed paragraph must retain its final wrapping width.\n", count: 30),
+            attributes: [.font: NSFont.systemFont(ofSize: 15)]
+        ))
+        for drawingWidth in [640.0, 280.0, 640.0] {
+            view.setFrameSize(NSSize(width: drawingWidth, height: 3000))
+            let expected = view.measuredSize(for: drawingWidth)
+            for probe in [120.0, 720.0, 200.0, 720.0] { _ = view.measuredSize(for: probe) }
+            let container = try XCTUnwrap(view.textContainer)
+            let manager = try XCTUnwrap(view.layoutManager)
+            manager.ensureLayout(for: container)
+            let drawnHeight = ceil(max(manager.usedRect(for: container).maxY, manager.extraLineFragmentRect.maxY))
+            XCTAssertEqual(drawnHeight, expected.height, accuracy: 1,
+                           "Measurement at other widths must not leave the displayed paragraph rewrapped or clipped")
+        }
+    }
+
+    @MainActor
+    func testRichTextSizeTracksMutableContentAndLineLimitChanges() {
+        let content = NSMutableAttributedString(string: "Short", attributes: [.font: NSFont.systemFont(ofSize: 14)])
+        let view = SelectableRichTextView()
+        view.setContent(content)
+        let initial = view.measuredSize(for: 180)
+        content.append(NSAttributedString(string: String(repeating: "\nLonger text that wraps across multiple lines.", count: 12),
+                                         attributes: [.font: NSFont.systemFont(ofSize: 14)]))
+        view.setContent(content)
+        let expanded = view.measuredSize(for: 180)
+        XCTAssertGreaterThan(expanded.height, initial.height)
+        view.setContent(content, lineLimit: 1, lineBreakMode: .byTruncatingTail)
+        let truncated = view.measuredSize(for: 180)
+        XCTAssertLessThan(truncated.height, expanded.height)
+        view.setContent(content)
+        XCTAssertEqual(view.measuredSize(for: 180), expanded)
+        content.addAttribute(.font, value: NSFont.systemFont(ofSize: 22), range: NSRange(location: 0, length: content.length))
+        view.setContent(content)
+        XCTAssertGreaterThan(view.measuredSize(for: 180).height, expanded.height)
+    }
+
+    @MainActor
+    func testShortHighlightedCodeBlocksRemainVisible() async throws {
+        let firstCode = "const db = env.DB;"
+        let secondCode = "const row = await env.DB.prepare(\"SELECT 1\").first();"
+        let markdown = """
+            Worker can access the binding:
+
+            ```js
+            \(firstCode)
+            ```
+
+            A second short block must remain visible too:
+
+            ```js
+            \(secondCode)
+            ```
+            """
+        let root = MessageContentView(
+            message: nil,
+            content: markdown,
+            isStreaming: false,
+            own: false,
+            effectiveFontSize: 15,
+            colorScheme: .dark,
+            inlineAttachments: true,
+            reasoningDuration: nil,
+            isActiveReasoning: false,
+            prefetchedElements: nil,
+            searchText: .constant(""),
+            currentSearchOccurrence: nil,
+            allowsStreamingLayout: false
+        )
+        .environmentObject(PreviewStateManager())
+        let host = NSHostingView(rootView: root.frame(width: 720, alignment: .leading))
+        let window = NSWindow(
+            contentRect: NSRect(x: 100, y: 100, width: 760, height: 500),
+            styleMask: [.titled],
+            backing: .buffered,
+            defer: false
+        )
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        window.makeKeyAndOrderFront(nil)
+        defer { window.close() }
+        try await Task.sleep(for: .milliseconds(150))
+        host.layoutSubtreeIfNeeded()
+
+        func richTextViews(in view: NSView) -> [SelectableRichTextView] {
+            let current = (view as? SelectableRichTextView).map { [$0] } ?? []
+            return current + view.subviews.flatMap(richTextViews(in:))
+        }
+        let expectedCode = Set([firstCode, secondCode])
+        let codeViews = richTextViews(in: host).filter { expectedCode.contains($0.string) }
+        XCTAssertEqual(Set(codeViews.map(\.string)), expectedCode)
+        for codeView in codeViews {
+            XCTAssertGreaterThan(codeView.frame.height, 0)
+            let container = try XCTUnwrap(codeView.textContainer)
+            let manager = try XCTUnwrap(codeView.layoutManager)
+            manager.ensureLayout(for: container)
+            XCTAssertGreaterThan(manager.usedRect(for: container).height, 0)
+        }
+    }
+
+    @MainActor
+    func testClosedCodeFenceStaysVisibleWhileFollowingTokensStream() async throws {
+        let code = "llmMode: remote\nllmModel: gpt-4.1-mini"
+        let state = StreamingMarkdownTestState(content: "Configuration:\n\n", isStreaming: true)
+        let root = StreamingMarkdownTestHarness(state: state)
+            .environmentObject(PreviewStateManager())
+        let host = NSHostingView(rootView: root)
+        let window = NSWindow(
+            contentRect: NSRect(x: 100, y: 100, width: 760, height: 500),
+            styleMask: [.titled],
+            backing: .buffered,
+            defer: false
+        )
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        window.makeKeyAndOrderFront(nil)
+        defer { window.close() }
+
+        state.content += "```yaml\nllmMode: remote\n"
+        try await Task.sleep(for: .milliseconds(30))
+        state.content += "llmModel: gpt-4.1-mini\n```\n\n"
+        try await Task.sleep(for: .milliseconds(100))
+        state.content += "More response is still arriving."
+        try await Task.sleep(for: .milliseconds(100))
+        host.layoutSubtreeIfNeeded()
+        func richTextViews(in view: NSView) -> [SelectableRichTextView] {
+            let current = (view as? SelectableRichTextView).map { [$0] } ?? []
+            return current + view.subviews.flatMap(richTextViews(in:))
+        }
+        let streamingCodeView = try XCTUnwrap(
+            richTextViews(in: host).first(where: { $0.string == code }),
+            "A completed code fence must create measurable text before streaming finishes"
+        )
+        XCTAssertGreaterThan(streamingCodeView.frame.height, 0)
+        let streamingContainer = try XCTUnwrap(streamingCodeView.textContainer)
+        let streamingLayoutManager = try XCTUnwrap(streamingCodeView.layoutManager)
+        streamingLayoutManager.ensureLayout(for: streamingContainer)
+        XCTAssertGreaterThan(
+            streamingLayoutManager.usedRect(for: streamingContainer).height,
+            0
+        )
+        func accessibilityText(from object: AnyObject, visited: inout Set<ObjectIdentifier>) -> [String] {
+            guard visited.insert(ObjectIdentifier(object)).inserted else { return [] }
+            var values: [String] = []
+            if let element = object as? any NSAccessibilityProtocol {
+                if let value = element.accessibilityValue() as? String { values.append(value) }
+                if let label = element.accessibilityLabel() { values.append(label) }
+                values += (element.accessibilityChildren() ?? []).flatMap {
+                    accessibilityText(from: $0 as AnyObject, visited: &visited)
+                }
+            }
+            if let view = object as? NSView {
+                values += view.subviews.flatMap {
+                    accessibilityText(from: $0, visited: &visited)
+                }
+            }
+            return values
+        }
+
+        var visited = Set<ObjectIdentifier>()
+        let visibleText = accessibilityText(from: host, visited: &visited).joined(separator: "\n")
+        XCTAssertTrue(visibleText.contains(code), "A completed code fence must stay visible before streaming finishes")
+        XCTAssertTrue(visibleText.contains("More response is still arriving."))
+
+        state.isStreaming = false
+        try await Task.sleep(for: .milliseconds(100))
+        host.layoutSubtreeIfNeeded()
+        let completedCodeView = try XCTUnwrap(richTextViews(in: host).first(where: { $0.string == code }))
+        XCTAssertGreaterThan(completedCodeView.frame.height, 0)
+    }
+
 }
 
 extension ChatLayoutTests {
@@ -371,5 +721,78 @@ extension ChatLayoutTests {
         }
         try wheel(0, phase: .ended)
         try await checkpoint("completed", visible: "More response while reading history")
+    }
+}
+
+extension ChatLayoutTests {
+    @MainActor
+    func testConversationLoadingKeepsLatestSelectionWhenEarlierFetchFinishes() async throws {
+        let coordinator = NSPersistentStoreCoordinator(managedObjectModel: PersistenceController.shared.container.managedObjectModel)
+        try coordinator.addPersistentStore(ofType: NSInMemoryStoreType, configurationName: nil, at: nil)
+        let context = NSManagedObjectContext(concurrencyType: .mainQueueConcurrencyType)
+        context.persistentStoreCoordinator = coordinator
+        func makeChat(_ name: String) -> ChatEntity {
+            let chat = ChatEntity(context: context)
+            chat.id = UUID()
+            chat.name = name
+            chat.systemMessage = ""
+            chat.gptModel = "test"
+            chat.requestMessages = []
+            let message = MessageEntity(context: context)
+            message.id = 1
+            message.sequence = 1
+            message.timestamp = Date()
+            message.own = false
+            message.body = "Content belonging to \(name)"
+            message.chat = chat
+            return chat
+        }
+        let first = makeChat("Alpha")
+        let superseded = makeChat("Beta")
+        let latest = makeChat("Gamma")
+        try context.save()
+        let presentation = ConversationPresentationController()
+        func waitForChat(_ chat: ChatEntity) async throws {
+            for _ in 0..<100 {
+                if !presentation.isLoading, presentation.displayedChat?.objectID == chat.objectID { return }
+                try await Task.sleep(for: .milliseconds(20))
+            }
+            XCTFail("The requested conversation must replace loading after its data is prepared")
+        }
+        presentation.select(first, in: context)
+        XCTAssertTrue(presentation.isLoading)
+        try await waitForChat(first)
+
+        // Block the real store queue while the destination's background fetch is pending.
+        let storeHeld = expectation(description: "store coordinator held")
+        let releaseStore = DispatchSemaphore(value: 0)
+        let heldStoreTask = Task {
+            await coordinator.perform {
+                storeHeld.fulfill()
+                _ = releaseStore.wait(timeout: .now() + 3)
+            }
+        }
+        defer { releaseStore.signal() }
+        await fulfillment(of: [storeHeld], timeout: 1)
+        presentation.select(superseded, in: context)
+        try await Task.sleep(for: .milliseconds(70))
+        XCTAssertTrue(presentation.isLoading, "Loading must remain active while the store fetch is blocked")
+        XCTAssertEqual(presentation.displayedChat?.objectID, first.objectID)
+        presentation.select(latest, in: context)
+        XCTAssertTrue(presentation.isLoading, "A newer selection must not clear pending loading feedback")
+        releaseStore.signal()
+        await heldStoreTask.value
+        try await waitForChat(latest)
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertEqual(presentation.displayedChat?.objectID, latest.objectID, "A superseded fetch must never overwrite the latest selection")
+        XCTAssertFalse(presentation.isLoading)
+
+        presentation.select(superseded, in: context)
+        presentation.select(nil, in: context)
+        XCTAssertNil(presentation.displayedChat)
+        XCTAssertFalse(presentation.isLoading)
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertNil(presentation.displayedChat, "Clearing selection must prevent an already scheduled load from repopulating it")
+        XCTAssertFalse(presentation.isLoading)
     }
 }

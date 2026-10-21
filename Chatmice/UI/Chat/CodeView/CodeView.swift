@@ -19,7 +19,6 @@ struct CodeView: View {
     @StateObject private var viewModel: CodeViewModel
     @Environment(\.colorScheme) var colorScheme
     @EnvironmentObject private var previewStateManager: PreviewStateManager
-    @State private var highlightedCode: NSAttributedString?
     @State private var isRendered = false
     @AppStorage("chatFontSize") private var chatFontSize: Double = 15.0
     @AppStorage("codeFont") private var codeFont: String = AppConstants.firaCode
@@ -46,32 +45,24 @@ struct CodeView: View {
     var body: some View {
         VStack {
             headerView
-            if let highlighted = highlightedCode {
-                
-                let finalAttributedString = searchText == "" ? highlighted : applySearchHighlighting(to: highlighted)
-                SelectableRichText(finalAttributedString)
-                    .padding([.horizontal, .bottom], 12)
-            }
-            else {
-                Text(code)
-                    .textSelection(.enabled)
-                    .padding([.horizontal, .bottom], 12)
-                    .font(.custom(codeFont, size: chatFontSize - 1))
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
+            SelectableRichText(displayedCode)
+                .padding([.horizontal, .bottom], 12)
         }
         .background(codeBackground)
         .clipShape(RoundedRectangle(cornerRadius: 8.0))
         .onChange(of: colorScheme) { _, newScheme in
             updateHighlightedCode(colorScheme: newScheme)
         }
-        .onChange(of: code) { _, code in
-            if isStreaming {
-                print("Code changed: \(code)")
-                updateHighlightedCode(colorScheme: colorScheme, code: code)
-            }
+        .onChange(of: code) { _, _ in
+            updateHighlightedCode(colorScheme: colorScheme)
         }
-        .onChange(of: highlightedCode) {
+        .onChange(of: lang) { _, _ in
+            updateHighlightedCode(colorScheme: colorScheme)
+        }
+        .onChange(of: isStreaming) { _, _ in
+            updateHighlightedCode(colorScheme: colorScheme)
+        }
+        .onChange(of: viewModel.highlightedCode) {
             if !isRendered {
                 isRendered = true
                 NotificationCenter.default.post(
@@ -91,6 +82,11 @@ struct CodeView: View {
             HighlighterManager.shared.invalidateCache()
             updateHighlightedCode(colorScheme: colorScheme)
         }
+    }
+
+    private var displayedCode: NSAttributedString {
+        guard !searchText.isEmpty else { return viewModel.highlightedCode }
+        return applySearchHighlighting(to: viewModel.highlightedCode)
     }
 
     private var headerView: some View {
@@ -143,14 +139,13 @@ struct CodeView: View {
         colorScheme == .dark ? Color(red: 0.15, green: 0.15, blue: 0.15) : Color(red: 0.96, green: 0.96, blue: 0.96)
     }
 
-    private func updateHighlightedCode(colorScheme: ColorScheme, code: String = "") {
-        DispatchQueue.main.async {
-            if code != "" {
-                viewModel.code = code
-            }
-            viewModel.updateHighlighting(colorScheme: colorScheme)
-            highlightedCode = viewModel.highlightedCode
-        }
+    private func updateHighlightedCode(colorScheme: ColorScheme) {
+        viewModel.updateSource(
+            code: code,
+            language: lang,
+            isStreaming: isStreaming
+        )
+        viewModel.updateHighlighting(colorScheme: colorScheme)
     }
     
     private func applySearchHighlighting(to attributedString: NSAttributedString) -> NSAttributedString {

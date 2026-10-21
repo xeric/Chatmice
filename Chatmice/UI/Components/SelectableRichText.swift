@@ -47,16 +47,27 @@ struct SelectableRichText: NSViewRepresentable {
 }
 
 final class SelectableRichTextView: NSTextView {
-    private var measuredWidth: CGFloat?
-    private var cachedSize: CGSize?
+    // Share the text storage, not the layout: SwiftUI's width probes must never reflow the drawing container.
+    private let measurementManager = NSLayoutManager()
+    private let measurementContainer = NSTextContainer(containerSize: .zero)
+    private var measuredSizes: [CGFloat: CGSize] = [:]
+    private var immutableContent: NSAttributedString?
 
     init() {
         let storage = NSTextStorage()
         let manager = NSLayoutManager()
+        manager.allowsNonContiguousLayout = true
+        manager.backgroundLayoutEnabled = false
         let container = NSTextContainer(containerSize: .zero)
         storage.addLayoutManager(manager)
         manager.addTextContainer(container)
         super.init(frame: .zero, textContainer: container)
+        storage.addLayoutManager(measurementManager)
+        measurementManager.addTextContainer(measurementContainer)
+        measurementManager.backgroundLayoutEnabled = false
+        measurementContainer.lineFragmentPadding = 0
+        measurementContainer.widthTracksTextView = false
+        measurementContainer.heightTracksTextView = false
         drawsBackground = false
         isEditable = false
         isSelectable = true
@@ -76,14 +87,7 @@ final class SelectableRichTextView: NSTextView {
         guard newSize.width > 0, let container = textContainer,
               container.containerSize.width != newSize.width else { return }
         container.containerSize = CGSize(width: newSize.width, height: .greatestFiniteMagnitude)
-        measuredWidth = nil
-        cachedSize = nil
-        layoutManager?.ensureLayout(for: container)
-    }
-    override func layout() {
-        super.layout()
-        guard bounds.width > 0, let container = textContainer else { return }
-        container.containerSize = CGSize(width: bounds.width, height: .greatestFiniteMagnitude)
+        // Pay for the real drawing width once during layout, not when scrolling first reveals a paragraph.
         layoutManager?.ensureLayout(for: container)
     }
 
@@ -91,7 +95,9 @@ final class SelectableRichTextView: NSTextView {
 
     func setContent(_ text: NSAttributedString, lineLimit: Int = 0, lineBreakMode: NSLineBreakMode = .byWordWrapping) {
         guard let storage = textStorage, let container = textContainer else { return }
-        if !storage.isEqual(to: text) {
+        var drawingLayoutChanged = false
+        let unchangedIdentity = immutableContent === text && !(text is NSMutableAttributedString)
+        if !unchangedIdentity && !storage.isEqual(to: text) {
             let ranges = selectedRanges
             storage.setAttributedString(text)
             selectedRanges = ranges.map { value in
@@ -99,31 +105,40 @@ final class SelectableRichTextView: NSTextView {
                 let location = min(range.location, storage.length)
                 return NSValue(range: NSRange(location: location, length: min(range.length, storage.length - location)))
             }
-            cachedSize = nil
+            measuredSizes.removeAll(keepingCapacity: true)
+            drawingLayoutChanged = true
         }
+        immutableContent = text is NSMutableAttributedString ? nil : text
         if container.maximumNumberOfLines != lineLimit || container.lineBreakMode != lineBreakMode {
             container.maximumNumberOfLines = lineLimit
             container.lineBreakMode = lineBreakMode
-            cachedSize = nil
+            measurementContainer.maximumNumberOfLines = lineLimit
+            measurementContainer.lineBreakMode = lineBreakMode
+            measuredSizes.removeAll(keepingCapacity: true)
+            drawingLayoutChanged = true
+        }
+        if drawingLayoutChanged {
+            invalidateIntrinsicContentSize()
+            needsLayout = true
+            needsDisplay = true
+            if bounds.width > 0 {
+                layoutManager?.ensureLayout(for: container)
+            }
         }
     }
 
     func measuredSize(for proposedWidth: CGFloat?) -> CGSize {
         let width = proposedWidth.flatMap { $0.isFinite ? max(0, $0) : nil } ?? CGFloat.greatestFiniteMagnitude
-        guard width > 0, let container = textContainer, let manager = layoutManager else { return .zero }
-        if measuredWidth == width, let cachedSize { return cachedSize }
-        defer {
-            let drawingWidth = bounds.width > 0 ? bounds.width : width
-            container.containerSize = CGSize(width: drawingWidth, height: .greatestFiniteMagnitude)
-            manager.ensureLayout(for: container)
-        }
-        container.containerSize = CGSize(width: width, height: .greatestFiniteMagnitude)
-        manager.ensureLayout(for: container)
-        let used = manager.usedRect(for: container)
-        let height = string.isEmpty ? 0 : ceil(max(used.maxY, manager.extraLineFragmentRect.maxY))
+        guard width > 0 else { return .zero }
+        if let size = measuredSizes[width] { return size }
+        measurementContainer.containerSize = CGSize(width: width, height: .greatestFiniteMagnitude)
+        measurementManager.ensureLayout(for: measurementContainer)
+        let used = measurementManager.usedRect(for: measurementContainer)
+        let height = string.isEmpty ? 0 : ceil(max(used.maxY, measurementManager.extraLineFragmentRect.maxY))
         let size = CGSize(width: width == .greatestFiniteMagnitude ? ceil(used.maxX) : width, height: height)
-        measuredWidth = width
-        cachedSize = size
+        // A resize can propose arbitrarily many widths; retain only a small working set per text view.
+        if measuredSizes.count == 8 { measuredSizes.removeAll(keepingCapacity: true) }
+        measuredSizes[width] = size
         return size
     }
 }

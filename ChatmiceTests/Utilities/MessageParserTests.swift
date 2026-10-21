@@ -57,8 +57,9 @@ class MessageParserTests: XCTestCase {
         }
 
         switch result[1] {
-        case .table(let header, let data):
+        case .table(let header, let alignments, let data):
             XCTAssertEqual(header, ["Column 1", "Column 2"])
+            XCTAssertEqual(alignments, [.leading, .leading])
             XCTAssertEqual(data, [["Value 1", "Value 2"], ["Value 3", "Value 4"]])
         default:
             XCTFail("Expected .table element")
@@ -158,8 +159,9 @@ class MessageParserTests: XCTestCase {
         XCTAssertEqual(result.count, 11)
 
         switch result[1] {
-        case .table(let header, let data):
+        case .table(let header, let alignments, let data):
             XCTAssertEqual(header, ["Column 1", "Column 2"])
+            XCTAssertEqual(alignments, [.leading, .leading])
             XCTAssertEqual(data, [["Value 1", "Value 2"], ["Value 3", "Value 4"]])
         default:
             XCTFail("Expected .table element")
@@ -178,16 +180,18 @@ class MessageParserTests: XCTestCase {
         }
 
         switch result[5] {
-        case .table(let header, let data):
+        case .table(let header, let alignments, let data):
             XCTAssertEqual(header, ["Column 1", "Column 2"])
+            XCTAssertEqual(alignments, [.leading, .leading])
             XCTAssertEqual(data, [["Value 1", "Value 2"], ["Value 3", "Value 4"]])
         default:
             XCTFail("Expected .table element")
         }
 
         switch result[7] {
-        case .table(let header, let data):
+        case .table(let header, let alignments, let data):
             XCTAssertEqual(header, ["Column 1", "Column 2"])
+            XCTAssertEqual(alignments, [.leading, .leading])
             XCTAssertEqual(data, [["Value 1", "Value 2"], ["Value 3", "Value 4"]])
         default:
             XCTFail("Expected .table element")
@@ -208,12 +212,106 @@ class MessageParserTests: XCTestCase {
         }
 
         switch result[9] {
-        case .table(let header, let data):
+        case .table(let header, let alignments, let data):
             XCTAssertEqual(header, ["Column 1", "Column 2"])
+            XCTAssertEqual(alignments, [.leading, .leading])
             XCTAssertEqual(data, [["Value 1", "Value 2"], ["Value 3", "Value 4"]])
         default:
             XCTFail("Expected .table element")
         }
+    }
+
+    func testParseGFMTableAlignmentEscapedPipesAndOptionalOuterPipes() {
+        let input = """
+            Name | Role | Notes
+            :--- | :---: | ---:
+            **Alice** | `Developer` | A \\| B
+            Bob | Designer |
+            """
+
+        let result = parser.parseMessageFromString(input: input)
+
+        XCTAssertEqual(result.count, 1)
+        guard case .table(let header, let alignments, let data) = result[0] else {
+            return XCTFail("Expected .table element")
+        }
+        XCTAssertEqual(header, ["Name", "Role", "Notes"])
+        XCTAssertEqual(alignments, [.leading, .center, .trailing])
+        XCTAssertEqual(
+            data,
+            [
+                ["**Alice**", "`Developer`", "A | B"],
+                ["Bob", "Designer", ""],
+            ]
+        )
+    }
+
+    func testPipeSeparatedProseWithoutDelimiterRemainsText() {
+        let input = "This | is prose\nwithout a delimiter"
+
+        let result = parser.parseMessageFromString(input: input)
+
+        guard result.count == 1, case .text(let text) = result[0] else {
+            return XCTFail("Expected plain text")
+        }
+        XCTAssertEqual(text, input)
+    }
+
+    func testReferenceLinksAndFootnotesArePreprocessedOutsideCodeSpans() {
+        let input = """
+            See [Example][site], [site], and `raw [site]` with a note[^note].
+
+            [site]: https://example.com "Example title"
+            [^note]: Footnote with **formatting**.
+            """
+
+        let result = parser.parseMessageFromString(input: input)
+
+        guard case .text(let text) = result.first else {
+            return XCTFail("Expected rendered text")
+        }
+        XCTAssertTrue(text.contains("[Example](<https://example.com> \"Example title\")"))
+        XCTAssertTrue(text.contains("[site](<https://example.com> \"Example title\")"))
+        XCTAssertTrue(text.contains("`raw [site]`"))
+        XCTAssertTrue(text.contains("[¹](chatmice-footnote:1 \"Footnote with **formatting**.\")"))
+        XCTAssertFalse(text.contains("[site]:"))
+
+        guard case .footnotes(let footnotes) = result.last else {
+            return XCTFail("Expected footnote block")
+        }
+        XCTAssertEqual(
+            footnotes,
+            [MarkdownFootnote(index: 1, identifier: "note", text: "Footnote with **formatting**.")]
+        )
+    }
+
+    func testHorizontalRulesAndDollarDisplayMathBecomeBlocks() {
+        let input = """
+            Before
+
+            ---
+
+            After
+
+            $$
+            x^2 + y^2
+            $$
+
+            $$z = 1$$
+            """
+
+        let result = parser.parseMessageFromString(input: input)
+        let rules = result.filter { element in
+            if case .horizontalRule = element { return true }
+            return false
+        }
+        let formulas = result.compactMap { element -> String? in
+            if case .formula(let formula) = element { return formula }
+            return nil
+        }
+
+        XCTAssertEqual(rules.count, 1)
+        XCTAssertEqual(formulas, ["x^2 + y^2", "z = 1"])
     }
 
     func testParseMessageFromStringMathEquation() {

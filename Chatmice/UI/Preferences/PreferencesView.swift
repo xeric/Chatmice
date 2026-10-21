@@ -148,6 +148,7 @@ struct PreferencesView: View {
             .padding(.horizontal, 24)
             .padding(.top, 14)
             .padding(.bottom, 28)
+            .background(ThinScrollbarConfiguration().allowsHitTesting(false))
         }
     }
 

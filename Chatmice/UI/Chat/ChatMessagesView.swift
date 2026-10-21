@@ -30,6 +30,72 @@ struct ChatScrollFollowState {
     }
 }
 
+// Scroll state changes must not reconstruct every historical message at the start of a wheel gesture.
+private struct ChatMessageScrollView<Content: View>: View {
+    let chatID: UUID
+    let waitingForResponse: Bool
+    let searchOccurrence: SearchOccurrence?
+    let content: Content
+    @State private var scrollPosition = ScrollPosition(edge: .bottom)
+    @State private var scrollFollow = ChatScrollFollowState()
+
+    private struct ScrollExtent: Equatable {
+        let contentSize: CGSize
+        let containerSize: CGSize
+    }
+
+    init(chatID: UUID, waitingForResponse: Bool, searchOccurrence: SearchOccurrence?, @ViewBuilder content: () -> Content) {
+        self.chatID = chatID
+        self.waitingForResponse = waitingForResponse
+        self.searchOccurrence = searchOccurrence
+        self.content = content()
+    }
+
+    var body: some View {
+        ScrollViewReader { proxy in
+            ScrollView { content }
+                .defaultScrollAnchor(.bottom, for: .initialOffset)
+                .defaultScrollAnchor(.bottom, for: .alignment)
+                // Changing this trait on a wheel gesture invalidates the entire content layout.
+                // Follow measured size changes instead; neither offsets nor wheel events trigger this callback.
+                .defaultScrollAnchor(nil, for: .sizeChanges)
+                .scrollPosition($scrollPosition)
+                .onScrollGeometryChange(for: ScrollExtent.self, of: {
+                    ScrollExtent(contentSize: $0.contentSize, containerSize: $0.containerSize)
+                }) { _, _ in
+                    if scrollFollow.followsBottom { scrollPosition.scrollTo(edge: .bottom) }
+                }
+                .onScrollPhaseChange { oldPhase, newPhase, context in
+                    var intent = scrollFollow
+                    intent.phaseChanged(
+                        from: oldPhase, to: newPhase,
+                        distanceFromBottom: context.geometry.contentSize.height - context.geometry.visibleRect.maxY
+                    )
+                    if intent.followsBottom != scrollFollow.followsBottom { scrollFollow = intent }
+                }
+                .onChange(of: searchOccurrence) { _, occurrence in
+                    guard let occurrence else { return }
+                    scrollFollow.detach()
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                        let messageID = occurrence.messageID.uriRepresentation().absoluteString
+                        proxy.scrollTo("\(messageID)_element_\(occurrence.elementIndex)", anchor: .center)
+                    }
+                }
+                .onChange(of: waitingForResponse) { _, waiting in
+                    if waiting {
+                        scrollFollow.followLatest()
+                        scrollPosition.scrollTo(edge: .bottom)
+                    }
+                }
+                .onChange(of: chatID) {
+                    scrollFollow.followLatest()
+                    scrollPosition.scrollTo(edge: .bottom)
+                }
+        }
+        .padding(.bottom, 6)
+    }
+}
+
 struct ChatMessagesView: View {
     @ObservedObject var chat: ChatEntity
     @ObservedObject var chatViewModel: ChatViewModel
@@ -42,8 +108,6 @@ struct ChatMessagesView: View {
     let activeReasoningMessageID: NSManagedObjectID?
     @ObservedObject private var activityStore = ChatActivityStore.shared
     @ObservedObject private var streamingResponseStore = StreamingResponseStore.shared
-    @State private var scrollPosition = ScrollPosition(edge: .bottom)
-    @State private var scrollFollow = ChatScrollFollowState()
 
 
     private var liveResponse: String? {
@@ -71,7 +135,8 @@ struct ChatMessagesView: View {
     }
 
     var body: some View {
-        ScrollView {
+        ChatMessageScrollView(chatID: chat.id, waitingForResponse: chat.waitingForResponse,
+                              searchOccurrence: chatViewModel.currentSearchOccurrence) {
             VStack {
                     SystemMessageBubbleView(
                         message: chat.systemMessage,
@@ -142,40 +207,8 @@ struct ChatMessagesView: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(24)
-                .onChange(of: chatViewModel.currentSearchOccurrence) { _, newOccurrence in
-                    if let occurrence = newOccurrence {
-                        scrollFollow.detach()
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                            let messageIDString = occurrence.messageID.uriRepresentation().absoluteString
-                            let elementID = "\(messageIDString)_element_\(occurrence.elementIndex)"
-                            scrollPosition.scrollTo(id: elementID, anchor: .center)
-                        }
-                    }
-                }
+                .background(ThinScrollbarConfiguration().allowsHitTesting(false))
         }
-        .defaultScrollAnchor(.bottom, for: .initialOffset)
-        .defaultScrollAnchor(.bottom, for: .alignment)
-        // Use measured message heights: lazy estimates can place the viewport several pages past visible content.
-        .defaultScrollAnchor(scrollFollow.followsBottom ? .bottom : nil, for: .sizeChanges)
-        .scrollPosition($scrollPosition)
-        .onScrollPhaseChange { oldPhase, newPhase, context in
-            scrollFollow.phaseChanged(
-                from: oldPhase,
-                to: newPhase,
-                distanceFromBottom: context.geometry.contentSize.height - context.geometry.visibleRect.maxY
-            )
-        }
-        .onChange(of: chat.waitingForResponse) { _, waiting in
-            if waiting {
-                scrollFollow.followLatest()
-                scrollPosition.scrollTo(edge: .bottom)
-            }
-        }
-        .onChange(of: chat.id) {
-            scrollFollow.followLatest()
-            scrollPosition.scrollTo(edge: .bottom)
-        }
-        .padding(.bottom, 6)
     }
 
 

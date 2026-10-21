@@ -10,7 +10,7 @@ import Foundation
 import SwiftUI
 
 extension ChatFontWeightPreference {
-    fileprivate var swiftUIFontWeight: Font.Weight {
+    fileprivate var tableNSFontWeight: NSFont.Weight {
         switch self {
         case .light: .light
         case .regular: .regular
@@ -18,7 +18,7 @@ extension ChatFontWeightPreference {
         }
     }
 
-    fileprivate var emphasizedSwiftUIFontWeight: Font.Weight {
+    fileprivate var emphasizedTableNSFontWeight: NSFont.Weight {
         switch self {
         case .light: .regular
         case .regular: .medium
@@ -27,12 +27,146 @@ extension ChatFontWeightPreference {
     }
 }
 
+extension MarkdownTableAlignment {
+    fileprivate var textAlignment: TextAlignment {
+        switch self {
+        case .leading: .leading
+        case .center: .center
+        case .trailing: .trailing
+        }
+    }
+
+    fileprivate var frameAlignment: Alignment {
+        switch self {
+        case .leading: .leading
+        case .center: .center
+        case .trailing: .trailing
+        }
+    }
+}
+
+private struct MarkdownTableCellText: View {
+    let source: String
+    let searchText: String
+    let message: MessageEntity?
+    let currentSearchOccurrence: SearchOccurrence?
+    let elementIndex: Int
+    let cellPosition: Int
+    let fontSize: CGFloat
+    let baseWeight: NSFont.Weight
+    let emphasizedWeight: NSFont.Weight
+    let alignment: MarkdownTableAlignment
+
+    private func renderedText() -> (text: AttributedString, title: String?) {
+        let options = AttributedString.MarkdownParsingOptions(
+            interpretedSyntax: .inlineOnlyPreservingWhitespace
+        )
+        let parsed =
+            (try? NSAttributedString(markdown: source, options: options))
+            ?? NSAttributedString(string: source)
+        let result = NSMutableAttributedString(attributedString: parsed)
+        let fullRange = NSRange(location: 0, length: result.length)
+        result.addAttribute(
+            .font,
+            value: NSFont.systemFont(ofSize: fontSize, weight: baseWeight),
+            range: fullRange
+        )
+
+        result.enumerateAttribute(.inlinePresentationIntent, in: fullRange) { value, range, _ in
+            guard let rawValue = value as? Int else { return }
+            let intent = InlinePresentationIntent(rawValue: UInt(rawValue))
+            if intent.contains(.code) {
+                result.addAttribute(
+                    .font,
+                    value: NSFont.monospacedSystemFont(ofSize: max(fontSize - 0.5, 10), weight: baseWeight),
+                    range: range
+                )
+            }
+            else {
+                let weight = intent.contains(.stronglyEmphasized) ? emphasizedWeight : baseWeight
+                var font = NSFont.systemFont(ofSize: fontSize, weight: weight)
+                if intent.contains(.emphasized) {
+                    font = NSFontManager.shared.convert(font, toHaveTrait: .italicFontMask)
+                }
+                result.addAttribute(.font, value: font, range: range)
+            }
+            if intent.contains(.strikethrough) {
+                result.addAttribute(
+                    .strikethroughStyle,
+                    value: NSUnderlineStyle.single.rawValue,
+                    range: range
+                )
+            }
+        }
+
+        MarkdownLinkTitleSupport.apply(to: result)
+        applySearchHighlights(to: result)
+        return (
+            AttributedString(result),
+            MarkdownLinkTitleSupport.firstTitle(in: result)
+        )
+    }
+
+    private func applySearchHighlights(to result: NSMutableAttributedString) {
+        guard !searchText.isEmpty, let messageID = message?.objectID else { return }
+        let rendered = result.string
+        var renderedStart = rendered.startIndex
+        var sourceStart = source.startIndex
+
+        while let renderedRange = rendered.range(
+            of: searchText,
+            options: .caseInsensitive,
+            range: renderedStart..<rendered.endIndex
+        ), let sourceRange = source.range(
+            of: searchText,
+            options: .caseInsensitive,
+            range: sourceStart..<source.endIndex
+        ) {
+            let sourceNSRange = NSRange(sourceRange, in: source)
+            let adjustedRange = NSRange(
+                location: sourceNSRange.location + cellPosition * 10_000,
+                length: sourceNSRange.length
+            )
+            let occurrence = SearchOccurrence(
+                messageID: messageID,
+                range: adjustedRange,
+                elementIndex: elementIndex,
+                elementType: "table"
+            )
+            let color = occurrence == currentSearchOccurrence
+                ? NSColor(Color(hex: AppConstants.currentHighlightColor) ?? .yellow)
+                : NSColor(Color(hex: AppConstants.defaultHighlightColor) ?? .gray).withAlphaComponent(0.3)
+            result.addAttribute(
+                .backgroundColor,
+                value: color,
+                range: NSRange(renderedRange, in: rendered)
+            )
+            renderedStart = renderedRange.upperBound
+            sourceStart = sourceRange.upperBound
+        }
+    }
+
+    @ViewBuilder
+    var body: some View {
+        let rendered = renderedText()
+        let text = Text(rendered.text)
+            .multilineTextAlignment(alignment.textAlignment)
+            .textSelection(.enabled)
+        if let title = rendered.title {
+            text.help(title)
+        }
+        else {
+            text
+        }
+    }
+}
+
 struct TableHeaderView: View {
     let header: [String]
+    let alignments: [MarkdownTableAlignment]
     @Binding var searchText: String
     var message: MessageEntity?
     var currentSearchOccurrence: SearchOccurrence?
-    var originalContent: String
     let elementIndex: Int
     @AppStorage("chatFontSize") private var chatFontSize: Double = 15.0
     @AppStorage("chatFontWeight") private var chatFontWeight = ChatFontWeightPreference.light.rawValue
@@ -44,25 +178,25 @@ struct TableHeaderView: View {
     var body: some View {
         HStack(spacing: 0) {
             ForEach(header.indices, id: \.self) { index in
-                HighlightedText(
-                    header[index],
-                    highlight: searchText,
+                let alignment = alignments.indices.contains(index) ? alignments[index] : .leading
+                MarkdownTableCellText(
+                    source: header[index],
+                    searchText: searchText,
                     message: message,
                     currentSearchOccurrence: currentSearchOccurrence,
-                    originalContent: originalContent,
                     elementIndex: elementIndex,
-                    elementType: "table",
-                    cellPosition: index
+                    cellPosition: index,
+                    fontSize: chatFontSize - 1,
+                    baseWeight: preferredFontWeight.emphasizedTableNSFontWeight,
+                    emphasizedWeight: .semibold,
+                    alignment: alignment
                 )
-                .font(.system(size: chatFontSize - 1, weight: preferredFontWeight.emphasizedSwiftUIFontWeight))
                 .foregroundStyle(Color.primary.opacity(0.82))
-                .tableCellStyle()
-                .textSelection(.enabled)
+                .tableCellStyle(alignment: alignment)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 6)
                 if index < header.count - 1 {
-                    Divider()
-                        .frame(maxHeight: .infinity)
+                    Divider().frame(maxHeight: .infinity)
                 }
             }
         }
@@ -73,10 +207,10 @@ struct TableHeaderView: View {
 struct TableRowView: View {
     let rowData: [String]
     let rowIndex: Int
+    let alignments: [MarkdownTableAlignment]
     @Binding var searchText: String
     var message: MessageEntity?
     var currentSearchOccurrence: SearchOccurrence?
-    var originalContent: String
     let elementIndex: Int
     @AppStorage("chatFontSize") private var chatFontSize: Double = 15.0
     @AppStorage("chatFontWeight") private var chatFontWeight = ChatFontWeightPreference.light.rawValue
@@ -87,27 +221,26 @@ struct TableRowView: View {
 
     var body: some View {
         HStack(spacing: 0) {
-            ForEach(0..<rowData.count, id: \.self) { columnIndex in
-                HighlightedText(
-                    rowData[columnIndex],
-                    highlight: searchText,
+            ForEach(rowData.indices, id: \.self) { columnIndex in
+                let alignment = alignments.indices.contains(columnIndex) ? alignments[columnIndex] : .leading
+                MarkdownTableCellText(
+                    source: rowData[columnIndex],
+                    searchText: searchText,
                     message: message,
                     currentSearchOccurrence: currentSearchOccurrence,
-                    originalContent: originalContent,
                     elementIndex: elementIndex,
-                    elementType: "table",
-                    cellPosition: (rowIndex + 1) * 1000 + columnIndex
+                    cellPosition: (rowIndex + 1) * 1000 + columnIndex,
+                    fontSize: chatFontSize - 1,
+                    baseWeight: preferredFontWeight.tableNSFontWeight,
+                    emphasizedWeight: preferredFontWeight.emphasizedTableNSFontWeight,
+                    alignment: alignment
                 )
-                .font(.system(size: chatFontSize - 1, weight: preferredFontWeight.swiftUIFontWeight))
                 .foregroundStyle(Color.primary.opacity(0.78))
-                .tableCellStyle()
+                .tableCellStyle(alignment: alignment)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 6)
-                .textSelection(.enabled)
-
                 if columnIndex < rowData.count - 1 {
-                    Divider()
-                        .frame(maxHeight: .infinity)
+                    Divider().frame(maxHeight: .infinity)
                 }
             }
         }
@@ -116,24 +249,26 @@ struct TableRowView: View {
 }
 
 private struct TableCellStyle: ViewModifier {
+    let alignment: MarkdownTableAlignment
+
     func body(content: Content) -> some View {
         content
-            .multilineTextAlignment(.leading)
             .lineLimit(nil)
             .fixedSize(horizontal: false, vertical: true)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(maxWidth: .infinity, alignment: alignment.frameAlignment)
             .layoutPriority(1)
     }
 }
 
 extension View {
-    fileprivate func tableCellStyle() -> some View {
-        modifier(TableCellStyle())
+    fileprivate func tableCellStyle(alignment: MarkdownTableAlignment) -> some View {
+        modifier(TableCellStyle(alignment: alignment))
     }
 }
 
 struct TableView: View {
     let header: [String]
+    let alignments: [MarkdownTableAlignment]
     let tableData: [[String]]
     @Binding var searchText: String
     var message: MessageEntity?
@@ -154,8 +289,8 @@ struct TableView: View {
     private func copyTableAsJSONToClipboard() {
         let tableDictArray = tableData.map { rowData -> [String: String] in
             var rowDict: [String: String] = [:]
-            for (index, value) in rowData.enumerated() {
-                rowDict[header[index]] = value
+            for index in header.indices {
+                rowDict[header[index]] = rowData.indices.contains(index) ? rowData[index] : ""
             }
             return rowDict
         }
@@ -178,8 +313,6 @@ struct TableView: View {
     }
 
     var body: some View {
-        let originalContent = message?.body ?? ""
-
         VStack {
             HStack {
                 Spacer()
@@ -222,10 +355,10 @@ struct TableView: View {
 
                 TableHeaderView(
                     header: header,
+                    alignments: alignments,
                     searchText: $searchText,
                     message: message,
                     currentSearchOccurrence: currentSearchOccurrence,
-                    originalContent: originalContent,
                     elementIndex: elementIndex
                 )
 
@@ -237,10 +370,10 @@ struct TableView: View {
                     TableRowView(
                         rowData: tableData[rowIndex],
                         rowIndex: rowIndex,
+                        alignments: alignments,
                         searchText: $searchText,
                         message: message,
                         currentSearchOccurrence: currentSearchOccurrence,
-                        originalContent: originalContent,
                         elementIndex: elementIndex
                     )
 

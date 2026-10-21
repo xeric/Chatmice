@@ -23,6 +23,8 @@ Icon
 dist/
 build/
 DerivedData/
+*.profraw
+*.profdata
 
 # Other common ignore patterns
 ##

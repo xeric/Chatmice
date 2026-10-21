@@ -337,7 +337,7 @@ class ChatViewModel: NSObject, ObservableObject, NSFetchedResultsControllerDeleg
                 let parsedElements = parser.parseMessageFromString(input: message.body)
                 
                 for (elementIndex, element) in parsedElements.enumerated() {
-                    if case .table(let header, let data) = element {
+                    if case .table(let header, _, let data) = element {
                         // Handle table elements specially to match HighlightedText behavior
                         // Search in header cells
                         for (columnIndex, headerCell) in header.enumerated() {
@@ -440,12 +440,16 @@ class ChatViewModel: NSObject, ObservableObject, NSFetchedResultsControllerDeleg
             return (content, "text")
         case .code(let code, _, _):
             return (code, "code")
-        case .table(let header, let data):
+        case .table(let header, _, let data):
             // Combine header and data for search
             let headerText = header.joined(separator: " ")
             let dataText = data.map { $0.joined(separator: " ") }.joined(separator: " ")
             let combinedText = headerText + " " + dataText
             return (combinedText, "table")
+        case .horizontalRule:
+            return ("", "horizontalRule")
+        case .footnotes(let footnotes):
+            return (footnotes.map(\.text).joined(separator: " "), "footnotes")
         case .formula(let content):
             return (content, "formula")
         case .thinking(let content, _):
