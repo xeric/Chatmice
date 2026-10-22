@@ -42,6 +42,18 @@ struct TabWebSearchSettingsView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
+                    Toggle(
+                        "Enable Search for New Chats",
+                        isOn: binding(\.searchEnabledByDefault)
+                    )
+                    .toggleStyle(.switch)
+                    .disabled(!settings.enabled)
+                    Text(
+                        "Turns search on when a chat is created. Web Search is selected when a search provider is enabled; otherwise Native Search is selected."
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
                     if settings.enabled {
                         Divider()
                         searchProviderPicker()

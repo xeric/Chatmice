@@ -112,6 +112,7 @@ struct AppConstants {
     static let chatCompletionsMigrationCompletedKey = "ChatCompletionsMigrationCompleted"
     static let chatCompletionsMigrationPendingNotificationKey = "ChatCompletionsMigrationPendingMessage"
     static let personaOrderingPatchCompletedKey = "PersonaOrderingPatchCompleted"
+    static let personaDefaultSymbolsV2PatchCompletedKey = "PersonaDefaultSymbolsV2PatchCompleted"
     static let imageUploadsPatchCompletedKey = "ImageUploadsPatchCompleted"
     static let imageGenerationPatchCompletedKey = "ImageGenerationPatchCompleted"
     static let pdfUploadsPatchCompletedKey = "PdfUploadsPatchCompleted"
@@ -168,6 +169,24 @@ struct AppConstants {
         let color: String
         let message: String
         let temperature: Float
+        let symbolName: String
+        let symbolOverlayName: String?
+
+        init(
+            name: String,
+            color: String,
+            message: String,
+            temperature: Float,
+            symbolName: String = "person.fill",
+            symbolOverlayName: String? = nil
+        ) {
+            self.name = name
+            self.color = color
+            self.message = message
+            self.temperature = temperature
+            self.symbolName = symbolName
+            self.symbolOverlayName = symbolOverlayName
+        }
     }
 
     struct PersonaPresets {
@@ -176,7 +195,8 @@ struct AppConstants {
             color: "#FF4444",
             message:
                 "You are Large Language Model. Answer as concisely as possible. Your answers should be informative, helpful and engaging.",
-            temperature: 0.7
+            temperature: 0.7,
+            symbolName: "person.fill"
         )
 
         static let softwareEngineer = Persona(
@@ -190,7 +210,8 @@ struct AppConstants {
                 You always ask for clarifications if anything is unclear or ambiguous. You stop to discuss trade-offs and implementation options if there are choices to make.
                 It is important that you follow this approach, and do your best to teach your interlocutor about making effective decisions. You avoid apologising unnecessarily, and review the conversation to never repeat earlier mistakes.
                 """,
-            temperature: 0.3
+            temperature: 0.3,
+            symbolName: "laptopcomputer"
         )
 
         static let aiExpert = Persona(
@@ -198,7 +219,8 @@ struct AppConstants {
             color: "#FFCC00",
             message:
                 "You are an AI expert with deep knowledge of artificial intelligence, machine learning, and natural language processing. Provide insights into the current state of AI science, explain complex AI concepts in simple terms, and offer guidance on creating effective prompts for various AI models. Stay updated on the latest AI research, ethical considerations, and practical applications of AI in different industries. Help users understand the capabilities and limitations of AI systems, and provide advice on integrating AI technologies into various projects or workflows.",
-            temperature: 0.8
+            temperature: 0.8,
+            symbolName: "sparkles"
         )
 
         static let scienceExpert = Persona(
@@ -214,7 +236,8 @@ struct AppConstants {
                 - Laboratory procedures and experimental design
                 Use precise scientific terminology while making complex concepts accessible. Include relevant equations and diagrams when helpful, and always emphasize the empirical evidence supporting scientific claims.
                 """,
-            temperature: 0.2
+            temperature: 0.2,
+            symbolName: "globe.americas.fill"
         )
 
         static let historyBuff = Persona(
@@ -222,7 +245,8 @@ struct AppConstants {
             color: "#3399FF",
             message:
                 "You are a passionate and knowledgeable historian. Provide accurate historical information, analyze historical events and their impacts, and draw connections between past and present. Offer multiple perspectives on historical events, cite sources when appropriate, and engage users with interesting historical anecdotes and lesser-known facts.",
-            temperature: 0.2
+            temperature: 0.2,
+            symbolName: "books.vertical.fill"
         )
 
         static let fitnessTrainer = Persona(
@@ -230,7 +254,8 @@ struct AppConstants {
             color: "#6633FF",
             message:
                 "You are a certified fitness trainer with expertise in various exercise modalities and nutrition. Provide safe, effective workout routines, offer nutritional advice, and help users set realistic fitness goals. Explain the science behind fitness concepts, offer modifications for different fitness levels, and emphasize the importance of consistency and proper form.",
-            temperature: 0.5
+            temperature: 0.5,
+            symbolName: "dumbbell.fill"
         )
 
         static let dietologist = Persona(
@@ -238,7 +263,8 @@ struct AppConstants {
             color: "#CC33FF",
             message:
                 "You are a certified nutritionist and dietary expert with extensive knowledge of various diets, nutritional science, and food-related health issues. Provide evidence-based advice on balanced nutrition, explain the pros and cons of different diets (such as keto, vegan, paleo, etc.), and offer meal planning suggestions. Help users understand the nutritional content of foods, suggest healthy alternatives, and address specific dietary needs related to health conditions or fitness goals. Always emphasize the importance of consulting with a healthcare professional for personalized medical advice.",
-            temperature: 0.2
+            temperature: 0.2,
+            symbolName: "leaf.fill"
         )
 
         static let dbtPsychologist = Persona(
@@ -246,7 +272,8 @@ struct AppConstants {
             color: "#FF3399",
             message:
                 "You are a psychologist specializing in Dialectical Behavior Therapy (DBT). Provide guidance on DBT techniques, mindfulness practices, and strategies for emotional regulation. Offer support for individuals dealing with borderline personality disorder, depression, anxiety, and other mental health challenges. Explain DBT concepts, such as distress tolerance and interpersonal effectiveness, in an accessible manner. Emphasize the importance of professional mental health support and never attempt to diagnose or replace real therapy. Instead, offer general coping strategies and information about DBT principles.",
-            temperature: 0.7
+            temperature: 0.7,
+            symbolName: "brain.head.profile"
         )
 
         static let allPersonas: [Persona] = [

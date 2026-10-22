@@ -11,11 +11,9 @@ import UniformTypeIdentifiers
 struct ChatInputView: View {
     @ObservedObject var chat: ChatEntity
     @Bindable var inputBuffer: ChatInputBuffer
-    @Binding var editSystemMessage: Bool
     @Binding var attachedImages: [ImageAttachment]
     @Binding var attachedFiles: [DocumentAttachment]
     @Binding var attachedAudio: DocumentAttachment?
-    @Binding var isBottomContainerExpanded: Bool
     let isInferenceInProgress: Bool
     
     let imageUploadsAllowed: Bool
@@ -26,42 +24,25 @@ struct ChatInputView: View {
     let onAddImage: () -> Void
     let onAddFile: () -> Void
     let onStopInference: () -> Void
-    let onCancelSystemMessageEdit: () -> Void
     let onTextSettled: () -> Void
     
-    @StateObject private var store = ChatStore(persistenceController: PersistenceController.shared)
     
     var body: some View {
         ChatBottomContainerView(
             chat: chat,
             inputBuffer: inputBuffer,
-            isExpanded: $isBottomContainerExpanded,
             attachedImages: $attachedImages,
             attachedFiles: $attachedFiles,
             attachedAudio: $attachedAudio,
             isInferenceInProgress: isInferenceInProgress,
-            isEditingSystemMessage: editSystemMessage,
             imageUploadsAllowed: imageUploadsAllowed,
             pdfUploadsAllowed: pdfUploadsAllowed,
             imageGenerationSupported: imageGenerationSupported,
             audioInputAllowed: audioInputAllowed,
-            onSendMessage: {
-                if editSystemMessage {
-                    chat.systemMessage = inputBuffer.text
-                    inputBuffer.text = ""
-                    editSystemMessage = false
-                    store.saveInCoreData()
-                }
-                else if !isInferenceInProgress,
-                        !inputBuffer.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                            || attachedAudio != nil {
-                    onSendMessage()
-                }
-            },
+            onSendMessage: onSendMessage,
             onAddImage: onAddImage,
             onAddFile: onAddFile,
             onStopInference: onStopInference,
-            onCancelEdit: onCancelSystemMessageEdit,
             onTextSettled: onTextSettled
         )
     }
@@ -71,11 +52,9 @@ struct ChatInputView: View {
     ChatInputView(
         chat: ChatEntity(),
         inputBuffer: ChatInputBuffer(text: "Test message"),
-        editSystemMessage: .constant(false),
         attachedImages: .constant([]),
         attachedFiles: .constant([]),
         attachedAudio: .constant(nil),
-        isBottomContainerExpanded: .constant(false),
         isInferenceInProgress: false,
         imageUploadsAllowed: true,
         pdfUploadsAllowed: true,
@@ -85,7 +64,6 @@ struct ChatInputView: View {
         onAddImage: {},
         onAddFile: {},
         onStopInference: {},
-        onCancelSystemMessageEdit: {},
         onTextSettled: {}
     )
 }

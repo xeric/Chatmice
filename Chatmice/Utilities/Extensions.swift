@@ -185,6 +185,7 @@ extension PersistenceController {
         persona.id = UUID()
         persona.name = "Assistant"
         persona.color = "#FF0000"
+        persona.symbolName = "person.fill"
         chat.persona = persona
 
         try? viewContext.save()

@@ -60,7 +60,8 @@ class ChatStore: ObservableObject {
             persona.name = "Default Assistant"
             persona.systemMessage = "You are a helpful AI assistant. Answer concisely and accurately."
             persona.temperature = 0.7
-            persona.color = "#007AFF"
+            persona.color = "#FF4444"
+            persona.symbolName = "person.fill"
         }
 
         // 2. Ensure Default Services exist & tokens are set in Keychain

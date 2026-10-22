@@ -117,13 +117,78 @@ struct WebSearchProviderConfig: Codable, Equatable, Sendable, Identifiable {
 }
 
 struct WebSearchSettings: Codable, Equatable, Sendable {
-    var enabled = false
-    var defaultSearchProvider: WebSearchProviderID? = .tavily
-    var defaultFetchProvider: WebSearchProviderID = .fetch
-    var maxResults = 5
-    var providers = WebSearchProviderID.allCases.map { WebSearchProviderConfig(id: $0) }
+    var enabled: Bool
+    var searchEnabledByDefault: Bool
+    var defaultSearchProvider: WebSearchProviderID?
+    var defaultFetchProvider: WebSearchProviderID
+    var maxResults: Int
+    var providers: [WebSearchProviderConfig]
 
     static let storageKey = "chatmiceWebSearchSettings"
+
+    init(
+        enabled: Bool = false,
+        searchEnabledByDefault: Bool = false,
+        defaultSearchProvider: WebSearchProviderID? = .tavily,
+        defaultFetchProvider: WebSearchProviderID = .fetch,
+        maxResults: Int = 5,
+        providers: [WebSearchProviderConfig] = WebSearchProviderID.allCases.map {
+            WebSearchProviderConfig(id: $0)
+        }
+    ) {
+        self.enabled = enabled
+        self.searchEnabledByDefault = searchEnabledByDefault
+        self.defaultSearchProvider = defaultSearchProvider
+        self.defaultFetchProvider = defaultFetchProvider
+        self.maxResults = maxResults
+        self.providers = providers
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case enabled
+        case searchEnabledByDefault
+        case defaultSearchProvider
+        case defaultFetchProvider
+        case maxResults
+        case providers
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        enabled = try container.decodeIfPresent(Bool.self, forKey: .enabled) ?? false
+        searchEnabledByDefault =
+            try container.decodeIfPresent(Bool.self, forKey: .searchEnabledByDefault) ?? false
+        if container.contains(.defaultSearchProvider) {
+            defaultSearchProvider = try container.decodeIfPresent(
+                WebSearchProviderID.self,
+                forKey: .defaultSearchProvider
+            )
+        }
+        else {
+            defaultSearchProvider = .tavily
+        }
+        defaultFetchProvider =
+            try container.decodeIfPresent(
+                WebSearchProviderID.self,
+                forKey: .defaultFetchProvider
+            ) ?? .fetch
+        maxResults = try container.decodeIfPresent(Int.self, forKey: .maxResults) ?? 5
+        providers =
+            try container.decodeIfPresent(
+                [WebSearchProviderConfig].self,
+                forKey: .providers
+            ) ?? WebSearchProviderID.allCases.map { WebSearchProviderConfig(id: $0) }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(enabled, forKey: .enabled)
+        try container.encode(searchEnabledByDefault, forKey: .searchEnabledByDefault)
+        try container.encode(defaultSearchProvider, forKey: .defaultSearchProvider)
+        try container.encode(defaultFetchProvider, forKey: .defaultFetchProvider)
+        try container.encode(maxResults, forKey: .maxResults)
+        try container.encode(providers, forKey: .providers)
+    }
 
     static func load() -> Self {
         guard let data = UserDefaults.standard.data(forKey: storageKey),
@@ -150,6 +215,11 @@ struct WebSearchSettings: Codable, Equatable, Sendable {
     var fetchAvailable: Bool {
         let config = provider(defaultFetchProvider)
         return enabled && config.enabled && defaultFetchProvider.supportsFetch
+    }
+
+    var defaultSearchModeForNewChat: SearchMode {
+        guard enabled, searchEnabledByDefault else { return .off }
+        return searchAvailable ? .web : .native
     }
 
     static func apiKey(for id: WebSearchProviderID) -> String {

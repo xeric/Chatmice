@@ -61,6 +61,8 @@ class DatabasePatcher {
 
     static func applyPatches(context: NSManagedObjectContext, persistence: PersistenceController) {
         addDefaultPersonasIfNeeded(context: context)
+        patchPersonaSymbols(context: context)
+        patchPersonaDefaultSymbolsV2(context: context, persistence: persistence)
         patchMissingIDs(context: context, persistence: persistence)
         compactOversizedToolActivitiesIfNeeded(context: context, persistence: persistence)
 
@@ -245,6 +247,8 @@ class DatabasePatcher {
                 newPersona.name = persona.name
                 newPersona.color = persona.color
                 newPersona.systemMessage = persona.message
+                newPersona.symbolName = persona.symbolName
+                newPersona.symbolOverlayName = persona.symbolOverlayName
                 newPersona.addedDate = Date()
                 newPersona.temperature = persona.temperature
                 newPersona.id = UUID()
@@ -259,6 +263,70 @@ class DatabasePatcher {
             catch {
                 print("Failed to add default assistants: \(error)")
             }
+        }
+    }
+
+    static func patchPersonaSymbols(context: NSManagedObjectContext) {
+        let request = NSFetchRequest<PersonaEntity>(entityName: "PersonaEntity")
+        guard let personas = try? context.fetch(request) else { return }
+        let presets = Dictionary(
+            uniqueKeysWithValues: AppConstants.PersonaPresets.allPersonas.map { ($0.name, $0) }
+        )
+        var changed = false
+
+        for persona in personas {
+            if let existingSymbol = persona.symbolName?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !existingSymbol.isEmpty {
+                continue
+            }
+            persona.symbolName = presets[persona.name ?? ""]?.symbolName ?? "person.fill"
+            persona.symbolOverlayName = presets[persona.name ?? ""]?.symbolOverlayName
+            changed = true
+        }
+
+        if changed {
+            try? context.save()
+        }
+    }
+
+    static func patchPersonaDefaultSymbolsV2(
+        context: NSManagedObjectContext,
+        persistence: PersistenceController
+    ) {
+        let patchKey = AppConstants.personaDefaultSymbolsV2PatchCompletedKey
+        guard persistence.getMetadata(forKey: patchKey) as? Bool != true else { return }
+
+        let request = NSFetchRequest<PersonaEntity>(entityName: "PersonaEntity")
+        guard let personas = try? context.fetch(request) else { return }
+        let presets = Dictionary(
+            uniqueKeysWithValues: AppConstants.PersonaPresets.allPersonas.map { ($0.name, $0) }
+        )
+        let previousGeneratedSymbols = [
+            "Default Assistant": "sparkles",
+            "AI Expert": "brain.head.profile",
+            "Natural Sciences Expert": "leaf.fill",
+            "Fitness Trainer": "figure.run",
+            "Dietologist": "fork.knife",
+            "DBT Psychologist": "heart.text.square.fill",
+        ]
+        var changed = false
+
+        for persona in personas {
+            guard let name = persona.name,
+                  let targetSymbol = presets[name]?.symbolName else { continue }
+            let currentSymbol = persona.symbolName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            guard currentSymbol.isEmpty || currentSymbol == previousGeneratedSymbols[name] else { continue }
+            guard currentSymbol != targetSymbol else { continue }
+            persona.symbolName = targetSymbol
+            changed = true
+        }
+
+        do {
+            if changed { try context.save() }
+            persistence.setMetadata(value: true, forKey: patchKey)
+        }
+        catch {
+            print("Failed to patch revised persona symbols: \(error)")
         }
     }
 

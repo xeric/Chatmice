@@ -25,37 +25,19 @@ struct TabAIPersonasView: View {
     @State private var personaToDelete: PersonaEntity?
 
     var body: some View {
-        VStack {
-            entityListView
-                .id(refreshID)
-
-            HStack(spacing: 20) {
-                if selectedPersonaID != nil {
-                    Button(action: onEdit) {
-                        Label("Edit", systemImage: "pencil")
-                    }
-                    .buttonStyle(BorderlessButtonStyle())
-                    .keyboardShortcut(.defaultAction)
-
-                    Button(action: {
-                        if let persona = personas.first(where: { $0.objectID == selectedPersonaID }) {
-                            personaToDelete = persona
-                            showingDeleteConfirmation = true
-                        }
-
-                    }) {
-                        Label("Delete", systemImage: "trash")
-                    }
-                    .buttonStyle(BorderlessButtonStyle())
-                }
-                Spacer()
-                if personas.count == 0 {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 12) {
+                if personas.isEmpty {
                     addPresetsButton
                 }
+                Spacer()
                 Button(action: onAdd) {
                     Label("Add New", systemImage: "plus")
                 }
             }
+
+            entityListView
+                .id(refreshID)
         }
         .frame(minHeight: 300)
         .onChange(of: selectedPersonaID) { _, id in
@@ -97,6 +79,8 @@ struct TabAIPersonasView: View {
             detailContent: detailContent,
             getEntityColor: getPersonaColor,
             getEntityName: getPersonaName,
+            getEntityIcon: getPersonaIcon,
+            getEntityOverlayIcon: getPersonaOverlayIcon,
             onEdit: {
                 if let persona = personas.first(where: { $0.objectID == selectedPersonaID }) {
                     selectedPersona = persona
@@ -131,29 +115,45 @@ struct TabAIPersonasView: View {
 
     private func detailContent(persona: PersonaEntity?) -> some View {
         Group {
-            if let persona = persona {
-                Text(persona.systemMessage ?? "")
+            if let persona {
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack(alignment: .top, spacing: 12) {
+                        PersonaIconView(persona: persona, size: 36)
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(persona.name ?? "Unnamed Assistant")
+                                .font(.headline)
+                            Text(persona.systemMessage ?? "")
+                                .foregroundStyle(.secondary)
+                                .lineLimit(4)
+                        }
+                    }
+
+                    HStack(spacing: 16) {
+                        Button(action: onEdit) {
+                            Label("Edit", systemImage: "pencil")
+                        }
+                        .buttonStyle(.borderless)
+                        .keyboardShortcut(.defaultAction)
+
+                        Button {
+                            requestDelete(persona)
+                        } label: {
+                            Label("Delete", systemImage: "trash")
+                        }
+                        .buttonStyle(.borderless)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
             else {
-                instructionText
+                Text("There are no assistants yet. Add one or restore the built-in presets above.")
             }
         }
     }
 
-    private var instructionText: some View {
-        Group {
-            if personas.count == 0 {
-                Text(
-                    "There are no assistants yet. Create one by clicking the 'Add New Assistant' button below or add assistants from presets."
-                )
-            }
-            else if personas.count == 1 {
-                Text("Select the only assistant above to edit it, or create a new one")
-            }
-            else {
-                Text("Select any of \(personas.count) assistants to edit or create a new one")
-            }
-        }
+    private func requestDelete(_ persona: PersonaEntity) {
+        personaToDelete = persona
+        showingDeleteConfirmation = true
     }
 
     private func onAdd() {
@@ -175,6 +175,14 @@ struct TabAIPersonasView: View {
         persona.name ?? "Unnamed Assistant"
     }
 
+    private func getPersonaIcon(persona: PersonaEntity) -> String? {
+        PersonaAppearance.symbolName(for: persona)
+    }
+
+    private func getPersonaOverlayIcon(persona: PersonaEntity) -> String? {
+        PersonaAppearance.overlaySymbolName(for: persona)
+    }
+
     private func refreshList() {
         refreshID = UUID()
     }
@@ -189,46 +197,81 @@ struct PersonaDetailView: View {
     let onDelete: () -> Void
 
     @State private var name: String = ""
-    @State private var color: Color = .white
+    @State private var color: Color = Color(hex: PersonaAppearance.defaultColor) ?? .red
     @State private var systemMessage: String = ""
     @State private var showingDeleteConfirmation = false
     @State private var temperature: Float = AppConstants.defaultPersonaTemperature
+    @State private var symbolName = PersonaAppearance.defaultSymbol
+    @State private var symbolOverlayName = ""
+    @State private var isSymbolOptionsExpanded = false
 
     var body: some View {
-        VStack(alignment: .leading) {
+        ScrollView {
+            VStack(alignment: .leading) {
 
-            HStack {
+            HStack(alignment: .center, spacing: 16) {
+                PersonaIconView(
+                    color: color,
+                    symbolName: symbolName,
+                    overlaySymbolName: symbolOverlayName.isEmpty ? nil : symbolOverlayName,
+                    size: 48
+                )
+
                 VStack(alignment: .leading) {
                     Text("Name:")
                     TextField("Enter AI Assistant name here", text: $name)
                 }
 
-                VStack {
+                VStack(alignment: .leading) {
                     Text("Color:")
-                    ColorPicker("", selection: $color)
-
+                    ColorPicker("Assistant color", selection: $color)
+                        .labelsHidden()
                 }
-
             }
             .padding(.top, 8)
 
+            Button {
+                withAnimation(.easeInOut(duration: 0.16)) {
+                    isSymbolOptionsExpanded.toggle()
+                }
+            } label: {
+                HStack(spacing: 7) {
+                    Image(systemName: "chevron.right")
+                        .font(.caption.weight(.semibold))
+                        .rotationEffect(.degrees(isSymbolOptionsExpanded ? 90 : 0))
+                    Text("Advanced SF Symbol & Composition")
+                    Spacer()
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .padding(.top, 8)
+
+            if isSymbolOptionsExpanded {
+                PersonaSymbolPicker(
+                    symbolName: $symbolName,
+                    overlaySymbolName: $symbolOverlayName
+                )
+                .padding(.top, 10)
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+
             VStack(alignment: .leading) {
                 Text("System message:")
-                MessageInputView(
-                    text: $systemMessage,
-                    attachedImages: .constant([]),
-                    attachedFiles: .constant([]),
-                    isInferenceInProgress: false,
-                    imageUploadsAllowed: false,
-                    pdfUploadsAllowed: false,
-                    imageGenerationSupported: false,
-                    onEnter: {},
-                    onAddImage: {},
-                    onAddFile: {},
-                    onStopInference: {},
-                    inputPlaceholderText: "Enter system message here",
-                    cornerRadius: 4
-                )
+                TextEditor(text: $systemMessage)
+                    .font(.system(size: 15))
+                    .foregroundStyle(Color.primary)
+                    .scrollContentBackground(.hidden)
+                    .padding(8)
+                    .frame(minHeight: 160, maxHeight: 160)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .fill(Color.primary.opacity(0.06))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                    .stroke(Color.primary.opacity(0.12), lineWidth: 1)
+                            )
+                    )
             }
             .padding(.top, 8)
 
@@ -256,33 +299,18 @@ struct PersonaDetailView: View {
             }
             .padding(.top, 8)
 
-            HStack {
-                if persona != nil {
-                    Button(action: {
-                        showingDeleteConfirmation = true
-                    }) {
-                        Label("Delete", systemImage: "trash")
-                            .foregroundColor(.red)
-                    }
-                }
-
-                Spacer()
-
-                Button("Cancel") {
-                    presentationMode.wrappedValue.dismiss()
-                }
-
-                Button(persona == nil ? "Create Assistant" : "Update Assistant") {
-                    savePersona()
-                    onSave()
-                }
-                .disabled(name.isEmpty || systemMessage.isEmpty)
-                .keyboardShortcut(.defaultAction)
-            }
-            .padding(.top, 16)
 
         }
         .padding()
+        }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            Divider()
+            personaEditorFooter
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+                .background(Color(nsColor: .windowBackgroundColor))
+        }
+        .frame(minWidth: 480, idealWidth: 520, minHeight: 620, idealHeight: 720)
         .onAppear {
             print(">> Assistant: \(persona?.name ?? "")")
             if let persona = persona {
@@ -290,6 +318,8 @@ struct PersonaDetailView: View {
                 color = Color(hex: persona.color ?? "#FFFFFF") ?? .white
                 systemMessage = persona.systemMessage ?? ""
                 temperature = persona.temperature
+                symbolName = PersonaAppearance.symbolName(for: persona)
+                symbolOverlayName = PersonaAppearance.overlaySymbolName(for: persona) ?? ""
             }
         }
         .alert(isPresented: $showingDeleteConfirmation) {
@@ -302,6 +332,32 @@ struct PersonaDetailView: View {
                 },
                 secondaryButton: .cancel()
             )
+        }
+    }
+
+    private var personaEditorFooter: some View {
+        HStack {
+            if persona != nil {
+                Button(action: {
+                    showingDeleteConfirmation = true
+                }) {
+                    Label("Delete", systemImage: "trash")
+                        .foregroundColor(.red)
+                }
+            }
+
+            Spacer()
+
+            Button("Cancel") {
+                presentationMode.wrappedValue.dismiss()
+            }
+
+            Button(persona == nil ? "Create Assistant" : "Update Assistant") {
+                savePersona()
+                onSave()
+            }
+            .disabled(name.isEmpty || systemMessage.isEmpty)
+            .keyboardShortcut(.defaultAction)
         }
     }
 
@@ -331,6 +387,14 @@ struct PersonaDetailView: View {
         personaToSave.color = color.toHex()
         personaToSave.temperature = round(temperature * 10) / 10
         personaToSave.systemMessage = systemMessage
+        personaToSave.symbolName = PersonaAppearance.validatedSymbol(
+            symbolName,
+            fallback: PersonaAppearance.defaultSymbol
+        )
+        let trimmedOverlay = symbolOverlayName.trimmingCharacters(in: .whitespacesAndNewlines)
+        personaToSave.symbolOverlayName = PersonaAppearance.isValidSymbol(trimmedOverlay)
+            ? trimmedOverlay
+            : nil
         if persona == nil {
             personaToSave.addedDate = Date()
             personaToSave.id = UUID()
@@ -358,6 +422,14 @@ struct PersonaDetailView: View {
             }
             catch {
                 print("Failed to obtain permanent ID for persona: \(error)")
+            }
+        }
+
+        let linkedChatsRequest = NSFetchRequest<ChatEntity>(entityName: "ChatEntity")
+        linkedChatsRequest.predicate = NSPredicate(format: "persona == %@", personaToSave)
+        if let linkedChats = try? viewContext.fetch(linkedChatsRequest) {
+            for chat in linkedChats {
+                chat.systemMessage = systemMessage
             }
         }
 

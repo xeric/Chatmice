@@ -9,12 +9,6 @@ import CoreData
 import SwiftUI
 
 struct MessageCell: View, Equatable {
-    static func assistantDisplayName(personaName: String?, showAssistantNameInSidebar: Bool) -> String? {
-        guard showAssistantNameInSidebar else {
-            return nil
-        }
-        return personaName ?? "No assistant selected"
-    }
 
     static func == (lhs: MessageCell, rhs: MessageCell) -> Bool {
         lhs.chatObjectID == rhs.chatObjectID &&
@@ -25,11 +19,15 @@ struct MessageCell: View, Equatable {
         lhs.$isActive.wrappedValue == rhs.$isActive.wrappedValue &&
         lhs.isPinned == rhs.isPinned &&
         lhs.searchText == rhs.searchText &&
-        lhs.showAssistantNameInSidebar == rhs.showAssistantNameInSidebar
+        lhs.personaColor == rhs.personaColor &&
+        lhs.personaSymbolName == rhs.personaSymbolName &&
+        lhs.personaOverlaySymbolName == rhs.personaOverlaySymbolName
     }
 
     let chatObjectID: NSManagedObjectID
-    let personaName: String?
+    let personaColor: String?
+    let personaSymbolName: String?
+    let personaOverlaySymbolName: String?
     let chatName: String
     @State var timestamp: Date
     var message: String
@@ -38,7 +36,6 @@ struct MessageCell: View, Equatable {
     let isPinned: Bool
     @Binding var isActive: Bool
     let searchText: String
-    @AppStorage("showAssistantNameInSidebar") private var showAssistantNameInSidebar: Bool = true
     @State private var isHovered = false
     @Environment(\.colorScheme) var colorScheme
 
@@ -60,16 +57,16 @@ struct MessageCell: View, Equatable {
         Button {
             isActive = true
         } label: {
-            HStack {
+            HStack(spacing: 8) {
+                PersonaIconView(
+                    color: Color(hex: personaColor ?? PersonaAppearance.defaultColor) ?? .red,
+                    symbolName: personaSymbolName ?? PersonaAppearance.defaultSymbol,
+                    overlaySymbolName: personaOverlaySymbolName,
+                    size: 22
+                )
+                .padding(.leading, 8)
+
                 VStack(alignment: .leading, spacing: 4) {
-                    if let assistantDisplayName = MessageCell.assistantDisplayName(
-                        personaName: personaName,
-                        showAssistantNameInSidebar: showAssistantNameInSidebar
-                    ) {
-                        HighlightedText(assistantDisplayName, highlight: searchText, elementType: "chatlist")
-                            .font(.caption)
-                            .lineLimit(1)
-                    }
 
                     if chatName != "" {
                         HighlightedText(chatName, highlight: searchText, elementType: "chatlist")
@@ -90,7 +87,7 @@ struct MessageCell: View, Equatable {
                         }
                     }
                 }
-                .padding(8)
+                .padding(.vertical, 6)
                 Spacer()
                 
                 HStack(spacing: 6) {
@@ -167,7 +164,9 @@ struct MessageCell_Previews: PreviewProvider {
         let chat = createPreviewChat(name: name, isPinned: isPinned)
         return MessageCell(
             chatObjectID: chat.objectID,
-            personaName: chat.persona?.name,
+            personaColor: chat.persona?.color,
+            personaSymbolName: chat.persona?.symbolName,
+            personaOverlaySymbolName: chat.persona?.symbolOverlayName,
             chatName: chat.name,
             timestamp: Date(),
             message: message,

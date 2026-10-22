@@ -30,11 +30,9 @@ struct ChatView: View {
     // UI State
     @State private var messageField = ""
     @State private var inputBuffer: ChatInputBuffer
-    @State private var editSystemMessage: Bool = false
     @State private var attachedImages: [ImageAttachment] = []
     @State private var attachedFiles: [DocumentAttachment] = []
     @State private var attachedAudio: DocumentAttachment?
-    @State private var isBottomContainerExpanded = false
     @State private var reasoningStartTimes: [NSManagedObjectID: Date] = [:]
     @State private var reasoningDurations: [NSManagedObjectID: TimeInterval] = [:]
     @State private var lastRequestStartTime: Date?
@@ -157,7 +155,6 @@ struct ChatView: View {
                 message: inputBuffer.text,
                 images: attachedImages,
                 files: attachedFiles,
-                isEditingSystemMessage: editSystemMessage
             )
         }
         .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("RecreateMessageManager"))) {
@@ -214,29 +211,11 @@ struct ChatView: View {
             chatViewModel.updateSearchOccurrences(searchText: newSearchText)
         }
         .onChange(of: attachmentDraftSignature) {
-            guard !editSystemMessage else { return }
             scheduleDraftSave()
-        }
-        .onChange(of: editSystemMessage) { _, isEditing in
-            if !isEditing, inputBuffer.text.isEmpty {
-                inputBuffer.text = draftManager.draftMessage(for: chat)
-            }
-        }
-        .onChange(of: chatViewModel.sortedMessages.count) { _, newCount in
-            if newCount == 1 {
-                withAnimation {
-                    isBottomContainerExpanded = false
-                }
-            }
         }
         .onChange(of: chat.lastMessage?.body) {
             guard let lastMessage = chat.lastMessage, !lastMessage.own else { return }
             updateReasoningTiming(for: lastMessage, isStreamingActive: logicHandler.isStreaming)
-        }
-        .onExitCommand {
-            if editSystemMessage {
-                cancelSystemMessageEdit()
-            }
         }
     }
 
@@ -244,8 +223,6 @@ struct ChatView: View {
         ChatMessagesView(
             chat: chat,
             chatViewModel: chatViewModel,
-            inputBuffer: inputBuffer,
-            editSystemMessage: $editSystemMessage,
             isStreaming: $logicHandler.isStreaming,
             currentError: $logicHandler.currentError,
             searchText: $searchText,
@@ -258,11 +235,9 @@ struct ChatView: View {
         ChatInputView(
             chat: chat,
             inputBuffer: inputBuffer,
-            editSystemMessage: $editSystemMessage,
             attachedImages: $attachedImages,
             attachedFiles: $attachedFiles,
             attachedAudio: $attachedAudio,
-            isBottomContainerExpanded: $isBottomContainerExpanded,
             isInferenceInProgress: isInferenceInProgress,
             imageUploadsAllowed: imageUploadsAllowed,
             pdfUploadsAllowed: pdfUploadsAllowed,
@@ -272,7 +247,6 @@ struct ChatView: View {
             onAddImage: handleAddImage,
             onAddFile: handleAddFile,
             onStopInference: handleStopInference,
-            onCancelSystemMessageEdit: cancelSystemMessageEdit,
             onTextSettled: scheduleDraftSave
         )
     }
@@ -322,7 +296,6 @@ struct ChatView: View {
                 message: inputBuffer.text,
                 images: attachedImages,
                 files: attachedFiles,
-                isEditingSystemMessage: editSystemMessage
             )
         }
 
@@ -334,8 +307,6 @@ struct ChatView: View {
         inputBuffer.text = draftSnapshot.message
         attachedImages = attachmentSnapshot.images
         attachedFiles = attachmentSnapshot.files
-        editSystemMessage = false
-        isBottomContainerExpanded = chat.messagesCount == 0
         searchText = ""
         resetReasoningTimingState()
     }
@@ -346,15 +317,9 @@ struct ChatView: View {
             messageProvider: { inputBuffer.text },
             imageProvider: { attachedImages },
             fileProvider: { attachedFiles },
-            isEditingSystemMessage: editSystemMessage
         )
     }
 
-    private func cancelSystemMessageEdit() {
-        guard editSystemMessage else { return }
-        inputBuffer.text = draftManager.draftMessage(for: chat)
-        editSystemMessage = false
-    }
 
     private func updateReasoningTiming(for message: MessageEntity, isStreamingActive: Bool) {
         let body = message.body

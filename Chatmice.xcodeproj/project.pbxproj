@@ -21,6 +21,7 @@
 		0BA0FF405FC14D3FABF82621 /* APIServiceTemplateProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3EA7767A135E47FFAB9E3289 /* APIServiceTemplateProvider.swift */; };
 		0E6BF47F5D74490F95504FF6 /* GeminiHandlerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1D1475CF2DC44692A9E47B9A /* GeminiHandlerTests.swift */; };
 		C1A0DE010000000000000001 /* ClaudeRequestCompatibilityTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1A0DE010000000000000002 /* ClaudeRequestCompatibilityTests.swift */; };
+		F0A5E0012026102200000001 /* WebSearchSettingsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0A5E0022026102200000002 /* WebSearchSettingsTests.swift */; };
 		0E7C2F2B3A4D4E5F9B8C7D6E /* MessageCellTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0E7C2F2A3A4D4E5F9B8C7D6E /* MessageCellTests.swift */; };
 		1001F81047D94F5484238553 /* APIServiceTemplateAddView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5774456B942348B88C536014 /* APIServiceTemplateAddView.swift */; };
 		1232C0D881FF38BE2677A446 /* BashExecutor.swift in Sources */ = {isa = PBXBuildFile; fileRef = F53F64CEBB6B8132C4B6225C /* BashExecutor.swift */; };
@@ -35,7 +36,6 @@
 		4A146A022F103E3E004249A2 /* DocumentAttachment.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A146A012F103E3E004249A2 /* DocumentAttachment.swift */; };
 		4A146A042F103E5E004249A2 /* AttachmentParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A146A032F103E5E004249A2 /* AttachmentParser.swift */; };
 		4A1614112D430AE300A1EF8D /* ThinkingProcessView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A1614102D430AE300A1EF8D /* ThinkingProcessView.swift */; };
-		4A1614132D46B9BA00A1EF8D /* SystemMessageBubbleView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A1614122D46B9BA00A1EF8D /* SystemMessageBubbleView.swift */; };
 		4A1614152D46C86800A1EF8D /* PersonaSelectorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A1614142D46C86800A1EF8D /* PersonaSelectorView.swift */; };
 		4A194C062C9633BC003C8782 /* EntityListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A194C052C9633BC003C8782 /* EntityListView.swift */; };
 		4A1E16852E16DB4500E5CBA3 /* ChatInputView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A1E16832E16DB4500E5CBA3 /* ChatInputView.swift */; };
@@ -192,6 +192,7 @@
 		16D75E6599084CC8A6C8587C /* APIServiceTemplateProviderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIServiceTemplateProviderTests.swift; sourceTree = "<group>"; };
 		1D1475CF2DC44692A9E47B9A /* GeminiHandlerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GeminiHandlerTests.swift; sourceTree = "<group>"; };
 		C1A0DE010000000000000002 /* ClaudeRequestCompatibilityTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeRequestCompatibilityTests.swift; sourceTree = "<group>"; };
+		F0A5E0022026102200000002 /* WebSearchSettingsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebSearchSettingsTests.swift; sourceTree = "<group>"; };
 		25B74289407745C983DD1294 /* APIServiceTemplateAddViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIServiceTemplateAddViewModel.swift; sourceTree = "<group>"; };
 		2C64AA5DC1942A285D46D9A8 /* ComputerUseTool.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComputerUseTool.swift; sourceTree = "<group>"; };
 		D4F100022F40000100F11E02 /* FileTools.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileTools.swift; sourceTree = "<group>"; };
@@ -203,7 +204,6 @@
 		4A146A012F103E3E004249A2 /* DocumentAttachment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DocumentAttachment.swift; sourceTree = "<group>"; };
 		4A146A032F103E5E004249A2 /* AttachmentParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AttachmentParser.swift; sourceTree = "<group>"; };
 		4A1614102D430AE300A1EF8D /* ThinkingProcessView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThinkingProcessView.swift; sourceTree = "<group>"; };
-		4A1614122D46B9BA00A1EF8D /* SystemMessageBubbleView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SystemMessageBubbleView.swift; sourceTree = "<group>"; };
 		4A1614142D46C86800A1EF8D /* PersonaSelectorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersonaSelectorView.swift; sourceTree = "<group>"; };
 		4A194C052C9633BC003C8782 /* EntityListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EntityListView.swift; sourceTree = "<group>"; };
 		4A1E16822E16DB4500E5CBA3 /* ChatLogicHandler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatLogicHandler.swift; sourceTree = "<group>"; };
@@ -227,6 +227,7 @@
 		4A366F622EEFFA5E00128E19 /* macaiDataModel 3.xcdatamodel */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcdatamodel; path = "macaiDataModel 3.xcdatamodel"; sourceTree = "<group>"; };
 		C4A700072026101100000007 /* macaiDataModel 4.xcdatamodel */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcdatamodel; path = "macaiDataModel 4.xcdatamodel"; sourceTree = "<group>"; };
 		D5B800012026101200000001 /* macaiDataModel 5.xcdatamodel */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcdatamodel; path = "macaiDataModel 5.xcdatamodel"; sourceTree = "<group>"; };
+		E6C900012026102100000001 /* macaiDataModel 6.xcdatamodel */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcdatamodel; path = "macaiDataModel 6.xcdatamodel"; sourceTree = "<group>"; };
 		4A37B8542C2A399800F36CC4 /* Credits.rtf */ = {isa = PBXFileReference; lastKnownFileType = text.rtf; path = Credits.rtf; sourceTree = "<group>"; };
 		4A399C9529BC8FEF00E98796 /* Chatmice.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Chatmice.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		4A399C9829BC8FEF00E98796 /* ChatmiceApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatmiceApp.swift; sourceTree = "<group>"; };
@@ -373,7 +374,6 @@
 			children = (
 				4A4918772D9F3C54007EB4A2 /* MessageContentView.swift */,
 				4A5F64B729C64E21000403F7 /* ChatBubbleView.swift */,
-				4A1614122D46B9BA00A1EF8D /* SystemMessageBubbleView.swift */,
 				4ABB867A2CFC79ED004EC7B1 /* ErrorBubbleView.swift */,
 				4A55DCA629C264BC00A3800C /* TableView.swift */,
 				4A471B872C29CD3D00C66926 /* AdaptiveMathView.swift */,
@@ -646,6 +646,7 @@
 				4ABDBE6A29F86E8D00661B2D /* MessageParserTests.swift */,
 				1D1475CF2DC44692A9E47B9A /* GeminiHandlerTests.swift */,
 				C1A0DE010000000000000002 /* ClaudeRequestCompatibilityTests.swift */,
+				F0A5E0022026102200000002 /* WebSearchSettingsTests.swift */,
 				7C2B9A4A2F1E4B1F00D1A111 /* DatabaseMigrationTests.swift */,
 				BEFF573F6F9A453BAFF2C3A5 /* PDFHandlingTests.swift */,
 			);
@@ -894,7 +895,6 @@
 				4A885C542CEA3D960018BBED /* PreviewStateManager.swift in Sources */,
 				4AA6EF5B2C565FDF003B6D41 /* APIServiceFactory.swift in Sources */,
 				4AA681C72D3DAB40005C4E6E /* ChatBottomContainerView.swift in Sources */,
-				4A1614132D46B9BA00A1EF8D /* SystemMessageBubbleView.swift in Sources */,
 				4AA6EF592C565F90003B6D41 /* APIServiceConfig.swift in Sources */,
 				4AADF71F2C9CE788001B7A26 /* ClaudeHandler.swift in Sources */,
 				4A27FF912DA1C43E0075D730 /* MessageInputView.swift in Sources */,
@@ -945,6 +945,7 @@
 				7CEEFA33B4C841A2AC2BFBA2 /* APIServiceTemplateProviderTests.swift in Sources */,
 				0E6BF47F5D74490F95504FF6 /* GeminiHandlerTests.swift in Sources */,
 				C1A0DE010000000000000001 /* ClaudeRequestCompatibilityTests.swift in Sources */,
+				F0A5E0012026102200000001 /* WebSearchSettingsTests.swift in Sources */,
 				7C2B9A4B2F1E4B1F00D1A111 /* DatabaseMigrationTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -1101,7 +1102,7 @@
 				CODE_SIGN_IDENTITY = "Apple Development";
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 11;
+				CURRENT_PROJECT_VERSION = 12;
 				DEVELOPMENT_TEAM = KJ5KHP7B96;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
@@ -1123,7 +1124,7 @@
 				LD_RUNPATH_SEARCH_PATHS = "@executable_path/Frameworks";
 				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = "@executable_path/../Frameworks";
 				MACOSX_DEPLOYMENT_TARGET = 15.0;
-				MARKETING_VERSION = 1.1.1;
+				MARKETING_VERSION = 1.1.2;
 				ONLY_ACTIVE_ARCH = YES;
 				PRODUCT_BUNDLE_IDENTIFIER = xeric.com.chatmice;
 				PRODUCT_NAME = Chatmice;
@@ -1147,7 +1148,7 @@
 				CODE_SIGN_IDENTITY = "Developer ID Application";
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Developer ID Application";
 				CODE_SIGN_STYLE = Manual;
-				CURRENT_PROJECT_VERSION = 11;
+				CURRENT_PROJECT_VERSION = 12;
 				DEVELOPMENT_TEAM = KJ5KHP7B96;
 				ENABLE_HARDENED_RUNTIME = YES;
 				MOMC_NO_INVERSE_RELATIONSHIP_WARNINGS = YES;
@@ -1171,7 +1172,7 @@
 				LD_RUNPATH_SEARCH_PATHS = "@executable_path/Frameworks";
 				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = "@executable_path/../Frameworks";
 				MACOSX_DEPLOYMENT_TARGET = 15.0;
-				MARKETING_VERSION = 1.1.1;
+				MARKETING_VERSION = 1.1.2;
 				ONLY_ACTIVE_ARCH = NO;
 				PRODUCT_BUNDLE_IDENTIFIER = xeric.com.chatmice;
 				PRODUCT_NAME = Chatmice;
@@ -1395,8 +1396,9 @@
 				4A366F622EEFFA5E00128E19 /* macaiDataModel 3.xcdatamodel */,
 				C4A700072026101100000007 /* macaiDataModel 4.xcdatamodel */,
 				D5B800012026101200000001 /* macaiDataModel 5.xcdatamodel */,
+				E6C900012026102100000001 /* macaiDataModel 6.xcdatamodel */,
 			);
-			currentVersion = D5B800012026101200000001 /* macaiDataModel 5.xcdatamodel */;
+			currentVersion = E6C900012026102100000001 /* macaiDataModel 6.xcdatamodel */;
 			path = macaiDataModel.xcdatamodeld;
 			sourceTree = "<group>";
 			versionGroupType = wrapper.xcdatamodel;

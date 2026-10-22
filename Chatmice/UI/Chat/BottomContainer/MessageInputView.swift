@@ -510,7 +510,6 @@ struct MessageInputView: View {
     @Binding var attachedFiles: [DocumentAttachment]
     @Binding var attachedAudio: DocumentAttachment?
     let isInferenceInProgress: Bool
-    let isEditingSystemMessage: Bool
     var imageUploadsAllowed: Bool
     var pdfUploadsAllowed: Bool
     var imageGenerationSupported: Bool
@@ -519,7 +518,6 @@ struct MessageInputView: View {
     var onAddImage: () -> Void
     var onAddFile: () -> Void
     var onStopInference: () -> Void
-    var onCancelEdit: () -> Void
     var onTextSettled: () -> Void
 
     private let frontReturnKeyType: ChatmiceTextField.ReturnKeyType = .next
@@ -572,7 +570,6 @@ struct MessageInputView: View {
     }
 
     private var mentionQuery: String? {
-        guard !isEditingSystemMessage else { return nil }
         if let selection = referenceSelection, selection.length == 0,
            referenceInputControl.referenceRanges(in: referenceEditingText ?? text).contains(where: {
                selection.location >= $0.location && selection.location <= NSMaxRange($0)
@@ -653,9 +650,6 @@ struct MessageInputView: View {
         .interpolatingSpring(stiffness: 240, damping: 14)
     }
 
-    private var shouldShowAccessoryButton: Bool {
-        isInferenceInProgress || isEditingSystemMessage
-    }
 
     private var attachmentButtonIcon: String? {
         switch (imageUploadsAllowed, pdfUploadsAllowed) {
@@ -670,15 +664,6 @@ struct MessageInputView: View {
         }
     }
 
-    private var accessoryButtonConfig:
-        (systemName: String, foregroundColor: Color, backgroundColor: Color, helpText: String, action: () -> Void)
-    {
-        if isInferenceInProgress {
-            return ("stop.fill", .blue, Color.blue.opacity(0.15), "Stop generating", onStopInference)
-        }
-        return ("xmark", .blue, Color.blue.opacity(0.15), "Cancel editing", onCancelEdit)
-    }
-
     enum Focus {
         case focused, notFocused
     }
@@ -690,7 +675,6 @@ struct MessageInputView: View {
         attachedFiles: Binding<[DocumentAttachment]>,
         attachedAudio: Binding<DocumentAttachment?> = .constant(nil),
         isInferenceInProgress: Bool,
-        isEditingSystemMessage: Bool = false,
         imageUploadsAllowed: Bool,
         pdfUploadsAllowed: Bool,
         imageGenerationSupported: Bool,
@@ -699,7 +683,6 @@ struct MessageInputView: View {
         onAddImage: @escaping () -> Void,
         onAddFile: @escaping () -> Void,
         onStopInference: @escaping () -> Void,
-        onCancelEdit: @escaping () -> Void = {},
         onTextSettled: @escaping () -> Void = {},
         inputPlaceholderText: String = "Type your prompt here",
         cornerRadius: Double = 20.0
@@ -709,7 +692,6 @@ struct MessageInputView: View {
         self._attachedImages = attachedImages
         self._attachedFiles = attachedFiles
         self.isInferenceInProgress = isInferenceInProgress
-        self.isEditingSystemMessage = isEditingSystemMessage
         self._attachedAudio = attachedAudio
         self.imageUploadsAllowed = imageUploadsAllowed
         self.pdfUploadsAllowed = pdfUploadsAllowed
@@ -719,7 +701,6 @@ struct MessageInputView: View {
         self.onAddImage = onAddImage
         self.onAddFile = onAddFile
         self.onStopInference = onStopInference
-        self.onCancelEdit = onCancelEdit
         self.onTextSettled = onTextSettled
         self.inputPlaceholderText = inputPlaceholderText
         self.cornerRadius = cornerRadius
@@ -1266,7 +1247,7 @@ struct MessageInputView: View {
                     fontSize: effectiveFontSize,
                     minHeight: 28,
                     maxHeight: maxInputHeight,
-                    onEscape: isEditingSystemMessage ? onCancelEdit : nil,
+                    onEscape: nil,
                     onTextSettled: onTextSettled,
                     onPasteImage: addPastedImage,
                     inputControl: referenceInputControl,
@@ -1305,7 +1286,7 @@ struct MessageInputView: View {
                 $0.hasItemConformingToTypeIdentifier(WorkspaceReferenceTransfer.pasteboardType.rawValue)
             }
             if !references.isEmpty {
-                guard !isEditingSystemMessage, let window = referenceInputControl.textView?.window else { return false }
+                guard let window = referenceInputControl.textView?.window else { return false }
                 for provider in references {
                     provider.loadDataRepresentation(forTypeIdentifier: WorkspaceReferenceTransfer.pasteboardType.rawValue) { data, _ in
                         guard let data, let path = String(data: data, encoding: .utf8) else { return }
@@ -1323,7 +1304,7 @@ struct MessageInputView: View {
             return handleDrop(providers: providers)
         }
         .onReceive(NotificationCenter.default.publisher(for: WorkspaceReferenceTransfer.notification)) { notification in
-            guard !isEditingSystemMessage, let editor = referenceInputControl.textView,
+            guard let editor = referenceInputControl.textView,
                   let sourceWindow = notification.object as? NSWindow, editor.window === sourceWindow,
                   let path = notification.userInfo?["path"] as? String,
                   let workspace = chat?.workspace else { return }

@@ -462,7 +462,6 @@ final class ChatmiceTests: XCTestCase {
         )
     }
 
-
     func testDatabaseBackupCopiesCurrentStoreFiles() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("chatmice-backup-test-\(UUID().uuidString)", isDirectory: true)

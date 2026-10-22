@@ -17,32 +17,29 @@ struct EntityListView<Entity: NSManagedObject & Identifiable, DetailContent: Vie
     let getEntityName: (Entity) -> String
     var getEntityDefault: (Entity) -> Bool = { _ in false }
     var getEntityIcon: (Entity) -> String? = { _ in nil }
+    var getEntityOverlayIcon: (Entity) -> String? = { _ in nil }
     let onEdit: (() -> Void)?
     let onMove: ((IndexSet, Int) -> Void)?
     @State private var draggedEntityID: NSManagedObjectID?
     @State private var dropTarget: (id: NSManagedObjectID, before: Bool)?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            VStack(spacing: 2) {
-                ForEach(entities, id: \.objectID) { entity in
-                    entityRow(for: entity)
-                }
+        VStack(alignment: .leading, spacing: 2) {
+            ForEach(entities, id: \.objectID) { entity in
+                entityRow(for: entity)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
 
-            HStack(alignment: .top) {
-                if let selectedEntity = entities.first(where: { $0.objectID == selectedEntityID }) {
-                    detailContent(selectedEntity)
-                }
-                else {
+            if entities.isEmpty {
+                HStack(alignment: .top) {
                     detailContent(nil)
                         .foregroundStyle(.secondary)
+                    Spacer(minLength: 0)
                 }
-                Spacer(minLength: 0)
+                .padding(.horizontal, 8)
             }
-            .padding(.horizontal, 8)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .animation(.easeInOut(duration: 0.16), value: selectedEntityID)
         .onDisappear {
             draggedEntityID = nil
             dropTarget = nil
@@ -56,6 +53,7 @@ struct EntityListView<Entity: NSManagedObject & Identifiable, DetailContent: Vie
             name: getEntityName(entity),
             defaultEntity: getEntityDefault(entity),
             icon: getEntityIcon(entity),
+            overlayIcon: getEntityOverlayIcon(entity),
             showDragHandle: onMove != nil
         )
         .contentShape(Rectangle())
@@ -97,6 +95,10 @@ struct EntityListView<Entity: NSManagedObject & Identifiable, DetailContent: Vie
                         )
                     }
                     .opacity(draggedEntityID == entity.objectID ? 0.6 : 1)
+                if selectedEntityID == entity.objectID {
+                    inlineDetail(for: entity)
+                        .transition(.opacity.combined(with: .move(edge: .top)))
+                }
                 if dropTarget?.id == entity.objectID, dropTarget?.before == false {
                     ReorderDropPlaceholder()
                 }
@@ -111,18 +113,44 @@ struct EntityListView<Entity: NSManagedObject & Identifiable, DetailContent: Vie
                 return moveEntity(withURI: draggedID, onto: entity)
             }, isTargeted: { targeted in
                 if targeted,
-                   let sourceIndex = entities.firstIndex(where: { $0.objectID == draggedEntityID }),
-                   let targetIndex = entities.firstIndex(where: { $0.objectID == entity.objectID }),
-                   sourceIndex != targetIndex {
+                    let sourceIndex = entities.firstIndex(where: { $0.objectID == draggedEntityID }),
+                    let targetIndex = entities.firstIndex(where: { $0.objectID == entity.objectID }),
+                    sourceIndex != targetIndex
+                {
                     dropTarget = (entity.objectID, sourceIndex > targetIndex)
-                } else if dropTarget?.id == entity.objectID {
+                }
+                else if dropTarget?.id == entity.objectID {
                     dropTarget = nil
                 }
             })
         }
         else {
-            row
+            VStack(spacing: 2) {
+                row
+                if selectedEntityID == entity.objectID {
+                    inlineDetail(for: entity)
+                        .transition(.opacity.combined(with: .move(edge: .top)))
+                }
+            }
         }
+    }
+
+    private func inlineDetail(for entity: Entity) -> some View {
+        HStack(alignment: .top) {
+            detailContent(entity)
+            Spacer(minLength: 0)
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(Color.primary.opacity(0.04))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .strokeBorder(Color.accentColor.opacity(0.35), lineWidth: 1)
+                )
+        )
+        .padding(.horizontal, 8)
+        .padding(.bottom, 4)
     }
 
     private func moveEntity(withURI draggedURI: String, onto target: Entity) -> Bool {
@@ -170,19 +198,20 @@ struct EntityRowView: View {
     let name: String
     let defaultEntity: Bool
     let icon: String?
+    let overlayIcon: String?
     let showDragHandle: Bool
 
     var body: some View {
         HStack(spacing: 8) {
-            if let icon = icon {
-                Image(icon)
-                    .resizable()
-                    .renderingMode(.template)
-                    .interpolation(.high)
-                    .antialiased(true)
-                    .frame(width: 12, height: 12)
+            if let icon {
+                PersonaIconView(
+                    color: color ?? .accentColor,
+                    symbolName: icon,
+                    overlaySymbolName: overlayIcon,
+                    size: 18
+                )
             }
-            if let color = color {
+            else if let color {
                 Circle()
                     .fill(color)
                     .frame(width: 12, height: 12)

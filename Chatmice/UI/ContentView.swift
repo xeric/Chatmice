@@ -106,6 +106,7 @@ struct ContentView: View {
     @State private var searchText = ""
     @State private var isSearchPresented = false
     @State private var isShowingModelPickerPopover = false
+    @State private var isShowingPersonaPickerPopover = false
     @State private var isCreatingWorkspace = false
     @State private var isFileBrowserVisible = false
     @FocusState private var isSearchFieldFocused: Bool
@@ -446,16 +447,43 @@ struct ContentView: View {
     }
 
     private var conversationTitle: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(conversationPresentation.displayedChat.map { $0.name.isEmpty ? ($0.persona?.name ?? "Chatmice") : $0.name } ?? "Chatmice")
-                .font(.system(size: 13, weight: .semibold))
-                .lineLimit(1)
+        HStack(spacing: 9) {
+            if let headerChat = conversationPresentation.displayedChat {
+                Button {
+                    isShowingPersonaPickerPopover.toggle()
+                } label: {
+                    PersonaIconView(persona: headerChat.persona, size: 28)
+                }
+                .buttonStyle(.plain)
+                .help("Choose Assistant")
+                .accessibilityLabel("Choose Assistant")
+                .accessibilityIdentifier("persona-selector-button")
+                .disabled(conversationPresentation.isLoading)
+                .popover(isPresented: $isShowingPersonaPickerPopover, arrowEdge: .bottom) {
+                    PersonaPickerPopoverView(
+                        personas: Array(personas),
+                        selectedPersona: headerChat.persona,
+                        onSelect: { persona in
+                            PersonaSelection.apply(persona, to: headerChat)
+                            isShowingPersonaPickerPopover = false
+                        }
+                    )
+                }
+            }
 
-            if let workspace = conversationPresentation.displayedChat?.workspace, !workspace.isTemporary {
-                ConversationWorkspacePath(workspace: workspace)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(conversationPresentation.displayedChat.map {
+                    $0.name.isEmpty ? ($0.persona?.name ?? "Chatmice") : $0.name
+                } ?? "Chatmice")
+                    .font(.system(size: 13, weight: .semibold))
+                    .lineLimit(1)
+
+                if let workspace = conversationPresentation.displayedChat?.workspace, !workspace.isTemporary {
+                    ConversationWorkspacePath(workspace: workspace)
+                }
             }
         }
-        .frame(maxWidth: 180, alignment: .leading)
+        .frame(maxWidth: 220, alignment: .leading)
     }
 
     @ViewBuilder
@@ -646,6 +674,7 @@ struct ContentView: View {
         newChat.systemMessage = defaultPersona?.systemMessage ?? AppConstants.chatGptSystemMessage
         do {
             try viewContext.save()
+            SearchModeStore.setMode(WebSearchSettings.load().defaultSearchModeForNewChat, for: uuid)
             selectedChat = newChat
         }
         catch {
@@ -889,22 +918,51 @@ private struct ConversationWorkspacePath: View {
     }
 }
 
+struct GlassBackgroundStyle: Equatable {
+    let tintOpacity: Double
+    let effectiveBlurLevel: Double
+    let maximumMaterialOpacity: Double
+
+    init(backgroundOpacity: Double, blurLevel: Double) {
+        let normalizedTint = min(max(backgroundOpacity, 0), 100) / 100
+        // Native materials already provide their own adaptive tint. Keep this
+        // color wash deliberately light so it cannot hide the frosted backdrop.
+        tintOpacity = 0.32 * pow(normalizedTint, 1.2)
+
+        let normalizedBlur = (min(max(blurLevel, 1), 10) - 1) / 9
+        // The former 1–7 range had little visible effect. Stretch its useful
+        // 8–10 range across all ten positions and blend those endpoint materials.
+        effectiveBlurLevel = 8 + (2 * normalizedBlur)
+        maximumMaterialOpacity = normalizedBlur
+    }
+}
+
 private struct MainGlassBackground: View {
     let opacity: Double
     let blurLevel: Double
 
     var body: some View {
+        let style = GlassBackgroundStyle(backgroundOpacity: opacity, blurLevel: blurLevel)
+
         ZStack {
             WindowVisualEffectView(
-                material: .underWindowBackground,
+                material: .popover,
                 blendingMode: .behindWindow
             )
-            .opacity(1)
+
+            WindowVisualEffectView(
+                material: .menu,
+                blendingMode: .behindWindow
+            )
+            .opacity(style.maximumMaterialOpacity)
 
             Color(NSColor.windowBackgroundColor)
-                .opacity((opacity / 100) * (0.5 + 0.5 * blurLevel / 10))
+                .opacity(style.tintOpacity)
         }
+        .allowsHitTesting(false)
     }
+
+
 }
 
 private struct WindowVisualEffectView: NSViewRepresentable {
@@ -956,7 +1014,7 @@ struct WindowAccessor: NSViewRepresentable {
         window.backgroundColor = .clear
         window.contentView?.wantsLayer = true
         window.contentView?.layer?.backgroundColor = NSColor.clear.cgColor
-        window.isMovableByWindowBackground = true
+        window.isMovableByWindowBackground = false
         window.titleVisibility = .hidden
         window.contentView?.additionalSafeAreaInsets = NSEdgeInsets(top: -52, left: 0, bottom: 0, right: 0)
         window.titlebarSeparatorStyle = .none

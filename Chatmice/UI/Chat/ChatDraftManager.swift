@@ -30,10 +30,8 @@ final class ChatDraftManager: ObservableObject {
         chat: ChatEntity,
         messageProvider: @escaping () -> String,
         imageProvider: @escaping () -> [ImageAttachment],
-        fileProvider: @escaping () -> [DocumentAttachment],
-        isEditingSystemMessage: Bool
+        fileProvider: @escaping () -> [DocumentAttachment]
     ) {
-        guard !isEditingSystemMessage else { return }
         saveWorkItem?.cancel()
 
         pendingChat = chat
@@ -66,10 +64,8 @@ final class ChatDraftManager: ObservableObject {
         chat: ChatEntity,
         message: String,
         images: [ImageAttachment],
-        files: [DocumentAttachment],
-        isEditingSystemMessage: Bool
+        files: [DocumentAttachment]
     ) {
-        guard !isEditingSystemMessage else { return }
         saveWorkItem?.cancel()
         let imageIDs = images
             .filter { $0.error == nil }

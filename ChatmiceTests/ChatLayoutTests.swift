@@ -488,8 +488,8 @@ extension ChatLayoutTests {
         try context.save()
         let viewModel = ChatViewModel(chat: chat, viewContext: context)
         let root = ChatMessagesView(
-            chat: chat, chatViewModel: viewModel, inputBuffer: ChatInputBuffer(),
-            editSystemMessage: .constant(false),
+            chat: chat,
+            chatViewModel: viewModel,
             isStreaming: Binding(get: { chat.waitingForResponse }, set: { chat.waitingForResponse = $0 }),
             currentError: .constant(nil), searchText: .constant(""),
             reasoningDurations: [:], activeReasoningMessageID: nil
@@ -612,11 +612,13 @@ extension ChatLayoutTests {
         try context.save()
         let viewModel = ChatViewModel(chat: chat, viewContext: context)
         var latestGeometry: ScrollGeometry?
-        let root = ChatMessagesView(chat: chat, chatViewModel: viewModel, inputBuffer: ChatInputBuffer(),
-                                    editSystemMessage: .constant(false),
-                                    isStreaming: Binding(get: { chat.waitingForResponse }, set: { chat.waitingForResponse = $0 }),
-                                    currentError: .constant(nil), searchText: .constant(""),
-                                    reasoningDurations: [:], activeReasoningMessageID: nil)
+        let root = ChatMessagesView(
+            chat: chat,
+            chatViewModel: viewModel,
+            isStreaming: Binding(get: { chat.waitingForResponse }, set: { chat.waitingForResponse = $0 }),
+            currentError: .constant(nil), searchText: .constant(""),
+            reasoningDurations: [:], activeReasoningMessageID: nil
+        )
             .environment(\.managedObjectContext, context)
             .environmentObject(PreviewStateManager())
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -794,5 +796,87 @@ extension ChatLayoutTests {
         try await Task.sleep(for: .milliseconds(100))
         XCTAssertNil(presentation.displayedChat, "Clearing selection must prevent an already scheduled load from repopulating it")
         XCTAssertFalse(presentation.isLoading)
+    }
+}
+
+extension ChatLayoutTests {
+    @MainActor
+    func testSystemPromptIsNotRenderedInConversation() throws {
+        let coordinator = NSPersistentStoreCoordinator(
+            managedObjectModel: PersistenceController.shared.container.managedObjectModel
+        )
+        try coordinator.addPersistentStore(ofType: NSInMemoryStoreType, configurationName: nil, at: nil)
+        let context = NSManagedObjectContext(concurrencyType: .mainQueueConcurrencyType)
+        context.persistentStoreCoordinator = coordinator
+
+        let chat = ChatEntity(context: context)
+        chat.id = UUID()
+        chat.name = "Hidden prompt regression"
+        chat.systemMessage = "PRIVATE PERSONA PROMPT MUST NOT BE VISIBLE"
+        chat.gptModel = "test"
+        chat.requestMessages = []
+
+        let message = MessageEntity(context: context)
+        message.id = 1
+        message.sequence = 1
+        message.timestamp = Date()
+        message.body = "Visible conversation message"
+        message.own = true
+        message.chat = chat
+        try context.save()
+
+        let viewModel = ChatViewModel(chat: chat, viewContext: context)
+        let root = ChatMessagesView(
+            chat: chat,
+            chatViewModel: viewModel,
+            isStreaming: .constant(false),
+            currentError: .constant(nil),
+            searchText: .constant(""),
+            reasoningDurations: [:],
+            activeReasoningMessageID: nil
+        )
+        .environment(\.managedObjectContext, context)
+        .environmentObject(PreviewStateManager())
+        let host = NSHostingView(rootView: root)
+        host.frame = NSRect(x: 0, y: 0, width: 900, height: 600)
+        host.layoutSubtreeIfNeeded()
+
+        func accessibilityText(from object: AnyObject) -> [String] {
+            var values: [String] = []
+            if let element = object as? any NSAccessibilityProtocol {
+                if let value = element.accessibilityValue() as? String { values.append(value) }
+                if let label = element.accessibilityLabel() { values.append(label) }
+                values += (element.accessibilityChildren() ?? []).flatMap {
+                    accessibilityText(from: $0 as AnyObject)
+                }
+            }
+            if let view = object as? NSView {
+                values += view.subviews.flatMap { accessibilityText(from: $0) }
+            }
+            return values
+        }
+
+        let visibleText = accessibilityText(from: host).joined(separator: "\n")
+        XCTAssertTrue(visibleText.contains("Visible conversation message"))
+        XCTAssertFalse(visibleText.contains(chat.systemMessage))
+    }
+}
+
+extension ChatLayoutTests {
+    func testGlassBackgroundStyleExpandsFormerHighStrengthRangeAcrossTenSteps() {
+        let levels = (1...10).map {
+            GlassBackgroundStyle(backgroundOpacity: 75, blurLevel: Double($0))
+        }
+
+        XCTAssertEqual(levels[0].effectiveBlurLevel, 8, accuracy: 0.0001)
+        XCTAssertEqual(levels[9].effectiveBlurLevel, 10, accuracy: 0.0001)
+        XCTAssertEqual(levels[0].maximumMaterialOpacity, 0, accuracy: 0.0001)
+        XCTAssertEqual(levels[9].maximumMaterialOpacity, 1, accuracy: 0.0001)
+
+        for (lower, upper) in zip(levels, levels.dropFirst()) {
+            XCTAssertEqual(upper.effectiveBlurLevel - lower.effectiveBlurLevel, 2 / 9, accuracy: 0.0001)
+            XCTAssertGreaterThan(upper.maximumMaterialOpacity, lower.maximumMaterialOpacity)
+        }
+        XCTAssertLessThan(levels[4].tintOpacity, 0.25)
     }
 }

@@ -99,8 +99,6 @@ private struct ChatMessageScrollView<Content: View>: View {
 struct ChatMessagesView: View {
     @ObservedObject var chat: ChatEntity
     @ObservedObject var chatViewModel: ChatViewModel
-    let inputBuffer: ChatInputBuffer
-    @Binding var editSystemMessage: Bool
     @Binding var isStreaming: Bool
     @Binding var currentError: ErrorMessage?
     @Binding var searchText: String
@@ -138,14 +136,6 @@ struct ChatMessagesView: View {
         ChatMessageScrollView(chatID: chat.id, waitingForResponse: chat.waitingForResponse,
                               searchOccurrence: chatViewModel.currentSearchOccurrence) {
             VStack {
-                    SystemMessageBubbleView(
-                        message: chat.systemMessage,
-                        color: chat.persona?.color,
-                        inputBuffer: inputBuffer,
-                        editSystemMessage: $editSystemMessage,
-                        searchText: $searchText
-                    )
-                    .id("system_message")
 
                     if !chatViewModel.sortedMessages.isEmpty {
                         ForEach(chatViewModel.sortedMessages, id: \.objectID) { messageEntity in

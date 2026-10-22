@@ -11,7 +11,6 @@ struct TabAppearanceSettingsView: View {
     @AppStorage("chatFontWeight") private var chatFontWeight = ChatFontWeightPreference.light.rawValue
     @AppStorage("preferredColorScheme") private var preferredColorSchemeRaw: Int = 0
     @AppStorage("codeFont") private var codeFont: String = AppConstants.firaCode
-    @AppStorage("showAssistantNameInSidebar") private var showAssistantNameInSidebar: Bool = true
     @AppStorage("mainWindowBackgroundOpacity") private var mainWindowBackgroundOpacity: Double = 75
     @AppStorage("mainWindowBlurLevel") private var mainWindowBlurLevel: Double = 10
     @State private var selectedColorSchemeRaw: Int = 0
@@ -120,6 +119,7 @@ struct TabAppearanceSettingsView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
+
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             VStack(spacing: 0) {
@@ -166,14 +166,14 @@ struct TabAppearanceSettingsView: View {
             GroupBox {
                 VStack(spacing: 0) {
                     HStack(spacing: 16) {
-                        Text("Background Opacity")
+                        Text("Glass Tint")
                         Spacer(minLength: 24)
-                        Slider(value: $mainWindowBackgroundOpacity, in: 50...100, step: 1)
+                        Slider(value: $mainWindowBackgroundOpacity, in: 0...100, step: 1)
                             .frame(width: 260)
                         Text("\(Int(mainWindowBackgroundOpacity))%")
                             .font(.caption.monospacedDigit())
                             .foregroundStyle(.secondary)
-                            .frame(width: 38, alignment: .trailing)
+                            .frame(width: 88, alignment: .trailing)
                     }
                     .padding(.vertical, 12)
 
@@ -187,9 +187,15 @@ struct TabAppearanceSettingsView: View {
                         Text("\(Int(mainWindowBlurLevel))")
                             .font(.caption.monospacedDigit())
                             .foregroundStyle(.secondary)
-                            .frame(width: 38, alignment: .trailing)
+                            .frame(width: 88, alignment: .trailing)
                     }
                     .padding(.vertical, 12)
+
+                    Text("All ten positions cover the high-strength range previously represented by levels 8–10. Glass Tint colors the material without covering the frosted backdrop.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.bottom, 10)
                 }
                 .padding(.horizontal, 8)
             } label: {
@@ -275,18 +281,6 @@ struct TabAppearanceSettingsView: View {
                 Label("Typography", systemImage: "textformat")
             }
 
-            GroupBox {
-                HStack(spacing: 16) {
-                    Text("Show assistant name in the sidebar")
-                    Spacer(minLength: 24)
-                    Toggle("Show assistant name in the sidebar", isOn: $showAssistantNameInSidebar)
-                        .labelsHidden()
-                        .toggleStyle(.switch)
-                }
-                .padding(8)
-            } label: {
-                Label("Layout", systemImage: "sidebar.left")
-            }
 
         }
         .padding()

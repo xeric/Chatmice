@@ -9,10 +9,45 @@ import CoreData
 import Foundation
 import SwiftUI
 
+struct SidebarConversationPresentation: Equatable {
+    static let untitledName = "Untitled"
+    static let untitledColor = "#007AFF"
+    static let untitledSymbol = "bubble.left.fill"
+
+    let title: String
+    let color: String?
+    let symbolName: String?
+    let overlaySymbolName: String?
+
+    init(
+        chatName: String,
+        personaColor: String?,
+        personaSymbolName: String?,
+        personaOverlaySymbolName: String?
+    ) {
+        let trimmedName = chatName.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmedName.isEmpty {
+            title = Self.untitledName
+            color = Self.untitledColor
+            symbolName = Self.untitledSymbol
+            overlaySymbolName = nil
+        }
+        else {
+            title = trimmedName
+            color = personaColor
+            symbolName = personaSymbolName
+            overlaySymbolName = personaOverlaySymbolName
+        }
+    }
+}
+
 struct ChatListRow: View, Equatable {
     static func == (lhs: ChatListRow, rhs: ChatListRow) -> Bool {
         lhs.chatObjectID == rhs.chatObjectID &&
         lhs.updatedDate == rhs.updatedDate &&
+        lhs.personaColor == rhs.personaColor &&
+        lhs.personaSymbolName == rhs.personaSymbolName &&
+        lhs.personaOverlaySymbolName == rhs.personaOverlaySymbolName &&
         lhs.chatName == rhs.chatName &&
         lhs.lastMessageBody == rhs.lastMessageBody &&
         lhs.isPinned == rhs.isPinned &&
@@ -23,7 +58,9 @@ struct ChatListRow: View, Equatable {
     }
     let chat: ChatEntity
     let chatObjectID: NSManagedObjectID
-    let personaName: String?
+    let personaColor: String?
+    let personaSymbolName: String?
+    let personaOverlaySymbolName: String?
     let chatName: String
     let isPinned: Bool
     let lastMessageBody: String
@@ -45,10 +82,18 @@ struct ChatListRow: View, Equatable {
         searchText: String
     ) {
         let lastMessage = chat.lastMessage
+        let presentation = SidebarConversationPresentation(
+            chatName: chat.name,
+            personaColor: chat.persona?.color,
+            personaSymbolName: chat.persona?.symbolName,
+            personaOverlaySymbolName: chat.persona?.symbolOverlayName
+        )
         self.chat = chat
         self.chatObjectID = chat.objectID
-        self.personaName = chat.persona?.name
-        self.chatName = chat.name
+        self.personaColor = presentation.color
+        self.personaSymbolName = presentation.symbolName
+        self.personaOverlaySymbolName = presentation.overlaySymbolName
+        self.chatName = presentation.title
         self.isPinned = chat.isPinned
         self.lastMessageBody = lastMessage?.body ?? ""
         self.lastMessageTimestamp = lastMessage?.timestamp ?? .distantPast
@@ -82,7 +127,9 @@ struct ChatListRow: View, Equatable {
     var body: some View {
         MessageCell(
             chatObjectID: chatObjectID,
-            personaName: personaName,
+            personaColor: personaColor,
+            personaSymbolName: personaSymbolName,
+            personaOverlaySymbolName: personaOverlaySymbolName,
             chatName: chatName,
             timestamp: lastMessageTimestamp,
             message: lastMessageBody,
