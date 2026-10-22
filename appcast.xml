@@ -6,6 +6,15 @@
         <description>Release updates for Chatmice.</description>
         <language>en</language>
         <item>
+            <title>1.1.2</title>
+            <pubDate>Thu, 22 Oct 2026 09:06:33 +0000</pubDate>
+            <link>https://github.com/xeric/Chatmice/releases/tag/v1.1.2</link>
+            <sparkle:version>12</sparkle:version>
+            <sparkle:shortVersionString>1.1.2</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <enclosure url="https://github.com/xeric/Chatmice/releases/download/v1.1.2/Chatmice-1.1.2.zip" length="15269920" type="application/octet-stream" sparkle:edSignature="8+cNYFMW+2tBadJvfQ5iVQ8x6/RfbITvmHGCTgwST3sv1uiqjpl2M97Tdd/NQjqA8F6xmiyTgXTOd1e6pbkmDA=="/>
+        </item>
+        <item>
             <title>1.1.1</title>
             <pubDate>Wed, 21 Oct 2026 09:44:17 +0000</pubDate>
             <link>https://github.com/xeric/Chatmice/releases/tag/v1.1.1</link>
