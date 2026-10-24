@@ -13,13 +13,61 @@ public struct ServiceModelRow: Identifiable, Codable, Equatable, Sendable {
     public var id: String
     public var nickname: String
     public var modelID: String
+    public var overrides: ModelConfigurationOverrides?
 
-    public init(id: String = UUID().uuidString, nickname: String = "", modelID: String) {
+    public init(id: String = UUID().uuidString, nickname: String = "", modelID: String, overrides: ModelConfigurationOverrides? = nil) {
         self.id = id
         self.nickname = nickname
         self.modelID = modelID
+        self.overrides = overrides
     }
 }
+
+public struct ModelConfigurationOverrides: Codable, Equatable, Sendable {
+    public var contextWindowTokens: Int?
+    public var visionSupported: Bool?
+    public var filesSupported: Bool?
+    public var audioSupported: Bool?
+    public var thinkingSupported: Bool?
+
+    public init(contextWindowTokens: Int? = nil, visionSupported: Bool? = nil, filesSupported: Bool? = nil, audioSupported: Bool? = nil, thinkingSupported: Bool? = nil) {
+        self.contextWindowTokens = contextWindowTokens
+        self.visionSupported = visionSupported
+        self.filesSupported = filesSupported
+        self.audioSupported = audioSupported
+        self.thinkingSupported = thinkingSupported
+    }
+}
+
+enum ModelConfigurationStore {
+    static let didChangeNotification = Notification.Name("ModelConfigurationStore.didChange")
+
+    static func overrides(serviceID: UUID?, modelID: String) -> ModelConfigurationOverrides {
+        guard let serviceID,
+            let json = UserDefaults.standard.string(forKey: "service_models_\(serviceID.uuidString)"),
+            let rows = try? JSONDecoder().decode([ServiceModelRow].self, from: Data(json.utf8))
+        else { return ModelConfigurationOverrides() }
+        return rows.first { $0.modelID == modelID }?.overrides ?? ModelConfigurationOverrides()
+    }
+}
+enum ModelAttachmentCapabilities {
+    static func vision(service: APIServiceEntity?, modelID: String) -> Bool {
+        guard let service else { return false }
+        if let manual = ModelConfigurationStore.overrides(serviceID: service.id, modelID: modelID).visionSupported { return manual }
+        let tested = service.id.flatMap { ModelCapabilityTestStore.results(for: $0)[modelID]?.visionSupported }
+        if tested == false { return false }
+        return service.imageUploadsAllowed || (service.type?.lowercased() == "deepseek" && tested == true)
+    }
+    static func files(service: APIServiceEntity?, modelID: String) -> Bool {
+        ModelConfigurationStore.overrides(serviceID: service?.id, modelID: modelID).filesSupported ?? service?.pdfUploadsAllowed ?? false
+    }
+    static func audio(service: APIServiceEntity?, modelID: String) -> Bool {
+        ModelConfigurationStore.overrides(serviceID: service?.id, modelID: modelID).audioSupported
+            ?? AudioInputCapability.supportsAudio(serviceType: service?.type, modelID: modelID)
+    }
+}
+
+
 
 public class ChatEntity: NSManagedObject, Identifiable {
     @NSManaged public var id: UUID
@@ -33,6 +81,9 @@ public class ChatEntity: NSManagedObject, Identifiable {
     @NSManaged public var draftImageIDs: String?
     @NSManaged public var draftFileIDs: String?
     @NSManaged public var createdDate: Date?
+    @NSManaged public var contextInputTokens: Int64
+    @NSManaged public var contextOutputTokens: Int64
+    @NSManaged public var contextUpdatedAt: Date?
     @NSManaged public var updatedDate: Date?
     @NSManaged public var systemMessage: String
     @NSManaged public var gptModel: String
@@ -102,18 +153,22 @@ public class ChatEntity: NSManagedObject, Identifiable {
     /// Optimized count that doesn't materialize all message objects
     public var messagesCount: Int {
         guard let context = self.managedObjectContext else {
-            return (messages as? Set<MessageEntity>)?.count ?? 0
+            return (messages as? Set<MessageEntity> ?? []).count { $0.messageKind == .message }
         }
-        
+
         let fetchRequest = NSFetchRequest<MessageEntity>(entityName: "MessageEntity")
-        fetchRequest.predicate = NSPredicate(format: "chat == %@", self)
+        fetchRequest.predicate = NSPredicate(
+            format: "chat == %@ AND kind == %@",
+            self,
+            MessageKind.message.rawValue
+        )
         return (try? context.count(for: fetchRequest)) ?? 0
     }
 
     /// Optimized fetch that only retrieves the last message
     public var lastMessage: MessageEntity? {
         guard let context = self.managedObjectContext else {
-            let set = messages as? Set<MessageEntity> ?? []
+            let set = (messages as? Set<MessageEntity> ?? []).filter { $0.messageKind == .message }
             return set.max { lhs, rhs in
                 if supportsSequencing {
                     if lhs.sequence == rhs.sequence {
@@ -127,7 +182,7 @@ public class ChatEntity: NSManagedObject, Identifiable {
         
         // Use a limit-1 fetch with descending sort to get only the last message
         let fetchRequest = NSFetchRequest<MessageEntity>(entityName: "MessageEntity")
-        fetchRequest.predicate = NSPredicate(format: "chat == %@", self)
+        fetchRequest.predicate = NSPredicate(format: "chat == %@ AND kind == %@", self, MessageKind.message.rawValue)
         
         // Reverse the sort descriptors to get the last message first
         if supportsSequencing {
@@ -231,6 +286,25 @@ public class MessageEntity: NSManagedObject, Identifiable {
     @NSManaged public var sequence: Int64
     @NSManaged public var chat: ChatEntity?
     @NSManaged public var reasoningDuration: Double
+    @NSManaged public var kind: String
+    @NSManaged public var checkpointCoversThroughSequence: Int64
+    @NSManaged public var checkpointOriginalTokens: Int64
+    @NSManaged public var checkpointCompactedTokens: Int64
+    @NSManaged public var checkpointValid: Bool
+
+    var messageKind: MessageKind {
+        get { MessageKind(rawValue: kind) ?? .message }
+        set { kind = newValue.rawValue }
+    }
+
+    var isContextCheckpoint: Bool {
+        messageKind == .contextCheckpoint
+    }
+}
+
+enum MessageKind: String {
+    case message
+    case contextCheckpoint
 }
 
 /// Legacy Chat struct, used for migration from old storage, for exporting and importing data in JSON
@@ -266,8 +340,8 @@ struct Chat: Codable {
         self.apiServiceType = chatEntity.apiService?.type
         self.personaName = chatEntity.persona?.name
         
-        // Fetch messagesArray once and reuse for both messages and messagePreview
-        let fetchedMessages = chatEntity.messagesArray
+        // Checkpoints stay in Core Data and the timeline, but legacy exports contain only conversation messages.
+        let fetchedMessages = chatEntity.messagesArray.filter { $0.messageKind == .message }
         self.messages = fetchedMessages.map { Message(messageEntity: $0) }
 
         // Use the last element from already-fetched messages instead of calling lastMessage again
@@ -323,6 +397,7 @@ extension APIServiceEntity: NSCopying {
         copy.url = self.url
         copy.model = self.model
         copy.contextSize = self.contextSize
+        copy.contextWindowOverrideTokens = self.contextWindowOverrideTokens
         copy.useStreamResponse = self.useStreamResponse
         copy.generateChatNames = self.generateChatNames
         copy.imageUploadsAllowed = self.imageUploadsAllowed

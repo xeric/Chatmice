@@ -443,52 +443,9 @@ public indirect enum JSONSchema: Codable, Hashable, Sendable {
     }
 
     public init(from decoder: Decoder) throws {
-        let c = try decoder.singleValueContainer()
-        if let obj = try? c.decode([String: AnyCodable].self) {
-            let type = obj["type"]?.value as? String
-            switch type {
-            case "object":
-                let props = (obj["properties"]?.value as? [String: AnyCodable]) ?? [:]
-                var parsed: [String: JSONSchema] = [:]
-                var failed = false
-                for (k, v) in props {
-                    if let s = JSONSchema(anyCodable: v) {
-                        parsed[k] = s
-                    }
-                    else {
-                        failed = true
-                    }
-                }
-                if !failed {
-                    let req = (obj["required"]?.value as? [Any])?.compactMap { $0 as? String } ?? []
-                    let addl: JSONSchema? = {
-                        guard let a = obj["additionalProperties"] else { return nil }
-                        if let b = a.value as? Bool { return b ? .raw(RawJSON(NSNull())) : .raw(RawJSON(false)) }
-                        return JSONSchema(anyCodable: a)
-                    }()
-                    self = .object(properties: parsed, required: req, additionalProperties: addl)
-                    return
-                }
-            case "array":
-                self = .array(items: obj["items"].flatMap { JSONSchema(anyCodable: $0) })
-                return
-            case "string":
-                self = .string
-                return
-            case "integer":
-                self = .integer
-                return
-            case "number":
-                self = .number
-                return
-            case "boolean":
-                self = .boolean
-                return
-            default: break
-            }
-        }
-        let any = try? AnyCodable(from: decoder)
-        self = .raw(RawJSON(any ?? NSNull()))
+        // MCP schemas carry descriptions, enums, references, and composition constraints.
+        // Decoding into the convenience cases would discard those authored keywords.
+        self = .raw(try RawJSON(from: decoder))
     }
 
     init?(anyCodable: AnyCodable) {
@@ -506,10 +463,8 @@ public indirect enum JSONSchema: Codable, Hashable, Sendable {
             }
             return
         }
-        if let d = try? JSONSerialization.data(withJSONObject: v),
-            let schema = try? JSONDecoder().decode(JSONSchema.self, from: d)
-        {
-            self = schema
+        if let object = v as? [String: Any] {
+            self = .raw(RawJSON(object))
             return
         }
         return nil

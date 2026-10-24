@@ -85,6 +85,7 @@ struct ChatBubbleView: View, Equatable {
     @State private var showingDeleteConfirmation = false
     @State private var isCopied = false
     @AppStorage("chatFontSize") private var chatFontSize: Double = 15.0
+    @State private var isCheckpointExpanded = false
 
     private var isActiveAssistantTurn: Bool {
         guard !content.own, content.isLatestMessage else { return false }
@@ -105,7 +106,12 @@ struct ChatBubbleView: View, Equatable {
         let attachments = prefetchedElements.map(extractAttachments) ?? []
         let hasBodyContent = prefetchedElements.map(hasRenderableBodyContent) ?? true
 
-        VStack {
+        Group {
+            if message?.isContextCheckpoint == true {
+                contextCheckpointCard
+            }
+            else {
+                VStack {
             HStack {
                 if content.own {
                     Color.clear
@@ -166,6 +172,8 @@ struct ChatBubbleView: View, Equatable {
                 Color.clear.frame(height: 12)
             }
         }
+            }
+        }
         .fixedSize(horizontal: false, vertical: true)
         .padding(.vertical, ChatTypography.messageVerticalPadding)
         .background(
@@ -186,6 +194,74 @@ struct ChatBubbleView: View, Equatable {
                 secondaryButton: .cancel()
             )
         }
+    }
+
+    private var contextCheckpointCard: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.16)) {
+                    isCheckpointExpanded.toggle()
+                }
+            } label: {
+                HStack(spacing: 10) {
+                    Image(systemName: "doc.text.fill")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(Color.accentColor)
+                        .frame(width: 18)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Context checkpoint")
+                            .font(.callout.weight(.semibold))
+                            .foregroundStyle(.primary)
+                        if let message {
+                            Text(
+                                "Earlier conversation compacted · \(compactTokenCount(Int(message.checkpointOriginalTokens))) → \(compactTokenCount(Int(message.checkpointCompactedTokens))) tokens"
+                            )
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        }
+                    }
+                    Spacer(minLength: 12)
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .rotationEffect(.degrees(isCheckpointExpanded ? 90 : 0))
+                }
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("context-checkpoint-disclosure")
+            .accessibilityLabel("Context checkpoint")
+            .accessibilityValue(isCheckpointExpanded ? "Expanded" : "Collapsed")
+            .accessibilityHint(isCheckpointExpanded ? "Collapse checkpoint" : "Expand checkpoint")
+
+            if isCheckpointExpanded {
+                VStack(alignment: .leading, spacing: 0) {
+                    Divider().padding(.horizontal, 12)
+                    Text(message?.body ?? "")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                        .padding(12)
+                }
+                .transition(.identity)
+            }
+        }
+        .background(Color.accentColor.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .overlay {
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(Color.accentColor.opacity(0.24), lineWidth: 1)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, ChatTypography.messageVerticalPadding)
+    }
+
+    private func compactTokenCount(_ value: Int) -> String {
+        if value >= 1_000_000 { return String(format: "%.1fM", Double(value) / 1_000_000) }
+        if value >= 1_000 { return String(format: "%.0fK", Double(value) / 1_000) }
+        return "\(value)"
     }
 
     @ViewBuilder
@@ -522,6 +598,9 @@ struct ChatBubbleView: View, Equatable {
 
     private func deleteMessage() {
         guard let messageEntity = message else { return }
+        if messageEntity.messageKind == .message, let chat = messageEntity.chat {
+            ContextManagement.invalidateCheckpoints(in: chat, covering: messageEntity.sequence)
+        }
         viewContext.delete(messageEntity)
         do {
             try viewContext.save()

@@ -880,3 +880,523 @@ extension ChatLayoutTests {
         XCTAssertLessThan(levels[4].tintOpacity, 0.25)
     }
 }
+
+extension ChatLayoutTests {
+    @MainActor
+    func testToolCardsRemainClickableAfterRepeatedExpansionAndStreamingCompletion() async throws {
+        let first = ToolActivityRecord(name: "write_file", input: "{\"path\":\"example.md\"}",
+                                       output: "Wrote 15 bytes to example.md", isError: false)
+        let second = ToolActivityRecord(name: "read_file", input: "{\"path\":\"example.md\"}",
+                                        output: "FILE_TOOL_SMOKE", isError: false)
+        let content = "Before the tools.\n\n\(first.marker)\n\nBetween the tools.\n\n\(second.marker)\n\nAfter the tools."
+        let state = StreamingMarkdownTestState(content: content, isStreaming: false)
+        let host = NSHostingView(rootView: StreamingMarkdownTestHarness(state: state)
+            .environmentObject(PreviewStateManager()))
+        let window = NSWindow(contentRect: NSRect(x: 100, y: 100, width: 760, height: 600),
+                              styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        window.title = "Tool disclosure regression"
+        window.makeKeyAndOrderFront(nil)
+        defer { window.close() }
+
+        func element(containing text: String) -> (any NSAccessibilityProtocol)? {
+            var visited = Set<ObjectIdentifier>()
+            func find(_ object: AnyObject) -> (any NSAccessibilityProtocol)? {
+                guard visited.insert(ObjectIdentifier(object)).inserted else { return nil }
+                if let node = object as? any NSAccessibilityProtocol {
+                    let value = node.accessibilityValue() as? String ?? ""
+                    let label = node.accessibilityLabel() ?? ""
+                    if value.contains(text) || label.contains(text) { return node }
+                    for child in node.accessibilityChildren() ?? [] {
+                        if let found = find(child as AnyObject) { return found }
+                    }
+                }
+                for child in (object as? NSView)?.subviews ?? [] {
+                    if let found = find(child) { return found }
+                }
+                return nil
+            }
+            return find(host)
+        }
+
+        func clickHeader(after precedingText: String) async throws {
+            host.layoutSubtreeIfNeeded()
+            let frame = try XCTUnwrap(element(containing: precedingText)).accessibilityFrame()
+            let location = window.convertPoint(fromScreen: NSPoint(x: frame.minX + 80, y: frame.minY - 40))
+            let down = try XCTUnwrap(NSEvent.mouseEvent(with: .leftMouseDown, location: location,
+                modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+                context: nil, eventNumber: 1, clickCount: 1, pressure: 1))
+            let up = try XCTUnwrap(NSEvent.mouseEvent(with: .leftMouseUp, location: location,
+                modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+                context: nil, eventNumber: 2, clickCount: 1, pressure: 0))
+            NSApp.postEvent(up, atStart: true)
+            window.sendEvent(down)
+            try await Task.sleep(for: .milliseconds(250))
+        }
+
+        try await Task.sleep(for: .milliseconds(200))
+        for streamed in [false, true] {
+            if streamed {
+                state.isStreaming = true
+                try await Task.sleep(for: .milliseconds(100))
+                state.content += " More streamed text."
+                state.isStreaming = false
+                try await Task.sleep(for: .milliseconds(200))
+            }
+            for cycle in 0..<10 {
+                let collapsedHeight = host.fittingSize.height
+                try await clickHeader(after: "Before the tools.")
+                let firstExpandedHeight = host.fittingSize.height
+                XCTAssertGreaterThan(firstExpandedHeight, collapsedHeight + 20, "Expand cycle \(cycle), streamed=\(streamed)")
+                try await clickHeader(after: "Before the tools.")
+                XCTAssertEqual(host.fittingSize.height, collapsedHeight, accuracy: 1, "Collapse cycle \(cycle), streamed=\(streamed)")
+                try await clickHeader(after: "Between the tools.")
+                XCTAssertGreaterThan(host.fittingSize.height, collapsedHeight + 20, "Second card expand cycle \(cycle), streamed=\(streamed)")
+                try await clickHeader(after: "Between the tools.")
+                XCTAssertEqual(host.fittingSize.height, collapsedHeight, accuracy: 1, "Second card collapse cycle \(cycle), streamed=\(streamed)")
+            }
+        }
+    }
+}
+
+
+extension ChatLayoutTests {
+    @MainActor
+    func testCheckpointCardUsesFullRowDisclosureTarget() async throws {
+        let coordinator = NSPersistentStoreCoordinator(
+            managedObjectModel: PersistenceController.shared.container.managedObjectModel
+        )
+        try coordinator.addPersistentStore(ofType: NSInMemoryStoreType, configurationName: nil, at: nil)
+        let context = NSManagedObjectContext(concurrencyType: .mainQueueConcurrencyType)
+        context.persistentStoreCoordinator = coordinator
+        let checkpoint = MessageEntity(context: context)
+        checkpoint.id = 1
+        checkpoint.sequence = 1
+        checkpoint.kind = MessageKind.contextCheckpoint.rawValue
+        checkpoint.name = "Context checkpoint"
+        checkpoint.body = String(repeating: "Durable checkpoint details. ", count: 12)
+        checkpoint.checkpointOriginalTokens = 7_000
+        checkpoint.checkpointCompactedTokens = 1_000
+        checkpoint.checkpointCoversThroughSequence = 4
+        checkpoint.checkpointValid = true
+        let content = ChatBubbleContent(
+            message: checkpoint.body,
+            own: false,
+            waitingForResponse: false,
+            errorMessage: nil,
+            systemMessage: false,
+            isStreaming: false,
+            isLatestMessage: false,
+            reasoningDuration: nil,
+            isActiveReasoning: false
+        )
+        let host = NSHostingView(rootView: ChatBubbleView(
+            content: content,
+            message: checkpoint,
+            searchText: .constant("")
+        ).environment(\.managedObjectContext, context))
+        let window = NSWindow(
+            contentRect: NSRect(x: 100, y: 100, width: 760, height: 240),
+            styleMask: [.titled], backing: .buffered, defer: false
+        )
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        window.makeKeyAndOrderFront(nil)
+        defer { window.close() }
+        try await Task.sleep(for: .milliseconds(100))
+        host.layoutSubtreeIfNeeded()
+
+        let collapsedHeight = host.fittingSize.height
+        let hostPoint = NSPoint(x: host.bounds.maxX - 40, y: host.bounds.midY)
+        let windowPoint = host.convert(hostPoint, to: nil)
+        let mouseDown = try XCTUnwrap(NSEvent.mouseEvent(
+            with: .leftMouseDown,
+            location: windowPoint,
+            modifierFlags: [],
+            timestamp: ProcessInfo.processInfo.systemUptime,
+            windowNumber: window.windowNumber,
+            context: nil,
+            eventNumber: 1,
+            clickCount: 1,
+            pressure: 1
+        ))
+        let mouseUp = try XCTUnwrap(NSEvent.mouseEvent(
+            with: .leftMouseUp,
+            location: windowPoint,
+            modifierFlags: [],
+            timestamp: ProcessInfo.processInfo.systemUptime,
+            windowNumber: window.windowNumber,
+            context: nil,
+            eventNumber: 2,
+            clickCount: 1,
+            pressure: 0
+        ))
+        window.sendEvent(mouseDown)
+        window.sendEvent(mouseUp)
+        try await Task.sleep(for: .milliseconds(250))
+        host.layoutSubtreeIfNeeded()
+        XCTAssertGreaterThan(
+            host.fittingSize.height,
+            collapsedHeight + 20,
+            "Clicking the trailing side of the checkpoint header must expand the card"
+        )
+    }
+}
+
+extension ChatLayoutTests {
+    func testUsageFallbackPrefersAPIAndMatchesPiCharacterCounting() {
+        let request = [["role": "user", "content": "汉字🙂abc"]]
+        let estimated = ContextManagement.resolvedUsage(reported: nil, requestMessages: request, response: "12345")
+        XCTAssertEqual(estimated, ModelTokenUsage(inputTokens: 2, outputTokens: 2, isEstimated: true))
+        XCTAssertEqual(ContextManagement.estimatedTokens(in: ""), 0)
+        let reported = ModelTokenUsage(inputTokens: 17, outputTokens: 9)
+        XCTAssertEqual(ContextManagement.resolvedUsage(reported: reported, requestMessages: request, response: "12345"), reported)
+        XCTAssertEqual(ContextManagement.resolvedUsage(reported: ModelTokenUsage(inputTokens: 0, outputTokens: 0), requestMessages: request, response: "12345"), estimated)
+    }
+
+    @MainActor
+    func testCompletedResponsesPersistFallbackThenReplaceItWithReportedUsage() async throws {
+        let coordinator = NSPersistentStoreCoordinator(managedObjectModel: PersistenceController.shared.container.managedObjectModel)
+        try coordinator.addPersistentStore(ofType: NSInMemoryStoreType, configurationName: nil, at: nil)
+        let context = NSManagedObjectContext(concurrencyType: .mainQueueConcurrencyType)
+        context.persistentStoreCoordinator = coordinator
+        let chat = ChatEntity(context: context)
+        chat.id = UUID()
+        chat.name = "Usage regression"
+        chat.systemMessage = "abcd"
+        chat.gptModel = "private-test-model"
+        chat.requestMessages = []
+        let api = APIServiceEntity(context: context)
+        api.contextWindowOverrideTokens = 100
+        chat.apiService = api
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [UsageRegressionURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        defer {
+            session.invalidateAndCancel()
+            UsageRegressionURLProtocol.reported = false
+            UsageRegressionURLProtocol.requestKinds = []
+        }
+        let config = APIServiceConfig(name: "Usage fixture", apiUrl: URL(string: "https://usage.invalid/v1")!, apiKey: "fixture", model: "private-test-model", type: "chatgpt")
+        let manager = MessageManager(apiService: ChatGPTHandler(config: config, session: session), viewContext: context)
+        defer { manager.cancelCurrentRequest() }
+        let fallback = expectation(description: "fallback stream completes")
+        manager.sendMessageStream("1234", in: chat, contextSize: 10) { result in
+            if case .failure(let error) = result { XCTFail(error.localizedDescription) }
+            XCTAssertFalse(
+                chat.messagesArray.contains(where: \.isContextCheckpoint),
+                "Completing a response records usage; compaction belongs before the next request"
+            )
+            fallback.fulfill()
+        }
+        await fulfillment(of: [fallback], timeout: 5)
+        XCTAssertEqual(chat.contextInputTokens, 2)
+        XCTAssertEqual(chat.contextOutputTokens, 100)
+        XCTAssertNil(chat.contextUpdatedAt)
+        UsageRegressionURLProtocol.reported = true
+        let reported = expectation(description: "reported nonstream completes")
+        manager.sendMessage("Next request", in: chat, contextSize: 10) { result in
+            if case .failure(let error) = result { XCTFail(error.localizedDescription) }
+            XCTAssertTrue(
+                chat.messagesArray.contains(where: \.isContextCheckpoint),
+                "An over-threshold conversation must compact before the user request is sent"
+            )
+            reported.fulfill()
+        }
+        await fulfillment(of: [reported], timeout: 5)
+        let checkpoint = try XCTUnwrap(chat.messagesArray.first(where: \.isContextCheckpoint))
+        XCTAssertEqual(checkpoint.body, "Checkpoint summary")
+        XCTAssertEqual(checkpoint.checkpointOriginalTokens, 102)
+        XCTAssertEqual(Array(UsageRegressionURLProtocol.requestKinds.prefix(3)), ["response", "compaction", "response"])
+        XCTAssertEqual(chat.contextInputTokens, 7)
+        XCTAssertEqual(chat.contextOutputTokens, 3)
+        XCTAssertNotNil(chat.contextUpdatedAt, "Real usage must replace the preflight estimate")
+        chat.contextInputTokens = 90
+        chat.contextOutputTokens = 0
+        chat.contextUpdatedAt = Date()
+        let streamingRequestStart = UsageRegressionURLProtocol.requestKinds.count
+        let streamed = expectation(description: "trailing usage stream completes")
+        manager.sendMessageStream("Streamed reported usage", in: chat, contextSize: 10) { result in
+            if case .failure(let error) = result { XCTFail(error.localizedDescription) }
+            XCTAssertEqual(chat.messagesArray.filter(\.isContextCheckpoint).count, 2)
+            streamed.fulfill()
+        }
+        await fulfillment(of: [streamed], timeout: 5)
+        for _ in 0..<100 {
+            if chat.contextInputTokens == 11 { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertEqual(
+            Array(UsageRegressionURLProtocol.requestKinds.dropFirst(streamingRequestStart).prefix(2)),
+            ["compaction", "response"]
+        )
+        XCTAssertEqual(chat.contextInputTokens, 11)
+        XCTAssertEqual(chat.contextOutputTokens, 5, "Usage-only chunks after finish_reason must reach persistence")
+        XCTAssertNotNil(chat.contextUpdatedAt)
+    }
+
+    func testUpstreamTokenFailureIsPresentedAsAuthenticationError() {
+        let message = #"{"error":{"message":"Authentication error: Token request failed: TLS handshake EOF","type":"authentication_error"}}"#
+        let error = ErrorMessage(type: .serverError(message), timestamp: Date())
+        XCTAssertEqual(error.displayTitle, "Authentication Error")
+        XCTAssertTrue(error.displayMessage.contains("Token request failed"))
+        XCTAssertTrue(error.canRetry, "Transient token-network failures remain retryable")
+    }
+}
+
+extension ChatLayoutTests {
+    func testImportedMCPSchemaKeepsArgumentConstraintsThroughRoundTrip() throws {
+        let source: [String: Any] = [
+            "type": "object",
+            "properties": [
+                "name": ["type": "string", "description": "Exact Custom Skill name.", "enum": ["help", "search"]],
+                "task": ["type": "string", "minLength": 1],
+                "options": ["$ref": "#/$defs/options"],
+            ],
+            "required": ["name", "task"],
+            "additionalProperties": false,
+            "$defs": ["options": ["anyOf": [["type": "null"], ["type": "object", "additionalProperties": true]]]],
+        ]
+        let data = try JSONSerialization.data(withJSONObject: source)
+        let decoded = try JSONDecoder().decode(JSONSchema.self, from: data)
+        let imported = try XCTUnwrap(JSONSchema(anyCodable: AnyCodable(source)))
+        for schema in [decoded, imported] {
+            XCTAssertEqual(schema.openAIWireDict as NSDictionary, source as NSDictionary)
+            let restored = try JSONSerialization.jsonObject(with: JSONEncoder().encode(schema)) as? NSDictionary
+            XCTAssertEqual(restored, source as NSDictionary)
+        }
+    }
+}
+
+extension ChatLayoutTests {
+    @MainActor
+    func testModelOverridesPreserveAutomaticFallbackAndProviderIsolation() throws {
+        let first = UUID(), second = UUID()
+        let key = "service_models_\(first.uuidString)"
+        defer { UserDefaults.standard.removeObject(forKey: key) }
+        let coordinator = NSPersistentStoreCoordinator(managedObjectModel: PersistenceController.shared.container.managedObjectModel)
+        try coordinator.addPersistentStore(ofType: NSInMemoryStoreType, configurationName: nil, at: nil)
+        let context = NSManagedObjectContext(concurrencyType: .mainQueueConcurrencyType)
+        context.persistentStoreCoordinator = coordinator
+        let service = APIServiceEntity(context: context)
+        service.id = first; service.type = "openai-responses"
+        service.imageUploadsAllowed = false; service.pdfUploadsAllowed = true
+        let override = ModelConfigurationOverrides(contextWindowTokens: 64_000, visionSupported: true, filesSupported: false, audioSupported: true, thinkingSupported: true)
+        let rows = [ServiceModelRow(modelID: "private-model", overrides: override), ServiceModelRow(modelID: "gpt-5.6-sol", overrides: ModelConfigurationOverrides(thinkingSupported: false))]
+        UserDefaults.standard.set(String(data: try JSONEncoder().encode(rows), encoding: .utf8), forKey: key)
+        XCTAssertEqual(ModelConfigurationStore.overrides(serviceID: first, modelID: "private-model"), override)
+        XCTAssertEqual(ModelConfigurationStore.overrides(serviceID: second, modelID: "private-model"), ModelConfigurationOverrides())
+        XCTAssertEqual(ModelContextRegistry.resolve(service: service, modelID: "private-model")?.tokens, 64_000)
+        XCTAssertTrue(ModelAttachmentCapabilities.vision(service: service, modelID: "private-model"))
+        XCTAssertFalse(ModelAttachmentCapabilities.files(service: service, modelID: "private-model"))
+        XCTAssertTrue(ModelAttachmentCapabilities.audio(service: service, modelID: "private-model"))
+        XCTAssertFalse(ModelAttachmentCapabilities.vision(service: service, modelID: "other-model"))
+        XCTAssertTrue(ModelAttachmentCapabilities.files(service: service, modelID: "other-model"))
+        var body: [String: Any] = [:]
+        ReasoningRequestEncoder.apply(selection: .high, profile: ModelReasoningRegistry.resolve(modelID: "private-model", serviceType: "openai-responses", serviceID: first), maxTokens: 1000, to: &body)
+        XCTAssertEqual((body["reasoning"] as? [String: String])?["effort"], "high")
+        body = [:]
+        ReasoningRequestEncoder.apply(selection: .high, profile: ModelReasoningRegistry.resolve(modelID: "gpt-5.6-sol", serviceType: "openai-responses", serviceID: first), maxTokens: 1000, to: &body)
+        XCTAssertNil(body["reasoning"])
+        XCTAssertTrue(ModelReasoningRegistry.resolve(modelID: "gpt-5.6-sol", serviceType: "openai-responses", serviceID: second).supportsReasoning)
+        UserDefaults.standard.removeObject(forKey: key)
+        XCTAssertEqual(ModelContextRegistry.resolve(service: service, modelID: "gpt-5.6-sol")?.tokens, 400_000)
+        XCTAssertFalse(ModelAttachmentCapabilities.vision(service: service, modelID: "private-model"))
+        XCTAssertTrue(ModelAttachmentCapabilities.files(service: service, modelID: "private-model"))
+        let legacy = Data("[{\"id\":\"legacy\",\"nickname\":\"\",\"modelID\":\"old\"}]".utf8)
+        XCTAssertNil(try JSONDecoder().decode([ServiceModelRow].self, from: legacy).first?.overrides)
+    }
+}
+
+extension ChatLayoutTests {
+    @MainActor
+    func testEmptySubmissionsDoNotCreateMessagesOrStartInference() throws {
+        let persistence = PersistenceController(inMemory: true)
+        let context = persistence.container.viewContext
+        let chat = ChatEntity(context: context)
+        chat.id = UUID(); chat.gptModel = "test"; chat.requestMessages = []
+        let viewModel = ChatViewModel(chat: chat, viewContext: context)
+        let handler = ChatLogicHandler(viewContext: context, chat: chat, chatViewModel: viewModel)
+        for text in ["", " \t\n"] {
+            handler.sendMessage(messageText: text, attachedImages: [], attachedFiles: [])
+            XCTAssertFalse(chat.waitingForResponse)
+            XCTAssertFalse(handler.isStreaming)
+            XCTAssertNil(handler.currentError)
+            XCTAssertTrue(chat.messagesArray.isEmpty)
+        }
+    }
+}
+
+extension ChatLayoutTests {
+    func testCustomHeaderValidationRejectsInjectionAndCaseDuplicates() throws {
+        let headers = try ProviderHeaderStore.parse("Authorization: Bearer custom\nX-Tenant: a=b:c")
+        XCTAssertEqual(headers["X-Tenant"], "a=b:c")
+        XCTAssertThrowsError(try ProviderHeaderStore.parse("X-Tenant: a\nx-tenant: b"))
+        XCTAssertThrowsError(try ProviderHeaderStore.validate(["Bad Name": "value"]))
+        XCTAssertThrowsError(try ProviderHeaderStore.validate(["X-Tenant": "a\r\nAuthorization: injected"]))
+        var request = URLRequest(url: URL(string: "https://example.com")!)
+        request.setValue("Bearer default", forHTTPHeaderField: "Authorization")
+        ProviderHeaderStore.apply(headers, to: &request)
+        XCTAssertEqual(request.value(forHTTPHeaderField: "authorization"), "Bearer custom")
+    }
+
+    func testOAuthCallbackRejectsWrongStateOriginAndDuplicateCode() throws {
+        let redirect = "chatmice://oauth/callback"
+        XCTAssertEqual(try MCPOAuthManager.authorizationCode(
+            callback: URL(string: redirect + "?state=expected&code=valid")!,
+            redirectURI: redirect, state: "expected"), "valid")
+        for callback in [redirect + "?state=wrong&code=valid", "chatmice://other/callback?state=expected&code=valid",
+                         redirect + "?state=expected&code=a&code=b"] {
+            XCTAssertThrowsError(try MCPOAuthManager.authorizationCode(
+                callback: URL(string: callback)!, redirectURI: redirect, state: "expected"))
+        }
+        XCTAssertFalse(AuthOriginRedirectDelegate.sameOrigin(
+            URL(string: "https://example.com/sse")!, URL(string: "http://example.com/messages")!))
+        XCTAssertFalse(AuthOriginRedirectDelegate.sameOrigin(
+            URL(string: "https://example.com/sse")!, URL(string: "https://example.com:444/messages")!))
+        XCTAssertEqual(MCPOAuthManager.formEncode(["scope": "a b+c&d"]), "scope=a%20b%2Bc%26d")
+    }
+
+    func testLegacyMCPAndMinimalOAuthJSONDecode() throws {
+        let legacy = Data("{\"name\":\"local\",\"kind\":\"http\",\"args\":[],\"env\":{},\"url\":\"http://localhost/mcp\",\"enabled\":true}".utf8)
+        XCTAssertNil(try JSONDecoder().decode(MCPServerConfig.self, from: legacy).oauth)
+        let oauth = try JSONDecoder().decode(MCPOAuthConfiguration.self, from: Data(
+            "{\"grant\":\"clientCredentials\",\"tokenURL\":\"https://example.com/token\",\"clientID\":\"client\"}".utf8))
+        try oauth.validate()
+        XCTAssertEqual(oauth.grant, .clientCredentials)
+        var insecure = oauth
+        insecure.tokenURL = "http://remote.example.com/token"
+        XCTAssertThrowsError(try insecure.validate())
+    }
+
+    func testLoopbackOAuthRedirectPreservesPortAndPathAndRejectsRemoteHosts() throws {
+        let redirect = "http://localhost:18767/mcp-callback"
+        let callback = try MCPOAuthConfiguration.callbackURL(redirect)
+        XCTAssertEqual(callback.port, 18767)
+        XCTAssertEqual(callback.path, "/mcp-callback")
+        XCTAssertEqual(try MCPOAuthManager.authorizationCode(
+            callback: URL(string: redirect + "?state=expected&code=valid")!,
+            redirectURI: redirect, state: "expected"), "valid")
+        for invalid in ["http://example.com:18767/mcp-callback", "http://0.0.0.0:18767/mcp-callback",
+                        "http://localhost/mcp-callback", "http://localhost:80/mcp-callback",
+                        redirect + "?state=fixed", "http://user@localhost:18767/mcp-callback"] {
+            XCTAssertThrowsError(try MCPOAuthConfiguration.callbackURL(invalid))
+        }
+        for invalid in ["http://localhost:18768/mcp-callback?state=expected&code=valid",
+                        "http://localhost:18767/other?state=expected&code=valid"] {
+            XCTAssertThrowsError(try MCPOAuthManager.authorizationCode(
+                callback: URL(string: invalid)!, redirectURI: redirect, state: "expected"))
+        }
+    }
+}
+
+extension ChatLayoutTests {
+    func testMCPEventStreamPreservesFramingMultilineDataAndNotificationBoundaries() {
+        var decoder = MCPEventStreamDecoder()
+        let source = ": keepalive\r\n\r\nevent: message\r\ndata: {\"jsonrpc\":\"2.0\",\r\ndata: \"id\":7,\"result\":{}}\r\n\r\ndata: notification\n\ndata: partial"
+        var events: [MCPEventStreamDecoder.Event] = []
+        for byte in source.utf8 {
+            if let event = decoder.append(byte) { events.append(event) }
+        }
+        XCTAssertEqual(events.map(\.name), ["message", "message"])
+        XCTAssertEqual(events.map(\.data), ["{\"jsonrpc\":\"2.0\",\n\"id\":7,\"result\":{}}", "notification"])
+    }
+}
+
+extension ChatLayoutTests {
+    func testLegacyMCPOAuthIdentityRemainsStableAcrossReloadsAndIsolatesClients() throws {
+        let source = ["clientID": "legacy-client", "redirectURI": "http://localhost:18767/mcp-callback", "tokenURL": "https://example.com/token"]
+        func decode(_ fields: [String: String]) throws -> MCPOAuthConfiguration {
+            try JSONDecoder().decode(MCPOAuthConfiguration.self, from: JSONSerialization.data(withJSONObject: fields))
+        }
+        let first = try decode(source)
+        let reloaded = try decode(source)
+        XCTAssertEqual(first, reloaded, "Token lookup hashes the entire configuration")
+        XCTAssertEqual(MCPOAuthManager.secretKey(first), MCPOAuthManager.secretKey(reloaded))
+        XCTAssertEqual(first, try JSONDecoder().decode(MCPOAuthConfiguration.self, from: JSONEncoder().encode(first)))
+        for field in ["clientID", "redirectURI", "tokenURL"] {
+            var changed = source
+            changed[field] = source[field]! + "-different"
+            XCTAssertNotEqual(MCPOAuthManager.secretKey(first), MCPOAuthManager.secretKey(try decode(changed)))
+        }
+        var explicit = source
+        explicit["credentialID"] = "saved-client-id"
+        XCTAssertEqual(try decode(explicit).credentialID, "saved-client-id")
+    }
+}
+
+extension ChatLayoutTests {
+    func testLiveICalMCPHandshakeSmoke() async throws {
+        guard ProcessInfo.processInfo.environment["CHATMICE_LIVE_MCP_SMOKE"] == "1" else {
+            throw XCTSkip("Opt-in production check requires local MCP configuration and Keychain credentials")
+        }
+        let preferencesURL = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Preferences/xeric.com.chatmice.plist")
+        let preferences = try PropertyListSerialization.propertyList(from: Data(contentsOf: preferencesURL), format: nil) as! [String: Any]
+        let json = try XCTUnwrap(preferences["mcpServersJSON"] as? String)
+        let configs = try JSONDecoder().decode([MCPServerConfig].self, from: Data(json.utf8))
+        let config = try XCTUnwrap(configs.first { $0.url == "https://prod-ical-mcpserver.c-86fbf98.kyma.ondemand.com/mcp" })
+        let service = MCPService()
+        await service.reconnect(config)
+        let status = await service.statuses().first
+        XCTAssertTrue(status?.connected == true, status?.lastError ?? "Missing server status")
+        let tools = await service.tools(forServer: config.name)
+        XCTAssertTrue(tools.contains { $0.name.localizedCaseInsensitiveContains("search") })
+        await service.disconnect(name: config.name)
+    }
+}
+
+
+
+
+
+
+
+
+
+
+
+private final class UsageRegressionURLProtocol: URLProtocol {
+    static var reported = false
+    static var requestKinds: [String] = []
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func startLoading() {
+        var body = request.httpBody ?? Data()
+        if body.isEmpty, let stream = request.httpBodyStream {
+            stream.open()
+            defer { stream.close() }
+            var buffer = [UInt8](repeating: 0, count: 4096)
+            while stream.hasBytesAvailable {
+                let count = stream.read(&buffer, maxLength: buffer.count)
+                if count <= 0 { break }
+                body.append(buffer, count: count)
+            }
+        }
+        let json = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any] ?? [:]
+        let streaming = json["stream"] as? Bool == true
+        let messages = json["messages"] as? [[String: Any]] ?? []
+        let summary = (messages.first?["content"] as? String)?.contains("durable conversation checkpoint") == true
+        Self.requestKinds.append(summary ? "compaction" : "response")
+        let text = summary ? "Checkpoint summary" : String(repeating: "文", count: 400)
+        let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: ["Content-Type": streaming ? "text/event-stream" : "application/json"])!
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        if streaming {
+            let chunk = ["choices": [["delta": ["content": text]]]]
+            let data = try! JSONSerialization.data(withJSONObject: chunk)
+            let delta = "data: \(String(data: data, encoding: .utf8)!)\n\ndata: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n"
+            client?.urlProtocol(self, didLoad: Data(delta.utf8))
+            if Self.reported {
+                client?.urlProtocol(self, didLoad: Data("data: {\"choices\":[],\"usage\":{\"prompt_tokens\":11,\"completion_tokens\":5,\"total_tokens\":16}}\n\n".utf8))
+            }
+            client?.urlProtocol(self, didLoad: Data("data: [DONE]\n\n".utf8))
+        } else {
+            var payload: [String: Any] = ["choices": [["message": ["content": text]]]]
+            if Self.reported { payload["usage"] = ["prompt_tokens": 7, "completion_tokens": 3, "total_tokens": 10] }
+            client?.urlProtocol(self, didLoad: try! JSONSerialization.data(withJSONObject: payload))
+        }
+        client?.urlProtocolDidFinishLoading(self)
+    }
+    override func stopLoading() {}
+}

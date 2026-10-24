@@ -17,6 +17,7 @@ private struct DeepseekModel: Codable {
 
 class DeepseekHandler: ChatGPTHandler {
     override func parseJSONResponse(data: Data) -> (String, String)? {
+        recordTokenUsage(from: data)
         if let responseString = String(data: data, encoding: .utf8) {
             #if DEBUG
                 print("Response: \(responseString)")
@@ -52,6 +53,7 @@ class DeepseekHandler: ChatGPTHandler {
             print("No data received.")
             return (true, APIError.decodingFailed("No data received in SSE event"), nil, nil)
         }
+        recordTokenUsage(from: data)
 
         let defaultRole = "assistant"
         let dataString = String(data: data, encoding: .utf8)

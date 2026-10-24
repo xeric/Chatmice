@@ -17,6 +17,7 @@ public struct MCPServerConfig: Identifiable, Codable, Hashable, Sendable {
     public var env: [String: String]
     public var url: String?
     public var enabled: Bool
+    var oauth: MCPOAuthConfiguration?
 
     public enum Kind: String, Codable, Sendable {
         case stdio
@@ -30,7 +31,8 @@ public struct MCPServerConfig: Identifiable, Codable, Hashable, Sendable {
         args: [String] = [],
         env: [String: String] = [:],
         url: String? = nil,
-        enabled: Bool = true
+        enabled: Bool = true,
+        oauth: MCPOAuthConfiguration? = nil
     ) {
         self.name = name
         self.kind = kind
@@ -39,6 +41,7 @@ public struct MCPServerConfig: Identifiable, Codable, Hashable, Sendable {
         self.env = env
         self.url = url
         self.enabled = enabled
+        self.oauth = oauth
     }
 }
 
@@ -127,6 +130,14 @@ public actor MCPService {
             break
         }
         servers[name] = nil
+    }
+
+    func signOut(_ config: MCPServerConfig) async throws {
+        disconnect(name: config.name)
+        // Retain a disconnected entry so routine sync does not immediately sign in again.
+        let server = ConnectedServer(config: config)
+        servers[config.name] = server
+        if let oauth = config.oauth { try await MCPOAuthManager.shared.signOut(oauth) }
     }
 
     public func statuses() -> [MCPStatus] {
@@ -341,11 +352,12 @@ public actor MCPService {
             return
         }
 
-        let transport = HTTPMCPTransport(url: url, headers: cfg.env)
+        let transport = HTTPMCPTransport(url: url, headers: cfg.env, oauth: cfg.oauth)
         let s = ConnectedServer(config: cfg, transport: .http(transport: transport))
         servers[cfg.name] = s
 
         do {
+            if cfg.oauth != nil { _ = try MCPOAuthConfiguration.endpoint(url.absoluteString) }
             try await transport.connect(timeout: 15)
 
             // Handshake
@@ -396,10 +408,51 @@ public actor MCPService {
     }
 }
 
+
+/// SSE framing is shared by legacy GET streams and Streamable HTTP POST responses.
+struct MCPEventStreamDecoder {
+    struct Event {
+        let name: String
+        let data: String
+    }
+    private var line = Data()
+    private var eventName = ""
+    private var dataLines: [String] = []
+    private var followsCarriageReturn = false
+
+    mutating func append(_ byte: UInt8) -> Event? {
+        if byte == 10, followsCarriageReturn {
+            followsCarriageReturn = false
+            return nil
+        }
+        followsCarriageReturn = byte == 13
+        guard byte == 10 || byte == 13 else { line.append(byte); return nil }
+        let text = String(decoding: line, as: UTF8.self)
+        line.removeAll(keepingCapacity: true)
+        if text.isEmpty {
+            defer { eventName = ""; dataLines.removeAll(keepingCapacity: true) }
+            guard !dataLines.isEmpty else { return nil }
+            return Event(name: eventName.isEmpty ? "message" : eventName, data: dataLines.joined(separator: "\n"))
+        }
+        guard !text.hasPrefix(":") else { return nil }
+        let separator = text.firstIndex(of: ":") ?? text.endIndex
+        let field = text[..<separator]
+        var value = separator == text.endIndex ? Substring() : text[text.index(after: separator)...]
+        if value.first == " " { value = value.dropFirst() }
+        switch field {
+        case "event": eventName = String(value)
+        case "data": dataLines.append(String(value))
+        default: break
+        }
+        return nil
+    }
+}
+
 // MARK: - HTTP / SSE Transport Implementation
 private final class HTTPMCPTransport: @unchecked Sendable {
     let initialURL: URL
     let headers: [String: String]
+    let oauth: MCPOAuthConfiguration?
     private(set) var postURL: URL?
     private var sseTask: Task<Void, Never>?
     private let lock = NSLock()
@@ -412,13 +465,24 @@ private final class HTTPMCPTransport: @unchecked Sendable {
         return try body()
     }
 
-    init(url: URL, headers: [String: String] = [:]) {
+    init(url: URL, headers: [String: String] = [:], oauth: MCPOAuthConfiguration? = nil) {
         self.initialURL = url
         self.headers = headers
+        self.oauth = oauth
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = 60
         config.timeoutIntervalForResource = 300
-        self.session = URLSession(configuration: config)
+        self.session = URLSession(configuration: config, delegate: AuthOriginRedirectDelegate(), delegateQueue: nil)
+    }
+
+    private func authorize(_ request: inout URLRequest) async throws {
+        guard let target = request.url, AuthOriginRedirectDelegate.sameOrigin(initialURL, target) else {
+            throw MCPOAuthError.message("MCP refused a cross-origin endpoint to protect credentials")
+        }
+        if let oauth {
+            let token = try await MCPOAuthManager.shared.accessToken(for: oauth)
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
     }
 
     func connect(timeout: Double = 15) async throws {
@@ -429,6 +493,7 @@ private final class HTTPMCPTransport: @unchecked Sendable {
         for (k, v) in headers {
             request.setValue(v, forHTTPHeaderField: k)
         }
+        try await authorize(&request)
 
         do {
             let (bytes, response) = try await session.bytes(for: request)
@@ -438,7 +503,16 @@ private final class HTTPMCPTransport: @unchecked Sendable {
                     try await startSSEStream(bytes: bytes, sseURL: initialURL, timeout: timeout)
                     return
                 }
+                if http.statusCode == 405,
+                   (http.value(forHTTPHeaderField: "Allow") ?? "").split(separator: ",").contains(where: {
+                       $0.trimmingCharacters(in: .whitespaces).uppercased() == "POST"
+                   }) {
+                    bytes.task.cancel()
+                    withStateLock { postURL = initialURL }
+                    return
+                }
             }
+            bytes.task.cancel()
 
             // If not SSE, try appending /sse if missing
             if !initialURL.path.hasSuffix("/sse") {
@@ -447,6 +521,8 @@ private final class HTTPMCPTransport: @unchecked Sendable {
                 sseReq.httpMethod = "GET"
                 sseReq.setValue("application/json, text/event-stream", forHTTPHeaderField: "Accept")
                 sseReq.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
+                for (name, value) in headers { sseReq.setValue(value, forHTTPHeaderField: name) }
+                try await authorize(&sseReq)
 
                 if let (subBytes, subResp) = try? await session.bytes(for: sseReq),
                    let subHttp = subResp as? HTTPURLResponse,
@@ -468,27 +544,12 @@ private final class HTTPMCPTransport: @unchecked Sendable {
     private func startSSEStream(bytes: URLSession.AsyncBytes, sseURL: URL, timeout: Double) async throws {
         self.sseTask = Task { [weak self] in
             guard let self = self else { return }
-            var currentEvent: String?
-            var currentData = ""
+            var decoder = MCPEventStreamDecoder()
             do {
-                for try await line in bytes.lines {
+                for try await byte in bytes {
                     if Task.isCancelled { break }
-                    if line.isEmpty {
-                        if let event = currentEvent {
-                            self.handleSSEEvent(event: event, data: currentData, sseURL: sseURL)
-                        } else if !currentData.isEmpty {
-                            self.handleSSEEvent(event: "message", data: currentData, sseURL: sseURL)
-                        }
-                        currentEvent = nil
-                        currentData = ""
-                        continue
-                    }
-                    if line.hasPrefix(":") { continue }
-                    if line.hasPrefix("event:") {
-                        currentEvent = line.dropFirst(6).trimmingCharacters(in: .whitespaces)
-                    } else if line.hasPrefix("data:") {
-                        let piece = line.dropFirst(5).trimmingCharacters(in: .whitespaces)
-                        currentData = currentData.isEmpty ? piece : (currentData + "\n" + piece)
+                    if let event = decoder.append(byte) {
+                        self.handleSSEEvent(event: event.name, data: event.data, sseURL: sseURL)
                     }
                 }
             } catch {
@@ -551,34 +612,46 @@ private final class HTTPMCPTransport: @unchecked Sendable {
             postReq.setValue(v, forHTTPHeaderField: k)
         }
         postReq.httpBody = try JSONSerialization.data(withJSONObject: req)
+        try await authorize(&postReq)
 
         return try await withCheckedThrowingContinuation { continuation in
             withStateLock { pendingContinuations[id] = continuation }
 
             Task {
                 do {
-                    let (data, response) = try await session.data(for: postReq)
-                    let http = response as? HTTPURLResponse
-                    let status = http?.statusCode ?? 0
-
-                    // 1. Direct JSON-RPC in HTTP response body
-                    if (200...299).contains(status), !data.isEmpty,
-                       let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                       (json["result"] != nil || json["error"] != nil) {
-                        let removed = self.withStateLock { self.pendingContinuations.removeValue(forKey: id) }
-                        removed?.resume(returning: json)
-                        return
+                    let (bytes, response) = try await session.bytes(for: postReq)
+                    defer { bytes.task.cancel() }
+                    guard let http = response as? HTTPURLResponse else {
+                        throw ToolError.executionFailed("MCP HTTP response missing")
                     }
-
-                    // 2. HTTP error response
-                    if status >= 400 {
-                        let errStr = String(data: data, encoding: .utf8) ?? "HTTP \(status)"
-                        let removed = self.withStateLock { self.pendingContinuations.removeValue(forKey: id) }
-                        removed?.resume(throwing: ToolError.executionFailed("MCP HTTP \(status): \(errStr)"))
-                        return
+                    let status = http.statusCode
+                    // Legacy SSE pushes accepted RPC results over the separate GET stream.
+                    if status == 202 { return }
+                    guard (200...299).contains(status) else {
+                        throw ToolError.executionFailed("MCP HTTP \(status)")
                     }
-
-                    // 3. For 202 Accepted (standard SSE), the response will be pushed asynchronously over the SSE stream!
+                    let contentType = http.value(forHTTPHeaderField: "Content-Type")?.lowercased() ?? ""
+                    if contentType.contains("text/event-stream") {
+                        var decoder = MCPEventStreamDecoder()
+                        for try await byte in bytes {
+                            guard let event = decoder.append(byte),
+                                  let json = try JSONSerialization.jsonObject(with: Data(event.data.utf8)) as? [String: Any],
+                                  json["id"] as? Int == id,
+                                  json["result"] != nil || json["error"] != nil else { continue }
+                            let removed = self.withStateLock { self.pendingContinuations.removeValue(forKey: id) }
+                            removed?.resume(returning: json)
+                            return
+                        }
+                        throw ToolError.executionFailed("MCP SSE stream ended without the RPC result")
+                    }
+                    var data = Data()
+                    for try await byte in bytes { data.append(byte) }
+                    guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                          json["id"] as? Int == id, json["result"] != nil || json["error"] != nil else {
+                        throw ToolError.executionFailed("MCP HTTP response did not contain the RPC result")
+                    }
+                    let removed = self.withStateLock { self.pendingContinuations.removeValue(forKey: id) }
+                    removed?.resume(returning: json)
                 } catch {
                     let removed = self.withStateLock { self.pendingContinuations.removeValue(forKey: id) }
                     removed?.resume(throwing: error)
@@ -604,7 +677,11 @@ private final class HTTPMCPTransport: @unchecked Sendable {
             postReq.setValue(v, forHTTPHeaderField: k)
         }
         postReq.httpBody = try JSONSerialization.data(withJSONObject: req)
-        _ = try? await session.data(for: postReq)
+        try await authorize(&postReq)
+        let (_, response) = try await session.data(for: postReq)
+        guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+            throw MCPOAuthError.message("MCP notification failed (HTTP \((response as? HTTPURLResponse)?.statusCode ?? 0))")
+        }
     }
 
     func disconnect() {
@@ -616,6 +693,7 @@ private final class HTTPMCPTransport: @unchecked Sendable {
         }
         pendingContinuations.removeAll()
         lock.unlock()
+        session.invalidateAndCancel()
     }
 }
 

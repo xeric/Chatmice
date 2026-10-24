@@ -11,6 +11,7 @@ import Foundation
 
 enum ChatActivityPhase: Equatable, Sendable {
     case preparing
+    case compactingContext
     case waitingForModel
     case awaitingApproval(tool: String, detail: String)
     case runningTool(tool: String, detail: String)
@@ -21,7 +22,8 @@ enum ChatActivityPhase: Equatable, Sendable {
 
     var isActive: Bool {
         switch self {
-        case .preparing, .waitingForModel, .awaitingApproval, .runningTool, .processingToolResult, .streamingResponse:
+        case .preparing, .compactingContext, .waitingForModel, .awaitingApproval, .runningTool,
+             .processingToolResult, .streamingResponse:
             return true
         case .completed, .failed:
             return false
@@ -31,6 +33,7 @@ enum ChatActivityPhase: Equatable, Sendable {
     var title: String {
         switch self {
         case .preparing: return "Preparing request"
+        case .compactingContext: return "Compacting context"
         case .waitingForModel: return "Waiting for model"
         case .awaitingApproval(let tool, _): return "Waiting to run \(tool)"
         case .runningTool(let tool, _): return "Running \(tool)"
@@ -44,6 +47,7 @@ enum ChatActivityPhase: Equatable, Sendable {
     var compactTitle: String {
         switch self {
         case .preparing: return "Preparing"
+        case .compactingContext: return "Compacting"
         case .waitingForModel: return "Thinking"
         case .awaitingApproval: return "Approval"
         case .runningTool(let tool, _): return tool
@@ -62,6 +66,8 @@ enum ChatActivityPhase: Equatable, Sendable {
             return "Using the output from \(tool)"
         case .preparing:
             return "Collecting conversation context"
+        case .compactingContext:
+            return "Summarizing earlier messages before sending"
         case .waitingForModel:
             return "The model is processing your request"
         case .streamingResponse:
@@ -76,6 +82,7 @@ enum ChatActivityPhase: Equatable, Sendable {
     var symbolName: String {
         switch self {
         case .preparing: return "slider.horizontal.3"
+        case .compactingContext: return "text.badge.minus"
         case .waitingForModel: return "brain.head.profile"
         case .awaitingApproval: return "hand.raised.fill"
         case .runningTool: return "terminal.fill"
@@ -98,6 +105,7 @@ struct ChatActivitySnapshot: Equatable, Sendable, Identifiable {
 
 enum ChatActivityEventKind: Equatable, Sendable {
     case started
+    case compactingContext
     case waitingForModel
     case awaitingApproval(tool: String, detail: String)
     case runningTool(tool: String, detail: String)
@@ -215,6 +223,7 @@ final class ChatActivityStore: ObservableObject {
     private func phase(for kind: ChatActivityEventKind) -> ChatActivityPhase? {
         switch kind {
         case .started: return .preparing
+        case .compactingContext: return .compactingContext
         case .waitingForModel: return .waitingForModel
         case .awaitingApproval(let tool, let detail): return .awaitingApproval(tool: tool, detail: detail)
         case .runningTool(let tool, let detail): return .runningTool(tool: tool, detail: detail)

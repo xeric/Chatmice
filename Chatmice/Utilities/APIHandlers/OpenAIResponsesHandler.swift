@@ -15,6 +15,14 @@ private struct OpenAIModelsResponse: Codable {
 
 private struct OpenAIModel: Codable {
     let id: String
+    let contextLength: Int?
+    let maxCompletionTokens: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case contextLength = "context_length"
+        case maxCompletionTokens = "max_completion_tokens"
+    }
 }
 
 class OpenAIResponsesHandler: OpenAIHandlerBase, APIService {
@@ -242,7 +250,9 @@ class OpenAIResponsesHandler: OpenAIHandlerBase, APIService {
             apiUrl: baseURL,
             apiKey: apiKey,
             model: model,
-            type: "chatgpt"
+            type: "chatgpt",
+            providerID: providerID,
+            customHeaders: requestHeaders
         )
         let handler = ChatGPTHandler(config: config, session: session)
         let stream = try await handler.sendMessageStream(requestMessages, temperature: temperature)
@@ -269,6 +279,7 @@ class OpenAIResponsesHandler: OpenAIHandlerBase, APIService {
         if !effectiveKey.isEmpty {
             request.setValue("Bearer \(effectiveKey)", forHTTPHeaderField: "Authorization")
         }
+        ProviderHeaderStore.apply(requestHeaders, to: &request)
 
         do {
             let (data, response) = try await session.data(for: request)
@@ -277,12 +288,19 @@ class OpenAIResponsesHandler: OpenAIHandlerBase, APIService {
             case .success(let responseData):
                 guard let responseData else { throw APIError.invalidResponse }
                 if let decodedResponse = try? JSONDecoder().decode(OpenAIModelsResponse.self, from: responseData) {
-                    return decodedResponse.data.map { AIModel(id: $0.id) }
+                    return decodedResponse.data.map {
+                        AIModel(
+                            id: $0.id,
+                            contextWindowTokens: $0.contextLength,
+                            maxOutputTokens: $0.maxCompletionTokens
+                        )
+                    }
                 }
                 if let obj = try? JSONSerialization.jsonObject(with: responseData) as? [String: Any],
-                   let dataArr = obj["data"] as? [[String: Any]] {
-                    let ids = dataArr.compactMap { $0["id"] as? String }
-                    if !ids.isEmpty { return ids.map { AIModel(id: $0) } }
+                    let dataArr = obj["data"] as? [[String: Any]]
+                {
+                    let models = dataArr.compactMap(AIModel.init(json:))
+                    if !models.isEmpty { return models }
                 }
                 throw APIError.decodingFailed("Failed to parse models list")
             case .failure(let error):
@@ -304,7 +322,7 @@ class OpenAIResponsesHandler: OpenAIHandlerBase, APIService {
         stream: Bool,
         includeTemperature: Bool = true
     ) -> URLRequest {
-        var request = URLRequest(url: baseURL)
+        var request = URLRequest(url: OpenAIEndpointURL.responses(from: baseURL))
         request.httpMethod = "POST"
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -400,7 +418,7 @@ class OpenAIResponsesHandler: OpenAIHandlerBase, APIService {
         }
 
         let reasoningSelection = ReasoningPreferenceStore.selection(for: self.model)
-        let reasoningProfile = ModelReasoningRegistry.resolve(modelID: self.model, serviceType: serviceType)
+        let reasoningProfile = ModelReasoningRegistry.resolve(modelID: self.model, serviceType: serviceType, serviceID: providerID)
         ReasoningRequestEncoder.apply(
             selection: reasoningSelection,
             profile: reasoningProfile,
@@ -412,11 +430,13 @@ class OpenAIResponsesHandler: OpenAIHandlerBase, APIService {
         }
 
         request.httpBody = try? JSONSerialization.data(withJSONObject: jsonDict, options: [])
+        ProviderHeaderStore.apply(requestHeaders, to: &request)
 
         return request
     }
 
     private func parseJSONResponse(data: Data) -> (String, String)? {
+        recordTokenUsage(from: data)
         guard let json = try? JSONSerialization.jsonObject(with: data, options: []) as? [String: Any] else {
             return nil
         }
@@ -425,6 +445,7 @@ class OpenAIResponsesHandler: OpenAIHandlerBase, APIService {
     }
 
     private func parseStreamResponse(data: Data) -> (Bool, APIError?, String?) {
+        recordTokenUsage(from: data)
         do {
             guard let json = try JSONSerialization.jsonObject(with: data, options: []) as? [String: Any] else {
                 return (false, APIError.decodingFailed("Failed to parse streaming payload"), nil)
@@ -824,10 +845,16 @@ class OpenAIResponsesHandler: OpenAIHandlerBase, APIService {
     }
 
     private func shouldSendTemperature() -> Bool {
-        let modelID = self.model.lowercased()
-        Self.temperatureLock.lock()
-        let isUnsupported = Self.temperatureUnsupportedModels.contains(modelID)
-        Self.temperatureLock.unlock()
+        Self.shouldSendTemperature(for: model)
+    }
+
+    static func shouldSendTemperature(for model: String) -> Bool {
+        let modelID = model.lowercased()
+        let profile = ModelReasoningRegistry.resolve(modelID: modelID, serviceType: "openai-responses")
+        guard !profile.supportsReasoning else { return false }
+        temperatureLock.lock()
+        let isUnsupported = temperatureUnsupportedModels.contains(modelID)
+        temperatureLock.unlock()
         return !isUnsupported
     }
 

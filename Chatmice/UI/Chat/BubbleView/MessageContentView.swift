@@ -1971,9 +1971,7 @@ struct ToolActivityView: View {
         VStack(alignment: .leading, spacing: 0) {
             Button {
                 guard state.canExpand else { return }
-                withAnimation(.easeInOut(duration: 0.18)) {
-                    isExpanded.toggle()
-                }
+                isExpanded.toggle()
             } label: {
                 HStack(spacing: 10) {
                     ZStack {
@@ -2017,6 +2015,7 @@ struct ToolActivityView: View {
                             .font(.system(size: 10, weight: .semibold))
                             .foregroundStyle(.secondary)
                             .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                            .animation(.easeInOut(duration: 0.18), value: isExpanded)
                     }
                 }
                 .padding(.horizontal, 10)
@@ -2098,7 +2097,6 @@ struct ToolActivityView: View {
                 }
                 .padding(10)
                 .background(Color.black.opacity(0.08))
-                .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
         .background(

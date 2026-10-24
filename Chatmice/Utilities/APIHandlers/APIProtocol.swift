@@ -65,6 +65,7 @@ enum ReasoningDialect: Equatable {
     case anthropicBudget(min: Int, max: Int)
     case geminiLevel
     case geminiBudget(min: Int, max: Int)
+    case ollamaThink
 }
 
 struct ModelReasoningProfile: Equatable {
@@ -75,9 +76,26 @@ struct ModelReasoningProfile: Equatable {
 }
 
 enum ModelReasoningRegistry {
-    static func resolve(modelID rawModelID: String, serviceType rawServiceType: String) -> ModelReasoningProfile {
+    static func resolve(modelID rawModelID: String, serviceType rawServiceType: String, serviceID: UUID? = nil) -> ModelReasoningProfile {
         let modelID = rawModelID.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
         let serviceType = rawServiceType.lowercased()
+        let manual = ModelConfigurationStore.overrides(serviceID: serviceID, modelID: rawModelID).thinkingSupported
+        if manual == false { return unsupported }
+        if manual == true {
+            let efforts: [ReasoningEffort] = [.default, .none, .auto, .low, .medium, .high]
+            switch serviceType {
+            case "openai", "openai-responses":
+                return ModelReasoningProfile(dialect: .openAIResponses, supportedEfforts: efforts)
+            case "claude":
+                return ModelReasoningProfile(dialect: isAdaptiveClaude(modelID) ? .anthropicAdaptive : .anthropicBudget(min: 1_024, max: claudeBudgetMaximum(modelID)), supportedEfforts: efforts)
+            case "gemini":
+                return ModelReasoningProfile(dialect: modelID.contains("gemini-3") ? .geminiLevel : .geminiBudget(min: 0, max: 24_576), supportedEfforts: efforts)
+            case "ollama":
+                return ModelReasoningProfile(dialect: .ollamaThink, supportedEfforts: efforts)
+            default:
+                return ModelReasoningProfile(dialect: .openAIEffort, supportedEfforts: efforts)
+            }
+        }
 
         switch serviceType {
         case "claude":
@@ -225,6 +243,8 @@ enum ReasoningRequestEncoder {
                 budget = budgetTokens(for: selection, min: min, max: max)
             }
             body["thinkingConfig"] = ["includeThoughts": selection != .none, "thinkingBudget": budget]
+        case .ollamaThink:
+            body["think"] = selection != .none
         }
     }
 
@@ -270,6 +290,8 @@ protocol APIService {
         -> AsyncThrowingStream<String, Error>
 
     func fetchModels() async throws -> [AIModel]
+    func consumeLatestTokenUsage() -> ModelTokenUsage?
+    func compactContext(_ source: String) async throws -> ContextCompactionResult
     func cancelCurrentRequest()
 }
 
@@ -278,18 +300,78 @@ protocol APIServiceConfiguration {
     var apiUrl: URL { get set }
     var apiKey: String { get set }
     var model: String { get set }
+    var providerID: UUID? { get }
+    var requestHeaders: [String: String] { get }
 }
 
-struct AIModel: Codable, Identifiable {
-    let id: String
+extension APIServiceConfiguration {
+    var providerID: UUID? {
+        (self as? APIServiceEntity)?.id
+    }
 
-    init(id: String) {
+    var requestHeaders: [String: String] {
+        if let config = self as? APIServiceConfig, let headers = config.customHeaders { return headers }
+        guard let providerID else { return [:] }
+        return (try? ProviderHeaderStore.load(for: providerID)) ?? [:]
+    }
+}
+
+struct AIModel: Codable, Identifiable, Equatable, Sendable {
+    let id: String
+    let contextWindowTokens: Int?
+    let maxOutputTokens: Int?
+
+    init(id: String, contextWindowTokens: Int? = nil, maxOutputTokens: Int? = nil) {
         self.id = id
+        self.contextWindowTokens = contextWindowTokens
+        self.maxOutputTokens = maxOutputTokens
+    }
+
+    init?(json: [String: Any]) {
+        guard let id = (json["id"] as? String) ?? (json["name"] as? String) else { return nil }
+        self.id = id.replacingOccurrences(of: "models/", with: "")
+        self.contextWindowTokens = Self.integer(
+            in: json,
+            keys: ["context_length", "context_window", "inputTokenLimit", "input_token_limit"]
+        )
+        self.maxOutputTokens = Self.integer(
+            in: json,
+            keys: ["max_completion_tokens", "outputTokenLimit", "max_output_tokens"]
+        )
+    }
+
+    private static func integer(in dictionary: [String: Any], keys: [String]) -> Int? {
+        for key in keys {
+            if let value = dictionary[key] as? Int { return value }
+            if let value = dictionary[key] as? NSNumber { return value.intValue }
+        }
+        return nil
     }
 }
 
 extension APIService {
     func fetchModels() async throws -> [AIModel] { [] }
+    func consumeLatestTokenUsage() -> ModelTokenUsage? { nil }
+
+    func compactContext(_ source: String) async throws -> ContextCompactionResult {
+        let messages = [
+            [
+                "role": "system",
+                "content": """
+                    Create a durable conversation checkpoint. Preserve user goals, preferences, decisions, facts, \
+                    referenced files and attachments, completed actions, important tool results, errors, and open work. \
+                    Omit greetings, repetition, and raw logs. Never invent facts. Return only the checkpoint summary.
+                    """,
+            ],
+            ["role": "user", "content": source],
+        ]
+        let stream = try await sendMessageStream(messages, temperature: 0.2)
+        var summary = ""
+        for try await chunk in stream { summary += chunk }
+        let trimmed = summary.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { throw APIError.invalidResponse }
+        return ContextCompactionResult(summary: trimmed, usage: consumeLatestTokenUsage())
+    }
     func cancelCurrentRequest() {}
 }
 
@@ -310,7 +392,16 @@ enum ModelCapabilityTestStore {
         guard let data = UserDefaults.standard.data(forKey: prefix + serviceID.uuidString),
               let results = try? JSONDecoder().decode([String: ModelCapabilityTestResult].self, from: data)
         else { return [:] }
-        return results
+        // Earlier probes used a one-pixel image and insufficient output budget.
+        return results.mapValues { result in
+            ModelCapabilityTestResult(
+                connectionSucceeded: result.connectionSucceeded,
+                visionSupported: result.visionSupported == true ? true : nil,
+                reasoningSupported: result.reasoningSupported,
+                testedAt: result.testedAt,
+                errorMessage: result.errorMessage
+            )
+        }
     }
 
     static func save(_ results: [String: ModelCapabilityTestResult], for serviceID: UUID) {
@@ -327,7 +418,7 @@ enum ModelCapabilityProbe {
         case reasoning
     }
 
-    private static let pixelPNGBase64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC"
+    private static let pixelPNGBase64 = "iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAIAAAAlC+aJAAAAfElEQVR4nNXOQREAMAjAsK7+PTMRPLhGQd7QJnESJ3ESJ3ESJ3ESJ3ESJ3ESJ3ESJ3ESJ3ESJ3ESJ3ESJ3ESJ3ESJ3ESJ3ESJ3ESJ3ESJ3ESJ3ESJ3ESJ3ESJ3ESJ3ESJ3ESJ3ESJ3ESJ3ESJ3ESJ3ESJ3ESJ3ESJ3ESJ3ESJ3ESJ3ESJ3ESJ3ES53Vg6wNShQF/fRSLfgAAAABJRU5ErkJggg=="
     private static let visionPrompt =
         "What is the only color in this image? Reply with exactly one lowercase color word."
 
@@ -345,12 +436,13 @@ enum ModelCapabilityProbe {
             )
         }
 
-        let visionSupported: Bool
+        let visionSupported: Bool?
         do {
             try await perform(config: config, modelID: modelID, kind: .vision)
             visionSupported = true
         } catch {
-            visionSupported = false
+            // A failed probe is not proof that the model lacks image input.
+            visionSupported = nil
         }
 
         let reasoningSupported: Bool
@@ -428,6 +520,7 @@ enum ModelCapabilityProbe {
             request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
         }
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        ProviderHeaderStore.apply(config.requestHeaders, to: &request)
         return request
     }
 
@@ -477,7 +570,7 @@ enum ModelCapabilityProbe {
         var body: [String: Any] = [
             "model": modelID,
             "input": [["role": "user", "content": content]],
-            "max_output_tokens": 32
+            "max_output_tokens": 1024
         ]
         if kind == .reasoning { body["reasoning"] = ["effort": "low"] }
         return body

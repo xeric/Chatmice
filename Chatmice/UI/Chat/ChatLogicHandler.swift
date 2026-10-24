@@ -28,6 +28,8 @@ final class ChatLogicHandler: ObservableObject {
     
     func sendMessage(messageText: String, attachedImages: [ImageAttachment], attachedFiles: [DocumentAttachment], attachedAudio: DocumentAttachment? = nil) {
         guard !chat.waitingForResponse, !isStreaming else { return }
+        guard !messageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || !attachedImages.isEmpty || !attachedFiles.isEmpty || attachedAudio != nil else { return }
         guard chatViewModel.canSendMessage else {
             currentError = ErrorMessage(
                 type: .noApiService("No API service selected. Select the API service to send your first message"),
@@ -98,7 +100,7 @@ final class ChatLogicHandler: ObservableObject {
     }
     
     func selectAndAddImages(completion: @escaping ([ImageAttachment]) -> Void) {
-        guard chat.apiService?.imageUploadsAllowed == true else { return }
+        guard ModelAttachmentCapabilities.vision(service: chat.apiService, modelID: chat.gptModel) else { return }
 
         let panel = NSOpenPanel()
         panel.allowsMultipleSelection = true
@@ -295,6 +297,6 @@ final class ChatLogicHandler: ObservableObject {
     }
 
     private func supportsPDFUploads() -> Bool {
-        return chat.apiService?.pdfUploadsAllowed == true
+        return ModelAttachmentCapabilities.files(service: chat.apiService, modelID: chat.gptModel)
     }
 }

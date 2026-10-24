@@ -15,6 +15,7 @@ class MessageManager: ObservableObject {
     private var cancelRequested = false
     private var streamGeneration: UUID?
     private var activeChatId: UUID?
+    private var compactingChatIDs = Set<UUID>()
 
     init(apiService: APIService, viewContext: NSManagedObjectContext) {
         self.apiService = apiService
@@ -62,67 +63,90 @@ class MessageManager: ObservableObject {
         replacing responseToReplace: MessageEntity? = nil,
         completion: @escaping (Result<Void, Error>) -> Void
     ) {
-        let requestMessages = prepareRequestMessages(
-            userMessage: message,
-            chat: chat,
-            contextSize: contextSize,
-            excluding: responseToReplace
-        )
-        if let responseToReplace {
-            prepareForRetry(responseToReplace, in: chat)
-        }
+        if let responseToReplace { prepareForRetry(responseToReplace, in: chat) }
         beginActivity(for: chat.id)
         chat.waitingForResponse = true
         let temperature = (chat.persona?.temperature ?? AppConstants.defaultTemperatureForChat).roundedToOneDecimal()
 
-        let handleResult: (Result<String, APIError>) -> Void = { [weak self] result in
-            guard let self = self else { return }
-
-            switch result {
-            case .success(let messageBody):
-                chat.waitingForResponse = false
-                let partsEnvelope = encodePartsEnvelope(
-                    from: (self.apiService as? GeminiHandler)?.consumeLastResponseParts(),
-                    serviceType: chat.apiService?.type
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                let didCompact = try await self.compactContextBeforeSendingIfNeeded(
+                    chat: chat,
+                    recentMessageLimit: contextSize
                 )
-                self.addMessageToChat(chat: chat, message: messageBody, partsEnvelope: partsEnvelope)
-                self.replaceLastAssistantRequestMessage(
-                    in: chat,
-                    content: messageBody,
-                    geminiParts: decodePartsEnvelopeToBase64(partsEnvelope),
-                    isRetry: false
+                let requestMessages = self.prepareRequestMessages(
+                    userMessage: message,
+                    chat: chat,
+                    contextSize: contextSize,
+                    excluding: responseToReplace
                 )
-                self.viewContext.saveWithRetry(attempts: 1)
-                self.endActivity(for: chat.id, kind: .completed)
-
-                DispatchQueue.main.async {
-                    NotificationCenter.default.post(
-                        name: NSNotification.Name("NonStreamingMessageCompleted"),
-                        object: chat
-                    )
-                    NotificationCenter.default.post(
-                        name: NSNotification.Name("ChatResponseCompleted"),
-                        object: chat,
-                        userInfo: [
-                            "responseId": UUID().uuidString,
-                            "chatId": chat.id,
-                            "message": messageBody,
-                            "chatName": chat.name,
-                        ]
-                    )
+                if didCompact { self.persistRecalculatedContextUsage(chat: chat, requestMessages: requestMessages) }
+                _ = self.apiService.consumeLatestTokenUsage()
+                ChatActivityEvents.post(ChatActivityEvent(chatId: chat.id, kind: .waitingForModel))
+                self.apiService.sendMessage(requestMessages, temperature: temperature) { [weak self] result in
+                    Task { @MainActor in
+                        self?.handleNonStreamingResult(
+                            result,
+                            chat: chat,
+                            requestMessages: requestMessages,
+                            completion: completion
+                        )
+                    }
                 }
-
-                completion(.success(()))
-
-            case .failure(let error):
+            } catch {
                 chat.waitingForResponse = false
                 self.endActivity(for: chat.id, kind: .failed(message: error.localizedDescription))
                 completion(.failure(error))
             }
         }
+    }
 
-        apiService.sendMessage(requestMessages, temperature: temperature) { result in
-            handleResult(result)
+    @MainActor
+    private func handleNonStreamingResult(
+        _ result: Result<String, APIError>,
+        chat: ChatEntity,
+        requestMessages: [[String: String]],
+        completion: @escaping (Result<Void, Error>) -> Void
+    ) {
+        switch result {
+        case .success(let messageBody):
+            chat.waitingForResponse = false
+            let partsEnvelope = encodePartsEnvelope(
+                from: (apiService as? GeminiHandler)?.consumeLastResponseParts(),
+                serviceType: chat.apiService?.type
+            )
+            addMessageToChat(chat: chat, message: messageBody, partsEnvelope: partsEnvelope)
+            replaceLastAssistantRequestMessage(
+                in: chat,
+                content: messageBody,
+                geminiParts: decodePartsEnvelopeToBase64(partsEnvelope),
+                isRetry: false
+            )
+            viewContext.saveWithRetry(attempts: 1)
+            let usage = ContextManagement.resolvedUsage(
+                reported: apiService.consumeLatestTokenUsage(),
+                requestMessages: requestMessages,
+                response: ToolActivityRecord.replacingMarkersForModel(in: messageBody)
+            )
+            persistContextUsage(chat: chat, usage: usage)
+            endActivity(for: chat.id, kind: .completed)
+            NotificationCenter.default.post(name: NSNotification.Name("NonStreamingMessageCompleted"), object: chat)
+            NotificationCenter.default.post(
+                name: NSNotification.Name("ChatResponseCompleted"),
+                object: chat,
+                userInfo: [
+                    "responseId": UUID().uuidString,
+                    "chatId": chat.id,
+                    "message": messageBody,
+                    "chatName": chat.name,
+                ]
+            )
+            completion(.success(()))
+        case .failure(let error):
+            chat.waitingForResponse = false
+            endActivity(for: chat.id, kind: .failed(message: error.localizedDescription))
+            completion(.failure(error))
         }
     }
 
@@ -134,12 +158,6 @@ class MessageManager: ObservableObject {
         replacing responseToReplace: MessageEntity? = nil,
         completion: @escaping (Result<Void, Error>) -> Void
     ) {
-        let requestMessages = prepareRequestMessages(
-            userMessage: message,
-            chat: chat,
-            contextSize: contextSize,
-            excluding: responseToReplace
-        )
         if let responseToReplace {
             prepareForRetry(responseToReplace, in: chat)
         }
@@ -160,6 +178,7 @@ class MessageManager: ObservableObject {
             var deferImageResponse = false
             var streamingMessage: MessageEntity?
             var postedStreamingActivity = false
+            var requestMessages: [[String: String]] = []
 
             defer {
                 StreamingResponseStore.shared.clear(chatId: chat.id)
@@ -173,6 +192,19 @@ class MessageManager: ObservableObject {
             }
 
             do {
+                let didCompact = try await compactContextBeforeSendingIfNeeded(
+                    chat: chat,
+                    recentMessageLimit: contextSize
+                )
+                requestMessages = prepareRequestMessages(
+                    userMessage: message,
+                    chat: chat,
+                    contextSize: contextSize,
+                    excluding: responseToReplace
+                )
+                if didCompact { persistRecalculatedContextUsage(chat: chat, requestMessages: requestMessages) }
+                _ = apiService.consumeLatestTokenUsage()
+                ChatActivityEvents.post(ChatActivityEvent(chatId: chat.id, kind: .waitingForModel))
                 let stream = try await apiService.sendMessageStream(requestMessages, temperature: temperature)
                 AppLogger.shared.info("message.stream.started provider=\(apiService.name) chat=\(chat.id.uuidString)")
                 for try await chunk in stream {
@@ -268,6 +300,12 @@ class MessageManager: ObservableObject {
                 )
 
                 try? self.viewContext.save()
+                let usage = ContextManagement.resolvedUsage(
+                    reported: self.apiService.consumeLatestTokenUsage(),
+                    requestMessages: requestMessages,
+                    response: ToolActivityRecord.replacingMarkersForModel(in: accumulatedResponse)
+                )
+                persistContextUsage(chat: chat, usage: usage)
                 NotificationCenter.default.post(
                     name: NSNotification.Name("ChatResponseCompleted"),
                     object: chat,
@@ -439,6 +477,7 @@ class MessageManager: ObservableObject {
         newMessage.timestamp = Date()
         newMessage.own = false
         newMessage.messageParts = partsEnvelope
+        newMessage.messageKind = .message
         newMessage.chat = chat
 
         chat.updatedDate = Date()
@@ -461,6 +500,7 @@ class MessageManager: ObservableObject {
     }
 
     private func prepareForRetry(_ response: MessageEntity, in chat: ChatEntity) {
+        ContextManagement.invalidateCheckpoints(in: chat, covering: response.sequence)
         if let lastAssistantIndex = chat.requestMessages.lastIndex(where: { $0["role"] == AppConstants.defaultRole }) {
             chat.requestMessages.remove(at: lastAssistantIndex)
         }
@@ -503,7 +543,7 @@ class MessageManager: ObservableObject {
     private func constructRequestMessages(
         chat: ChatEntity,
         forUserMessage userMessage: String?,
-        contextSize: Int,
+        contextSize _: Int,
         excluding responseToReplace: MessageEntity? = nil
     ) -> [[String: String]] {
         var messages: [[String: String]] = []
@@ -515,22 +555,25 @@ class MessageManager: ObservableObject {
             ])
         }
         else {
-            // Models like o1-mini and o1-preview don't support "system" role. However, we can pass the system message with "user" role instead.
             messages.append([
                 "role": "user",
                 "content": "Take this message as the system message: \(chat.systemMessage)",
             ])
         }
 
-        let sortedMessages = chat.messagesArray
-            .filter { message in
-                guard let responseToReplace else { return true }
-                return message.objectID != responseToReplace.objectID
-            }
-            .suffix(contextSize)
+        let projection = ContextManagement.projection(in: chat.messagesArray)
+        if let checkpoint = projection.checkpoint {
+            messages.append([
+                "role": "system",
+                "content": "Conversation checkpoint covering earlier messages:\n\n\(checkpoint.body)",
+            ])
+        }
+        let conversationMessages = projection.messages.filter { message in
+            guard let responseToReplace else { return true }
+            return message.objectID != responseToReplace.objectID
+        }
 
-        // Add conversation history
-        for message in sortedMessages {
+        for message in conversationMessages {
             var payload: [String: String] = [
                 "role": message.own ? "user" : "assistant",
                 "content": ToolActivityRecord.replacingMarkersForModel(in: message.body),
@@ -546,18 +589,127 @@ class MessageManager: ObservableObject {
             messages.append(payload)
         }
 
-        // Add new user message if provided
         let lastMessage = messages.last?["content"] ?? ""
-        if lastMessage != userMessage {
-            if let userMessage = userMessage {
-                messages.append([
-                    "role": "user",
-                    "content": userMessage,
-                ])
-            }
+        if lastMessage != userMessage, let userMessage {
+            messages.append([
+                "role": "user",
+                "content": userMessage,
+            ])
         }
 
         return messages
+    }
+
+    @MainActor
+    private func persistContextUsage(chat: ChatEntity, usage: ModelTokenUsage) {
+        guard !chat.isDeleted else { return }
+        chat.contextInputTokens = Int64(usage.inputTokens)
+        chat.contextOutputTokens = Int64(usage.outputTokens)
+        // A nil timestamp marks estimated counts; legacy positive counts with a date are reported.
+        chat.contextUpdatedAt = usage.isEstimated ? nil : Date()
+        viewContext.saveWithRetry(attempts: 1)
+    }
+
+    @MainActor
+    private func persistRecalculatedContextUsage(
+        chat: ChatEntity,
+        requestMessages: [[String: String]]
+    ) {
+        let inputTokens = requestMessages.reduce(0) {
+            $0 + ContextManagement.estimatedTokens(in: $1["content"] ?? "")
+        }
+        persistContextUsage(
+            chat: chat,
+            usage: ModelTokenUsage(inputTokens: inputTokens, outputTokens: 0, isEstimated: true)
+        )
+    }
+
+    @MainActor
+    private func compactContextBeforeSendingIfNeeded(
+        chat: ChatEntity,
+        recentMessageLimit: Int
+    ) async throws -> Bool {
+        guard !chat.isDeleted,
+              let resolution = ModelContextRegistry.resolve(service: chat.apiService, modelID: chat.gptModel)
+        else { return false }
+        let usedTokens = Int(chat.contextInputTokens + chat.contextOutputTokens)
+        guard ContextManagement.shouldCompact(
+            inputTokens: usedTokens,
+            contextWindowTokens: resolution.tokens
+        ) else { return false }
+        guard !compactingChatIDs.contains(chat.id) else {
+            throw APIError.serverError("Context compaction is already in progress. Retry when it finishes.")
+        }
+        ChatActivityEvents.post(ChatActivityEvent(chatId: chat.id, kind: .compactingContext))
+
+        let allMessages = chat.messagesArray
+        let previousCheckpoint = ContextManagement.latestValidCheckpoint(in: allMessages)
+        let previousCutoff = previousCheckpoint?.checkpointCoversThroughSequence ?? 0
+        let uncompacted = allMessages.filter {
+            $0.messageKind == .message && $0.sequence > previousCutoff
+        }
+        let candidateCount = ContextManagement.compactionCandidateCount(
+            messages: uncompacted,
+            inputTokens: usedTokens,
+            contextWindowTokens: resolution.tokens,
+            recentMessageLimit: recentMessageLimit
+        )
+        let candidates = Array(uncompacted.prefix(candidateCount))
+        guard let cutoff = candidates.last?.sequence else {
+            throw APIError.serverError(
+                "The context is above the configured limit, but no older conversation messages are available to compact."
+            )
+        }
+
+        compactingChatIDs.insert(chat.id)
+        defer { compactingChatIDs.remove(chat.id) }
+        AppLogger.shared.info(
+            "context.compaction.preflight.started chat=\(chat.id.uuidString) "
+                + "used=\(usedTokens) window=\(resolution.tokens)"
+        )
+
+        var sourceSections: [String] = []
+        if let previousCheckpoint {
+            sourceSections.append("Previous checkpoint:\n\(previousCheckpoint.body)")
+        }
+        sourceSections.append(
+            candidates.map { message in
+                let role = message.own ? "USER" : "ASSISTANT"
+                return "\(role) [message \(message.sequence)]:\n\(message.body)"
+            }.joined(separator: "\n\n")
+        )
+
+        do {
+            let result = try await apiService.compactContext(sourceSections.joined(separator: "\n\n"))
+            guard !chat.isDeleted, candidates.allSatisfy({ !$0.isDeleted }) else { return false }
+            let checkpoint = MessageEntity(context: viewContext)
+            checkpoint.messageKind = .contextCheckpoint
+            checkpoint.name = "Context checkpoint"
+            checkpoint.body = result.summary
+            checkpoint.timestamp = Date()
+            checkpoint.own = false
+            checkpoint.waitingForResponse = false
+            checkpoint.checkpointCoversThroughSequence = cutoff
+            checkpoint.checkpointOriginalTokens = Int64(usedTokens)
+            checkpoint.checkpointCompactedTokens = Int64(
+                result.usage?.outputTokens ?? ContextManagement.estimatedTokens(in: result.summary)
+            )
+            checkpoint.checkpointValid = true
+            checkpoint.chat = chat
+            chat.addToMessages(checkpoint)
+            chat.objectWillChange.send()
+            viewContext.saveWithRetry(attempts: 1)
+            AppLogger.shared.info(
+                "context.compaction.preflight.completed chat=\(chat.id.uuidString) "
+                    + "original=\(usedTokens) compacted=\(checkpoint.checkpointCompactedTokens) cutoff=\(cutoff)"
+            )
+            return true
+        } catch {
+            AppLogger.shared.error(
+                "context.compaction.preflight.failed chat=\(chat.id.uuidString) error=\(error.localizedDescription)"
+            )
+            throw error
+        }
     }
 
     // MARK: - Parts encoding helpers

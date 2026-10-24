@@ -21,6 +21,71 @@ private struct MCPToolInspector: Identifiable {
     var id: String { serverName }
 }
 
+struct MCPOAuthRedirectEditor: View {
+    @Binding var redirectURI: String
+    @State private var port: String
+    @State private var path: String
+    private let host: String
+
+    init(redirectURI: Binding<String>) {
+        _redirectURI = redirectURI
+        let url = URLComponents(string: redirectURI.wrappedValue)
+        host = url?.scheme == "http" ? (url?.host ?? "localhost") : "localhost"
+        _port = State(initialValue: url?.port.map(String.init) ?? "18767")
+        _path = State(initialValue: url?.scheme == "http" ? String((url?.percentEncodedPath ?? "/mcp-callback").dropFirst()) : "mcp-callback")
+    }
+
+    private var isHTTP: Binding<Bool> {
+        Binding(get: { redirectURI.hasPrefix("http://") }, set: { http in
+            redirectURI = http ? httpURI : "chatmice://oauth/callback"
+        })
+    }
+
+    private var httpURI: String {
+        let authority = host.contains(":") && !host.hasPrefix("[") ? "[\(host)]" : host
+        return "http://\(authority):\(port)/\(path)"
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Callback address").font(.caption).foregroundStyle(.secondary)
+            Picker("Callback protocol", selection: isHTTP) {
+                Text("Chatmice protocol").tag(false)
+                Text("Local HTTP").tag(true)
+            }
+            .pickerStyle(.segmented)
+            if isHTTP.wrappedValue {
+                HStack(spacing: 6) {
+                    Text("http://\(host):").foregroundStyle(.secondary).fixedSize()
+                    TextField("Port", text: Binding(get: { port }, set: { value in
+                        port = value
+                        redirectURI = "http://\(host):\(value)/\(path)"
+                    })).frame(width: 70)
+                        .accessibilityIdentifier("oauth.callback.port")
+                    Text("/").foregroundStyle(.secondary)
+                    TextField("Callback path", text: Binding(get: { path }, set: { value in
+                        path = value
+                        redirectURI = "http://\(host):\(port)/\(value)"
+                    }))
+                        .accessibilityIdentifier("oauth.callback.path")
+                }
+                .font(.system(.body, design: .monospaced))
+                Text("Port 1024–65535. The listener starts only during Sign In.")
+                    .font(.caption).foregroundStyle(.secondary)
+            } else {
+                Text("chatmice://oauth/callback")
+                    .font(.system(.body, design: .monospaced))
+                    .foregroundStyle(.secondary).textSelection(.enabled)
+            }
+            if isHTTP.wrappedValue {
+                Text(redirectURI).font(.caption).foregroundStyle(.secondary)
+                    .textSelection(.enabled).lineLimit(2)
+            }
+        }
+    }
+}
+
+
 struct TabMCPServersView: View {
     @AppStorage("mcpServersJSON") private var mcpServersJSON: String = "[]"
     @State private var servers: [MCPServerConfig] = []
@@ -28,6 +93,8 @@ struct TabMCPServersView: View {
     @State private var editingServer: MCPServerConfig? = nil
     @State private var toolInspector: MCPToolInspector?
     @State private var reconnectingServerNames: Set<String> = []
+    @State private var authorizedServerIDs: Set<String> = []
+    @State private var oauthProgress: [String: String] = [:]
 
     @State private var formMode: MCPFormMode = .form
     @State private var formKind: MCPServerConfig.Kind = .stdio
@@ -38,6 +105,10 @@ struct TabMCPServersView: View {
     @State private var rawJSON = ""
     @State private var jsonError: String? = nil
     @State private var statuses: [MCPStatus] = []
+    @State private var oauthEnabled = false
+    @State private var oauthForm = MCPOAuthConfiguration()
+    @State private var oauthSecret = ""
+    @State private var oauthError: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -83,8 +154,12 @@ struct TabMCPServersView: View {
                 }
             }
         }
+        .alert("OAuth Authentication", isPresented: Binding(get: { oauthError != nil }, set: { if !$0 { oauthError = nil } })) {
+            Button("OK") { oauthError = nil }
+        } message: { Text(oauthError ?? "") }
         .onAppear {
             loadServers()
+            refreshAuthorization()
             Task {
                 await MCPService.shared.sync(servers: servers)
                 refreshStatus()
@@ -145,6 +220,10 @@ struct TabMCPServersView: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
 
+                if let progress = oauthProgress[server.name] {
+                    Text(progress).font(.caption2).foregroundStyle(.secondary)
+                }
+
                 if let err = lastError, !isConnected && server.enabled {
                     Text(err)
                         .font(.caption2)
@@ -158,6 +237,15 @@ struct TabMCPServersView: View {
             }
 
             Spacer()
+
+            if let oauth = server.oauth {
+                let authorized = authorizedServerIDs.contains(server.id)
+                Button(authorized ? "Sign Out" : "Sign In") {
+                    if authorized { signOut(server) } else { signIn(server, oauth: oauth) }
+                }
+                .disabled((!server.enabled && !authorized) || reconnectingServerNames.contains(server.name))
+                .help(authorized ? "Disconnect and remove access/refresh tokens from Keychain" : "Authorize OAuth credentials, then connect")
+            }
 
             Button(action: {
                 showTools(for: server)
@@ -334,11 +422,10 @@ struct TabMCPServersView: View {
                 }
             }
 
-            if formMode == .form {
-                visualFormView
-            } else {
-                rawJSONView
+            ScrollView {
+                if formMode == .form { visualFormView } else { rawJSONView }
             }
+            .frame(maxHeight: 520)
 
             if let err = jsonError {
                 Text(err)
@@ -436,6 +523,31 @@ struct TabMCPServersView: View {
                         .font(.caption2)
                         .foregroundStyle(.tertiary)
                 }
+
+                Toggle("OAuth 2.0", isOn: $oauthEnabled)
+                if oauthEnabled {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Picker("Grant", selection: $oauthForm.grant) {
+                            Text("Authorization Code + PKCE").tag(MCPOAuthConfiguration.Grant.authorizationCode)
+                            Text("Client Credentials").tag(MCPOAuthConfiguration.Grant.clientCredentials)
+                        }
+                        .pickerStyle(.menu)
+                        if oauthForm.grant == .authorizationCode {
+                            TextField("Authorization URL", text: $oauthForm.authorizationURL)
+                            MCPOAuthRedirectEditor(redirectURI: $oauthForm.redirectURI)
+                            Text("Register this exact URI with the OAuth server. HTTP callbacks bind only to loopback; the URL port is the listening port.")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                        TextField("Token URL", text: $oauthForm.tokenURL)
+                        TextField("Client ID", text: $oauthForm.clientID)
+                        SecureField("Client Secret (optional for PKCE)", text: $oauthSecret)
+                        TextField("Scopes (space-separated)", text: $oauthForm.scope)
+                        TextField("Resource / Audience URI (optional)", text: $oauthForm.resource)
+                        Text("Secrets and tokens are stored in Keychain, not configuration JSON. OAuth overrides the Authorization header. Save, then use Sign In for browser authorization.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    .textFieldStyle(.roundedBorder)
+                }
             }
         }
     }
@@ -483,6 +595,11 @@ struct TabMCPServersView: View {
         } else {
             dict["url"] = formURL
             if !envObj.isEmpty { dict["headers"] = envObj }
+            if oauthEnabled,
+               let data = try? JSONEncoder().encode(oauthForm),
+               let object = try? JSONSerialization.jsonObject(with: data) {
+                dict["oauth"] = object
+            }
         }
 
         if let data = try? JSONSerialization.data(withJSONObject: dict, options: [.prettyPrinted, .sortedKeys]),
@@ -510,6 +627,15 @@ struct TabMCPServersView: View {
         if let url = targetObj["url"] as? String, !url.isEmpty {
             formKind = .http
             formURL = url
+            oauthEnabled = targetObj["oauth"] != nil
+            if let object = targetObj["oauth"],
+               let data = try? JSONSerialization.data(withJSONObject: object),
+               let oauth = try? JSONDecoder().decode(MCPOAuthConfiguration.self, from: data) {
+                if oauthForm.credentialID != oauth.credentialID {
+                    oauthSecret = (try? MCPOAuthManager.secret(for: oauth)) ?? ""
+                }
+                oauthForm = oauth
+            }
             if let headers = (targetObj["headers"] as? [String: String]) ?? (targetObj["env"] as? [String: String]) {
                 formEnv = headers.map { "\($0.key)=\($0.value)" }.joined(separator: "\n")
             }
@@ -549,6 +675,9 @@ struct TabMCPServersView: View {
         formCommand = ""
         formURL = "http://localhost:8000/sse"
         formEnv = ""
+        oauthEnabled = false
+        oauthForm = MCPOAuthConfiguration()
+        oauthSecret = ""
         rawJSON = ""
         jsonError = nil
         showingEditSheet = true
@@ -564,6 +693,9 @@ struct TabMCPServersView: View {
         formEnv = server.env.map { "\($0.key)=\($0.value)" }.sorted().joined(separator: "\n")
         rawJSON = ""
         jsonError = nil
+        oauthEnabled = server.oauth != nil
+        oauthForm = server.oauth ?? MCPOAuthConfiguration()
+        oauthSecret = (try? MCPOAuthManager.secret(for: oauthForm)) ?? ""
         showingEditSheet = true
     }
 
@@ -618,9 +750,17 @@ struct TabMCPServersView: View {
                 kind: .http,
                 env: envMap,
                 url: formURL.trimmingCharacters(in: .whitespaces),
-                enabled: editingServer?.enabled ?? true
+                enabled: editingServer?.enabled ?? true,
+                oauth: oauthEnabled ? oauthForm : nil
             )
         }
+        if let oauth = config.oauth {
+            do {
+                try oauth.validate()
+                try MCPOAuthManager.setSecret(oauthSecret, for: oauth)
+            } catch { jsonError = error.localizedDescription; return false }
+        }
+        if let old = editingServer?.oauth, old != config.oauth { try? MCPOAuthManager.clear(old, includingSecret: old.credentialID != config.oauth?.credentialID) }
 
         var updated = servers
         if let old = editingServer, old.name != config.name {
@@ -669,9 +809,23 @@ struct TabMCPServersView: View {
             jsonError = "No valid server configuration found"
             return false
         }
+        guard jsonError == nil else { return false }
+        for config in newConfigs {
+            if let oauth = config.oauth {
+                do {
+                    try oauth.validate()
+                    if oauth.credentialID == oauthForm.credentialID {
+                        try MCPOAuthManager.setSecret(oauthSecret, for: oauth)
+                    }
+                } catch { jsonError = error.localizedDescription; return false }
+            }
+        }
 
         var updated = servers
         for cfg in newConfigs {
+            if let old = servers.first(where: { $0.name == cfg.name })?.oauth, old != cfg.oauth {
+                try? MCPOAuthManager.clear(old, includingSecret: old.credentialID != cfg.oauth?.credentialID)
+            }
             updated.removeAll { $0.name == cfg.name }
             updated.append(cfg)
         }
@@ -682,7 +836,20 @@ struct TabMCPServersView: View {
     private func parseServerDict(name: String, dict: [String: Any]) -> MCPServerConfig? {
         if let url = dict["url"] as? String, !url.isEmpty {
             let env = (dict["headers"] as? [String: String]) ?? (dict["env"] as? [String: String]) ?? [:]
-            return MCPServerConfig(name: name, kind: .http, env: env, url: url, enabled: true)
+            var oauth: MCPOAuthConfiguration?
+            if let object = dict["oauth"] as? [String: Any],
+               object["clientSecret"] != nil || object["client_secret"] != nil || object["access_token"] != nil {
+                jsonError = "OAuth secrets belong in the secure Visual Form field, not Raw JSON"
+                return nil
+            }
+            if let object = dict["oauth"] {
+                do {
+                    let data = try JSONSerialization.data(withJSONObject: object)
+                    oauth = try JSONDecoder().decode(MCPOAuthConfiguration.self, from: data)
+                    try oauth?.validate()
+                } catch { jsonError = "Invalid OAuth configuration: \(error.localizedDescription)"; return nil }
+            }
+            return MCPServerConfig(name: name, kind: .http, env: env, url: url, enabled: true, oauth: oauth)
         } else if let cmd = dict["command"] as? String, !cmd.isEmpty {
             let args = dict["args"] as? [String] ?? []
             let env = dict["env"] as? [String: String] ?? [:]
@@ -700,9 +867,49 @@ struct TabMCPServersView: View {
     }
 
     private func deleteServer(_ server: MCPServerConfig) {
+        if let oauth = server.oauth { try? MCPOAuthManager.clear(oauth, includingSecret: true) }
         var updated = servers
         updated.removeAll { $0.id == server.id }
         saveServers(updated)
+    }
+
+
+    private func signIn(_ server: MCPServerConfig, oauth: MCPOAuthConfiguration) {
+        reconnectingServerNames.insert(server.name)
+        oauthProgress[server.name] = "Signing in…"
+        Task {
+            do {
+                try await MCPOAuthManager.shared.signOut(oauth)
+                _ = try await MCPOAuthManager.shared.accessToken(for: oauth, interactive: true)
+                refreshAuthorization()
+                oauthProgress[server.name] = "Authorized · Connecting…"
+                await MCPService.shared.reconnect(server)
+            } catch { oauthError = error.localizedDescription }
+            statuses = await MCPService.shared.statuses()
+            reconnectingServerNames.remove(server.name)
+            oauthProgress[server.name] = nil
+            refreshAuthorization()
+        }
+    }
+
+    private func signOut(_ server: MCPServerConfig) {
+        reconnectingServerNames.insert(server.name)
+        oauthProgress[server.name] = "Signing out…"
+        Task {
+            do { try await MCPService.shared.signOut(server) }
+            catch { oauthError = error.localizedDescription }
+            statuses = await MCPService.shared.statuses()
+            refreshAuthorization()
+            oauthProgress[server.name] = nil
+            reconnectingServerNames.remove(server.name)
+        }
+    }
+
+    private func refreshAuthorization() {
+        authorizedServerIDs = Set(servers.compactMap { server in
+            guard let oauth = server.oauth, (try? MCPOAuthManager.hasAuthorization(oauth)) == true else { return nil }
+            return server.id
+        })
     }
 
     private func reconnect(_ server: MCPServerConfig) {
@@ -713,11 +920,13 @@ struct TabMCPServersView: View {
             await MainActor.run {
                 statuses = updatedStatuses
                 reconnectingServerNames.remove(server.name)
+                refreshAuthorization()
             }
         }
     }
 
     private func refreshStatus() {
+        refreshAuthorization()
         Task {
             let st = await MCPService.shared.statuses()
             await MainActor.run {

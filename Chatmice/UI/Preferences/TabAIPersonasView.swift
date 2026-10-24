@@ -230,31 +230,26 @@ struct PersonaDetailView: View {
             }
             .padding(.top, 8)
 
-            Button {
-                withAnimation(.easeInOut(duration: 0.16)) {
-                    isSymbolOptionsExpanded.toggle()
-                }
-            } label: {
-                HStack(spacing: 7) {
-                    Image(systemName: "chevron.right")
-                        .font(.caption.weight(.semibold))
-                        .rotationEffect(.degrees(isSymbolOptionsExpanded ? 90 : 0))
-                    Text("Advanced SF Symbol & Composition")
-                    Spacer()
-                }
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .padding(.top, 8)
-
-            if isSymbolOptionsExpanded {
+            DisclosureGroup(isExpanded: $isSymbolOptionsExpanded) {
                 PersonaSymbolPicker(
                     symbolName: $symbolName,
                     overlaySymbolName: $symbolOverlayName
                 )
                 .padding(.top, 10)
-                .transition(.opacity.combined(with: .move(edge: .top)))
+            } label: {
+                HStack(spacing: 8) {
+                    Text("Icon & Badge")
+                    Spacer()
+                    Image(systemName: symbolName)
+                        .foregroundStyle(.secondary)
+                    if !symbolOverlayName.isEmpty {
+                        Image(systemName: symbolOverlayName)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
             }
+            .padding(.top, 8)
 
             VStack(alignment: .leading) {
                 Text("System message:")
@@ -310,7 +305,8 @@ struct PersonaDetailView: View {
                 .padding(.vertical, 10)
                 .background(Color(nsColor: .windowBackgroundColor))
         }
-        .frame(minWidth: 480, idealWidth: 520, minHeight: 620, idealHeight: 720)
+        .frame(minWidth: 480, idealWidth: 520)
+        .frame(height: 500)
         .onAppear {
             print(">> Assistant: \(persona?.name ?? "")")
             if let persona = persona {

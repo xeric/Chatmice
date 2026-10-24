@@ -15,6 +15,8 @@ private struct GeminiModelList: Decodable {
 
 private struct GeminiModel: Decodable {
     let name: String
+    let inputTokenLimit: Int?
+    let outputTokenLimit: Int?
 
     var id: String {
         name.replacingOccurrences(of: "models/", with: "")
@@ -127,6 +129,8 @@ class GeminiHandler: APIService {
     let baseURL: URL
     private let apiKey: String
     let model: String
+    private let providerID: UUID?
+    private let requestHeaders: [String: String]
     private let session: URLSession
     private let modelsEndpoint: URL
     private var activeDataTask: URLSessionDataTask?
@@ -134,12 +138,15 @@ class GeminiHandler: APIService {
     private var lastResponseParts: [GeminiPartResponse]?
     private var streamedResponseParts: [GeminiPartResponse] = []
     private var streamedSignatureParts: [GeminiPartResponse] = []
+    private let tokenUsageTracker = ModelTokenUsageTracker()
 
     init(config: APIServiceConfiguration, session: URLSession) {
         self.name = config.name
         self.baseURL = config.apiUrl
         self.apiKey = config.apiKey
         self.model = config.model
+        self.providerID = config.providerID
+        self.requestHeaders = config.requestHeaders
         self.session = session
         self.modelsEndpoint = GeminiHandler.normalizeModelsEndpoint(from: config.apiUrl)
     }
@@ -161,6 +168,7 @@ class GeminiHandler: APIService {
             request.setValue(apiKey, forHTTPHeaderField: "x-goog-api-key")
             request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         }
+        ProviderHeaderStore.apply(requestHeaders, to: &request)
         do {
             let (data, response) = try await session.data(for: request)
             let result = handleAPIResponse(response, data: data, error: nil)
@@ -172,7 +180,13 @@ class GeminiHandler: APIService {
                 }
                 let decoder = makeDecoder()
                 let geminiResponse = try decoder.decode(GeminiModelList.self, from: payload)
-                return geminiResponse.models.map { AIModel(id: $0.id) }
+                return geminiResponse.models.map {
+                    AIModel(
+                        id: $0.id,
+                        contextWindowTokens: $0.inputTokenLimit,
+                        maxOutputTokens: $0.outputTokenLimit
+                    )
+                }
 
             case .failure(let error):
                 throw error
@@ -214,6 +228,7 @@ class GeminiHandler: APIService {
                             completion(.failure(.invalidResponse))
                             return
                         }
+                        self.tokenUsageTracker.record(data: payload)
 
                         do {
                             let decoder = self.makeDecoder()
@@ -301,6 +316,7 @@ class GeminiHandler: APIService {
                                 let payload = String(line[index...]).trimmingCharacters(in: .whitespacesAndNewlines)
 
                                 if payload.isEmpty { continue }
+                                self.tokenUsageTracker.record(sseLine: payload)
 
                                 let result = try self.parseStreamPayload(
                                     payload,
@@ -336,6 +352,10 @@ class GeminiHandler: APIService {
                 }
             }
         }
+    }
+
+    func consumeLatestTokenUsage() -> ModelTokenUsage? {
+        tokenUsageTracker.consume()
     }
 
     private func prepareRequest(
@@ -383,13 +403,14 @@ class GeminiHandler: APIService {
             return .failure(.decodingFailed("Failed to encode Gemini request: \(error.localizedDescription)"))
         }
 
+        ProviderHeaderStore.apply(requestHeaders, to: &request)
         return .success(request)
     }
 
     private func makeThinkingConfig() -> GeminiThinkingConfig? {
         let selection = ReasoningPreferenceStore.selection(for: model)
         guard selection != .default else { return nil }
-        let profile = ModelReasoningRegistry.resolve(modelID: model, serviceType: "gemini")
+        let profile = ModelReasoningRegistry.resolve(modelID: model, serviceType: "gemini", serviceID: providerID)
 
         switch profile.dialect {
         case .geminiLevel:

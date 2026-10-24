@@ -157,6 +157,13 @@ class PersistenceController: ObservableObject {
     static let shared = PersistenceController()
     static let iCloudSyncEnabledKey = "iCloudSyncEnabled"
     private static let historyTokenKey = "PersistentHistoryToken"
+    private static let managedObjectModel: NSManagedObjectModel = {
+        guard let modelURL = Bundle.main.url(forResource: "macaiDataModel", withExtension: "momd"),
+              let model = NSManagedObjectModel(contentsOf: modelURL) else {
+            fatalError("Unable to load macaiDataModel")
+        }
+        return model
+    }()
     private static let legacyHistoryTokenKey = "PersistentHistoryTokenKey"
     private static let legacyHistoryTokenKeyV241 = "macai.persistentHistoryToken"
     private static let historyPruneKey = "PersistentHistoryLastPrune"
@@ -205,10 +212,16 @@ class PersistenceController: ObservableObject {
         self.isCloudKitEnabled = canEnableCloudKit
 
         if isCloudKitEnabled {
-            container = NSPersistentCloudKitContainer(name: "macaiDataModel")
+            container = NSPersistentCloudKitContainer(
+                name: "macaiDataModel",
+                managedObjectModel: Self.managedObjectModel
+            )
         }
         else {
-            container = NSPersistentContainer(name: "macaiDataModel")
+            container = NSPersistentContainer(
+                name: "macaiDataModel",
+                managedObjectModel: Self.managedObjectModel
+            )
         }
 
         let chatmiceDir = AppConstants.applicationSupportDirectoryURL

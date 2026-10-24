@@ -25,6 +25,136 @@ private func settingsShortcutButton(help: String, action: @escaping () -> Void) 
     .help(help)
 }
 
+private struct ContextUsageBar: View {
+    @ObservedObject var chat: ChatEntity
+    @State private var isShowingDetails = false
+    @State private var configurationRevision = 0
+
+    private var resolution: ContextWindowResolution? {
+        _ = configurationRevision
+        return ModelContextRegistry.resolve(service: chat.apiService, modelID: chat.gptModel)
+    }
+
+    private var usedTokens: Int {
+        max(0, Int(chat.contextInputTokens + chat.contextOutputTokens))
+    }
+
+    private var hasUsage: Bool {
+        chat.contextUpdatedAt != nil || usedTokens > 0
+    }
+
+    private var isEstimated: Bool {
+        hasUsage && chat.contextUpdatedAt == nil
+    }
+
+    var body: some View {
+        if let resolution {
+            Button {
+                isShowingDetails.toggle()
+            } label: {
+                VStack(spacing: 2) {
+                    HStack {
+                        Text("Context")
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Text(hasUsage
+                            ? "\(isEstimated ? "≈ " : "")\(Int(usageRatio * 100))% · \(compactTokenCount(usedTokens)) / \(compactTokenCount(resolution.tokens))"
+                            : "Usage unavailable · \(compactTokenCount(resolution.tokens)) window")
+                            .font(.system(size: 10).monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    }
+                    GeometryReader { proxy in
+                        ZStack(alignment: .leading) {
+                            Capsule().fill(Color.primary.opacity(0.1))
+                            Capsule()
+                                .fill(usageRatio >= ContextManagement.autoCompactionRatio ? Color.orange : Color.accentColor)
+                                .frame(width: proxy.size.width * usageRatio)
+                            Rectangle()
+                                .fill(Color.secondary)
+                                .frame(width: 1, height: 4)
+                                .offset(x: proxy.size.width * ContextManagement.autoCompactionRatio)
+                        }
+                    }
+                    .frame(height: 2)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .popover(isPresented: $isShowingDetails, arrowEdge: .bottom) {
+                contextDetails(resolution)
+            }
+            .onReceive(NotificationCenter.default.publisher(for: ModelConfigurationStore.didChangeNotification)) { notification in
+                if notification.object as? UUID == chat.apiService?.id { configurationRevision += 1 }
+            }
+        }
+    }
+
+    private var usageRatio: Double {
+        guard let resolution, resolution.tokens > 0 else { return 0 }
+        return min(1, Double(usedTokens) / Double(resolution.tokens))
+    }
+
+    private func contextDetails(_ resolution: ContextWindowResolution) -> some View {
+        let threshold = Int(Double(resolution.tokens) * ContextManagement.autoCompactionRatio)
+        return VStack(alignment: .leading, spacing: 12) {
+            Text("Context · \(chat.gptModel)")
+                .font(.headline)
+            Divider()
+            contextDetailRow("Last input", value: hasUsage ? "\(isEstimated ? "≈ " : "")\(chat.contextInputTokens.formatted()) tokens" : "Unavailable")
+            contextDetailRow("Last output", value: hasUsage ? "\(isEstimated ? "≈ " : "")\(chat.contextOutputTokens.formatted()) tokens" : "Unavailable")
+            contextDetailRow("Context window", value: "\(resolution.tokens.formatted()) tokens")
+            contextDetailRow(
+                "Before auto-compaction",
+                value: hasUsage ? "\(isEstimated ? "≈ " : "")\(max(0, threshold - usedTokens).formatted()) tokens" : "Unavailable"
+            )
+            contextDetailRow("Window source", value: sourceTitle(resolution.source))
+            if let updatedAt = chat.contextUpdatedAt {
+                Text("Provider-reported usage · \(updatedAt.formatted(date: .omitted, time: .shortened))")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            } else if isEstimated {
+                Text("Estimated usage · characters ÷ 4. The provider did not return token usage; accuracy varies by language and model.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            } else {
+                Text("Token usage appears after a response completes.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(16)
+        .frame(width: 350)
+    }
+
+    private func contextDetailRow(_ title: String, value: String) -> some View {
+        HStack {
+            Text(title).foregroundStyle(.secondary)
+            Spacer()
+            Text(value).monospacedDigit()
+        }
+        .font(.callout)
+    }
+
+    private func sourceTitle(_ source: ContextWindowSource) -> String {
+        switch source {
+        case .userOverride: return "User override"
+        case .providerMetadata: return "Provider metadata"
+        case .builtInRegistry: return "Chatmice model registry"
+        }
+    }
+
+    private func compactTokenCount(_ value: Int) -> String {
+        if value >= 1_000_000 {
+            return String(format: "%.1fM", Double(value) / 1_000_000)
+        }
+        if value >= 1_000 {
+            return String(format: "%.0fK", Double(value) / 1_000)
+        }
+        return "\(value)"
+    }
+}
+
 private struct ToolSelectionPopover: View {
     let chat: ChatEntity
 
@@ -949,7 +1079,8 @@ struct MessageInputView: View {
         }
         return ModelReasoningRegistry.resolve(
             modelID: chat.gptModel,
-            serviceType: service.type ?? service.name ?? ""
+            serviceType: service.type ?? service.name ?? "",
+            serviceID: service.id
         )
     }
 
@@ -1143,6 +1274,12 @@ struct MessageInputView: View {
         }
 
         VStack(spacing: 0) {
+            if let chat, ModelContextRegistry.resolve(service: chat.apiService, modelID: chat.gptModel) != nil {
+                ContextUsageBar(chat: chat)
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 8)
+            }
+
             if showsWorkspaceReferences, let workspace = chat?.workspace {
                 WorkspaceMentionSuggestionsView(
                     workspace: workspace,
@@ -1254,7 +1391,7 @@ struct MessageInputView: View {
                     onEditingChange: updateReferenceEditingState,
                     onCommand: handleReferenceCommand,
                     onCommit: {
-                        guard !isInferenceInProgress else { return }
+                        guard !isInferenceInProgress, !isSendDisabled else { return }
                         onEnter()
                     }
                 )
@@ -1302,6 +1439,9 @@ struct MessageInputView: View {
                 return false
             }
             return handleDrop(providers: providers)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: ModelConfigurationStore.didChangeNotification)) { notification in
+            if notification.object as? UUID == chat?.apiService?.id { reasoningSelectionRevision += 1 }
         }
         .onReceive(NotificationCenter.default.publisher(for: WorkspaceReferenceTransfer.notification)) { notification in
             guard let editor = referenceInputControl.textView,

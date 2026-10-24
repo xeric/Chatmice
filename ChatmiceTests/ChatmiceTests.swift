@@ -60,6 +60,21 @@ final class ChatmiceTests: XCTestCase {
         )
     }
 
+    func testFailedLegacyVisionProbeDoesNotDisableAutomaticVision() throws {
+        let serviceID = UUID()
+        let key = "modelCapabilityTests.v2.\(serviceID.uuidString)"
+        defer { UserDefaults.standard.removeObject(forKey: key) }
+        let results = [
+            "failed": ModelCapabilityTestResult(connectionSucceeded: true, visionSupported: false, reasoningSupported: true, testedAt: Date(), errorMessage: nil),
+            "verified": ModelCapabilityTestResult(connectionSucceeded: true, visionSupported: true, reasoningSupported: nil, testedAt: Date(), errorMessage: nil),
+        ]
+        UserDefaults.standard.set(try JSONEncoder().encode(results), forKey: key)
+        let restored = ModelCapabilityTestStore.results(for: serviceID)
+        XCTAssertNil(restored["failed"]?.visionSupported)
+        XCTAssertEqual(restored["verified"]?.visionSupported, true)
+        XCTAssertEqual(restored["failed"]?.reasoningSupported, true)
+    }
+
     @MainActor
     func testStreamingMessageIsVisibleBeforeStreamCompletes() async {
         let persistence = PersistenceController(inMemory: true)
@@ -290,6 +305,8 @@ final class ChatmiceTests: XCTestCase {
             applicationIsActive: true
         )
     }
+
+
 
     @MainActor
     func testUpdateFeedParametersAddFreshCacheKey() throws {
@@ -627,9 +644,15 @@ final class ChatmiceTests: XCTestCase {
                 httpVersion: nil,
                 headerFields: ["Content-Type": isChatCompletions ? "text/event-stream" : "application/json"]
             )!
-            let payload = isChatCompletions
-                ? "data: {\"choices\":[{\"delta\":{\"content\":\"pong\"}}]}\n\ndata: [DONE]\n\n"
-                : #"{"error":{"message":"Responses tools unsupported"}}"#
+            var payload = #"{"error":{"message":"Responses tools unsupported"}}"#
+            if isChatCompletions {
+                payload = "data: {\"choices\":[{\"delta\":{\"content\":\"pong\"}}]}\n\ndata: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n"
+                // OpenAI sends usage after the last content choice, only when requested.
+                if (json["stream_options"] as? [String: Any])?["include_usage"] as? Bool == true {
+                    payload += "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":4321,\"completion_tokens\":7654,\"total_tokens\":11975}}\n\n"
+                }
+                payload += "data: [DONE]\n\n"
+            }
             return (response, Data(payload.utf8))
         }
 
@@ -652,6 +675,7 @@ final class ChatmiceTests: XCTestCase {
 
         XCTAssertEqual(result, "pong")
         XCTAssertEqual(paths, ["/openai/v1", "/openai/v1", "/openai/v1/chat/completions"])
+        XCTAssertEqual(engine.consumeLatestTokenUsage(), ModelTokenUsage(inputTokens: 4_321, outputTokens: 7_654))
     }
 
     func testOllamaTurnKeepsNativeChatEndpointWhenToolsAreEnabled() async throws {
@@ -893,6 +917,95 @@ final class ChatmiceTests: XCTestCase {
         XCTAssertEqual(output.exitCode, 0)
         XCTAssertEqual(output.stdout, "alias-ok")
         XCTAssertFalse(output.timedOut)
+    }
+
+    func testTokenUsageTrackerMergesStreamingProviderUsage() {
+        let tracker = ModelTokenUsageTracker()
+        tracker.record(data: Data(#"{"type":"message_start","message":{"usage":{"input_tokens":120}}}"#.utf8))
+        tracker.record(data: Data(#"{"type":"message_delta","usage":{"output_tokens":35}}"#.utf8))
+
+        XCTAssertEqual(
+            tracker.consume(),
+            ModelTokenUsage(inputTokens: 120, outputTokens: 35, totalTokens: 155)
+        )
+        XCTAssertNil(tracker.consume())
+    }
+
+    func testTokenUsageTrackerUnderstandsOpenAIAndGeminiFields() {
+        let tracker = ModelTokenUsageTracker()
+        tracker.record(data: Data(#"{"usage":{"prompt_tokens":200,"completion_tokens":50,"total_tokens":250}}"#.utf8))
+        XCTAssertEqual(
+            tracker.consume(),
+            ModelTokenUsage(inputTokens: 200, outputTokens: 50, totalTokens: 250)
+        )
+
+        tracker.record(data: Data(#"{"usageMetadata":{"promptTokenCount":300,"candidatesTokenCount":70,"totalTokenCount":370}}"#.utf8))
+        XCTAssertEqual(
+            tracker.consume(),
+            ModelTokenUsage(inputTokens: 300, outputTokens: 70, totalTokens: 370)
+        )
+    }
+
+    func testContextRegistryNormalizesSnapshotAndVersionedModelNames() {
+        XCTAssertEqual(ModelContextRegistry.builtInTokens(modelID: "gpt-4o-2024-08-06", serviceType: "openai"), 128_000)
+        XCTAssertEqual(ModelContextRegistry.builtInTokens(modelID: "claude-sonnet-4-5-20250929", serviceType: "claude"), 200_000)
+        XCTAssertEqual(ModelContextRegistry.builtInTokens(modelID: "gemini-2.5-pro-preview-06-05", serviceType: "gemini"), 1_048_576)
+        XCTAssertNil(ModelContextRegistry.builtInTokens(modelID: "private-model", serviceType: "openai"))
+    }
+
+    func testContextCompactionThresholdStartsAtEightyFivePercent() {
+        XCTAssertFalse(ContextManagement.shouldCompact(inputTokens: 84_999, contextWindowTokens: 100_000))
+        XCTAssertTrue(ContextManagement.shouldCompact(inputTokens: 85_000, contextWindowTokens: 100_000))
+    }
+
+    func testInvalidatingCheckpointPreservesHistoryAndRejectsItsSummary() {
+        let context = PersistenceController.preview.container.viewContext
+        let chat = ChatEntity(context: context)
+        chat.id = UUID()
+
+        let original = MessageEntity(context: context)
+        original.kind = MessageKind.message.rawValue
+        original.sequence = 10
+        original.body = "Original user fact"
+        original.chat = chat
+
+        let checkpoint = MessageEntity(context: context)
+        checkpoint.kind = MessageKind.contextCheckpoint.rawValue
+        checkpoint.sequence = 11
+        checkpoint.body = "Compacted fact"
+        checkpoint.checkpointCoversThroughSequence = 10
+        checkpoint.checkpointValid = true
+        checkpoint.chat = chat
+
+        XCTAssertEqual(ContextManagement.latestValidCheckpoint(in: [original, checkpoint]), checkpoint)
+        ContextManagement.invalidateCheckpoints(in: chat, covering: original.sequence)
+
+        XCTAssertFalse(original.isDeleted)
+        XCTAssertFalse(checkpoint.checkpointValid)
+        XCTAssertNil(ContextManagement.latestValidCheckpoint(in: [original, checkpoint]))
+    }
+
+    func testContextProjectionUsesLatestCheckpointAndOnlyNewerConversationMessages() {
+        let context = PersistenceController.preview.container.viewContext
+
+        func message(sequence: Int64, kind: MessageKind, body: String) -> MessageEntity {
+            let message = MessageEntity(context: context)
+            message.kind = kind.rawValue
+            message.sequence = sequence
+            message.body = body
+            return message
+        }
+
+        let oldMessage = message(sequence: 1, kind: .message, body: "old")
+        let checkpoint = message(sequence: 2, kind: .contextCheckpoint, body: "summary")
+        checkpoint.checkpointCoversThroughSequence = 1
+        checkpoint.checkpointValid = true
+        let newMessage = message(sequence: 3, kind: .message, body: "new")
+
+        let projection = ContextManagement.projection(in: [oldMessage, checkpoint, newMessage])
+
+        XCTAssertEqual(projection.checkpoint, checkpoint)
+        XCTAssertEqual(projection.messages, [newMessage])
     }
 
 }

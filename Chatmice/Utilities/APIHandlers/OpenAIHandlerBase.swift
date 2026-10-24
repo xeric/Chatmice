@@ -19,6 +19,16 @@ enum OpenAIEndpointURL {
         }
         return base.appendingPathComponent("chat/completions")
     }
+
+    static func responses(from configuredURL: URL) -> URL {
+        var base = configuredURL
+        if base.lastPathComponent == "responses" { return base }
+        if base.path.hasSuffix("/chat/completions") {
+            base.deleteLastPathComponent()
+            base.deleteLastPathComponent()
+        }
+        return base.appendingPathComponent("responses")
+    }
 }
 
 class OpenAIHandlerBase {
@@ -27,14 +37,19 @@ class OpenAIHandlerBase {
     let apiKey: String
     let model: String
     let serviceType: String
+    let providerID: UUID?
+    let requestHeaders: [String: String]
     let imageGenerationSupported: Bool
     let session: URLSession
+    let tokenUsageTracker = ModelTokenUsageTracker()
 
     init(config: APIServiceConfiguration, session: URLSession, imageGenerationSupported: Bool = false) {
         self.name = config.name
         self.baseURL = config.apiUrl
         self.apiKey = config.apiKey
         self.model = config.model
+        self.providerID = config.providerID
+        self.requestHeaders = config.requestHeaders
         if let config = config as? APIServiceConfig {
             self.serviceType = config.type
         } else if let config = config as? APIServiceEntity {
@@ -136,5 +151,13 @@ class OpenAIHandlerBase {
 
     func isNotSSEComment(_ string: String) -> Bool {
         return !string.starts(with: ":")
+    }
+
+    func recordTokenUsage(from data: Data) {
+        tokenUsageTracker.record(data: data)
+    }
+
+    func consumeLatestTokenUsage() -> ModelTokenUsage? {
+        tokenUsageTracker.consume()
     }
 }

@@ -171,42 +171,67 @@ struct APIServiceDetailView: View {
                             gptModel: viewModel.model,
                             apiUrl: viewModel.url,
                             apiType: viewModel.type,
-                            imageGenerationSupported: viewModel.imageGenerationSupported
+                            imageGenerationSupported: viewModel.imageGenerationSupported,
+                            providerID: viewModel.apiService?.id
                         )
                     }
                 }
                 .padding(8)
             }
 
-            VStack {
-                HStack {
-                    // TODO: implement unlimited context size (is it really needed though?)
-                    //                    Toggle(isOn: $viewModel.contextSizeUnlimited) {
-                    //                        Text("Unlimited context size")
-                    //                    }
-                    //                    .disabled(true)
-                    //                    Spacer()
-                }
-                if !viewModel.contextSizeUnlimited {
+            GroupBox("Context Management") {
+                VStack(alignment: .leading, spacing: 12) {
                     HStack {
                         Slider(
                             value: $viewModel.contextSize,
                             in: 5...100,
                             step: 5
                         ) {
-                            Text("Context size")
+                            Text("Recent messages kept after compaction")
                         } minimumValueLabel: {
                             Text("5")
                         } maximumValueLabel: {
                             Text("100")
                         }
-                        .disabled(viewModel.contextSizeUnlimited)
 
-                        Text(String(format: ("%.0f messages"), viewModel.contextSize))
+                        Text(String(format: "%.0f messages", viewModel.contextSize))
                             .frame(width: 90)
                     }
+
+                    Toggle("Override model context window", isOn: $viewModel.contextWindowOverrideEnabled)
+
+                    HStack {
+                        Text("Context window")
+                        Spacer()
+                        TextField(
+                            "Tokens",
+                            value: $viewModel.contextWindowOverrideTokens,
+                            format: .number.grouping(.never)
+                        )
+                        .frame(width: 120)
+                        .disabled(!viewModel.contextWindowOverrideEnabled)
+                        Text("tokens")
+                            .foregroundStyle(.secondary)
+                    }
+
+                    if !viewModel.contextWindowOverrideEnabled {
+                        if let resolution = viewModel.automaticContextWindow {
+                            Text(
+                                "Automatically matched \(resolution.tokens.formatted()) tokens from \(resolution.source == .providerMetadata ? "provider metadata" : "Chatmice's model registry")."
+                            )
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        }
+                        else {
+                            Text("Context window is unknown. Enable the override to use automatic compaction.")
+                                .font(.caption)
+                                .foregroundStyle(.orange)
+                        }
+                    }
                 }
-            }.padding(.top, 16)
+                .padding(8)
+            }
+            .padding(.top, 16)
 
             VStack {
                 Toggle(isOn: $viewModel.generateChatNames) {

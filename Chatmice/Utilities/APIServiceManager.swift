@@ -54,6 +54,7 @@ class APIServiceManager {
     }
     
     func deleteAPIService(_ apiService: APIServiceEntity) {
+        if let id = apiService.id { try? ProviderHeaderStore.remove(for: id) }
         viewContext.delete(apiService)
         
         do {

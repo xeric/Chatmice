@@ -21,6 +21,8 @@ class APIServiceDetailViewModel: ObservableObject {
     @Published var model: String = ""
     @Published var contextSize: Float = 20
     @Published var contextSizeUnlimited: Bool = false
+    @Published var contextWindowOverrideEnabled = false
+    @Published var contextWindowOverrideTokens = 128_000
     @Published var useStreamResponse: Bool = true
     @Published var generateChatNames: Bool = true
     @Published var imageUploadsAllowed: Bool = false
@@ -63,6 +65,10 @@ class APIServiceDetailViewModel: ObservableObject {
             url = service.url?.absoluteString ?? ""
             model = service.model ?? ""
             contextSize = Float(service.contextSize)
+            contextWindowOverrideEnabled = service.contextWindowOverrideTokens > 0
+            if service.contextWindowOverrideTokens > 0 {
+                contextWindowOverrideTokens = Int(service.contextWindowOverrideTokens)
+            }
             useStreamResponse = service.useStreamResponse
             generateChatNames = service.generateChatNames
             imageUploadsAllowed = service.imageUploadsAllowed
@@ -138,7 +144,9 @@ class APIServiceDetailViewModel: ObservableObject {
             name: type,
             apiUrl: URL(string: url)!,
             apiKey: apiKey,
-            model: ""
+            model: "",
+            type: type,
+            providerID: apiService?.id
         )
 
         let apiService = APIServiceFactory.createAPIService(
@@ -149,6 +157,7 @@ class APIServiceDetailViewModel: ObservableObject {
         Task {
             do {
                 let models = try await apiService.fetchModels()
+                ModelContextMetadataStore.save(models, serviceType: self.type)
                 self.fetchedModels = models
                 self.isLoadingModels = false
                 self.updateModelSelection()
@@ -182,6 +191,23 @@ class APIServiceDetailViewModel: ObservableObject {
         }
     }
 
+    var automaticContextWindow: ContextWindowResolution? {
+        if let fetched = fetchedModels.first(where: { $0.id == model }),
+            let tokens = fetched.contextWindowTokens,
+            tokens > 0
+        {
+            return ContextWindowResolution(tokens: tokens, source: .providerMetadata)
+        }
+        guard let tokens = ModelContextRegistry.builtInTokens(modelID: model, serviceType: type) else {
+            return nil
+        }
+        return ContextWindowResolution(tokens: tokens, source: .builtInRegistry)
+    }
+
+    var effectiveContextWindowTokens: Int? {
+        contextWindowOverrideEnabled ? contextWindowOverrideTokens : automaticContextWindow?.tokens
+    }
+
     func saveAPIService() {
         let serviceToSave = apiService ?? APIServiceEntity(context: viewContext)
         serviceToSave.name = name
@@ -189,6 +215,9 @@ class APIServiceDetailViewModel: ObservableObject {
         serviceToSave.url = URL(string: url)
         serviceToSave.model = model
         serviceToSave.contextSize = Int16(contextSize)
+        serviceToSave.contextWindowOverrideTokens = contextWindowOverrideEnabled
+            ? Int64(max(1_024, contextWindowOverrideTokens))
+            : 0
         serviceToSave.useStreamResponse = useStreamResponse
         serviceToSave.generateChatNames = generateChatNames
         serviceToSave.imageUploadsAllowed = imageUploadsAllowed
@@ -241,6 +270,7 @@ class APIServiceDetailViewModel: ObservableObject {
         if let serviceID = serviceToDelete.id {
             let serviceIDString = serviceID.uuidString
             try? TokenManager.deleteToken(for: serviceIDString)
+            try? ProviderHeaderStore.remove(for: serviceID)
         }
 
         viewContext.delete(serviceToDelete)

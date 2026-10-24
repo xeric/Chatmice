@@ -14,8 +14,10 @@ class PerplexityHandler: APIService {
     private let apiKey: String
     let model: String
     private let session: URLSession
+    private let requestHeaders: [String: String]
     private var activeDataTask: URLSessionDataTask?
     private var activeStreamTask: Task<Void, Never>?
+    private let tokenUsageTracker = ModelTokenUsageTracker()
 
     init(config: APIServiceConfiguration, session: URLSession) {
         self.name = config.name
@@ -23,6 +25,7 @@ class PerplexityHandler: APIService {
         self.apiKey = config.apiKey
         self.model = config.model
         self.session = session
+        self.requestHeaders = config.requestHeaders
     }
 
     func sendMessage(
@@ -136,6 +139,10 @@ class PerplexityHandler: APIService {
         }
     }
 
+    func consumeLatestTokenUsage() -> ModelTokenUsage? {
+        tokenUsageTracker.consume()
+    }
+
     private func prepareRequest(requestMessages: [[String: String]], model: String, temperature: Float, stream: Bool)
         -> URLRequest
     {
@@ -152,6 +159,7 @@ class PerplexityHandler: APIService {
         ]
 
         request.httpBody = try? JSONSerialization.data(withJSONObject: jsonDict, options: [])
+        ProviderHeaderStore.apply(requestHeaders, to: &request)
 
         return request
     }
@@ -203,6 +211,7 @@ class PerplexityHandler: APIService {
     }
 
     private func parseJSONResponse(data: Data) -> (String, String)? {
+        tokenUsageTracker.record(data: data)
         if let responseString = String(data: data, encoding: .utf8) {
             #if DEBUG
                 print("Response: \(responseString)")
@@ -235,6 +244,7 @@ class PerplexityHandler: APIService {
             print("No data received.")
             return (true, APIError.decodingFailed("No data received in SSE event"), nil, nil)
         }
+        tokenUsageTracker.record(data: data)
 
         let defaultRole = "assistant"
         let dataString = String(data: data, encoding: .utf8)

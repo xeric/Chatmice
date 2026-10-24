@@ -49,6 +49,8 @@ class ChatmiceEngine: APIService, AgentActivityReporting {
     private var activeTask: Task<Void, Never>?
     private let activityHandlerLock = NSLock()
     private var activityHandler: (@Sendable (AgentActivitySignal) -> Void)?
+    private let tokenUsageTracker = ModelTokenUsageTracker()
+    private let completedTurnUsageTracker = ModelTokenUsageTracker()
 
     static let toolsEnabledKey = "chatmiceToolsEnabled"
     static let bashEnabledKey = "chatmiceBashEnabled"
@@ -129,6 +131,9 @@ class ChatmiceEngine: APIService, AgentActivityReporting {
         _ requestMessages: [[String: String]],
         temperature: Float
     ) async throws -> AsyncThrowingStream<String, Error> {
+        _ = tokenUsageTracker.consume()
+        _ = completedTurnUsageTracker.consume()
+        _ = baseService.consumeLatestTokenUsage()
         let defaults = UserDefaults.standard
         let agentToolsEnabled = (defaults.object(forKey: Self.toolsEnabledKey) as? Bool) ?? true
         let searchMode = activeSearchMode
@@ -166,6 +171,30 @@ class ChatmiceEngine: APIService, AgentActivityReporting {
 
     func fetchModels() async throws -> [AIModel] {
         return try await baseService.fetchModels()
+    }
+
+    func consumeLatestTokenUsage() -> ModelTokenUsage? {
+        completedTurnUsageTracker.consume() ?? tokenUsageTracker.consume() ?? baseService.consumeLatestTokenUsage()
+    }
+
+    func compactContext(_ source: String) async throws -> ContextCompactionResult {
+        let messages = [
+            [
+                "role": "system",
+                "content": """
+                    Create a durable conversation checkpoint. Preserve user goals, preferences, decisions, facts,\
+                     referenced files and attachments, completed actions, important tool results, errors, and open work.\
+                     Omit greetings, repetition, and raw logs. Never invent facts. Return only the checkpoint summary.
+                    """,
+            ],
+            ["role": "user", "content": source],
+        ]
+        let stream = try await baseService.sendMessageStream(messages, temperature: 0.2)
+        var summary = ""
+        for try await chunk in stream { summary += chunk }
+        let trimmed = summary.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { throw APIError.invalidResponse }
+        return ContextCompactionResult(summary: trimmed, usage: baseService.consumeLatestTokenUsage())
     }
 
     func cancelCurrentRequest() {
@@ -430,6 +459,28 @@ class ChatmiceEngine: APIService, AgentActivityReporting {
                 temperature: temperature,
                 onText: { continuation.yield($0) }
             )
+            let reportedUsage = tokenUsageTracker.consume()
+            _ = completedTurnUsageTracker.consume()
+            if let reportedUsage, reportedUsage.totalTokens > 0 {
+                completedTurnUsageTracker.record(reportedUsage)
+            } else {
+                let inputTokens = conversationHistory.reduce(0) { $0 + $1.estimatedTokens }
+                    + defs.reduce(0) { total, tool in
+                        let parameters = (try? JSONSerialization.data(withJSONObject: tool.parameters.openAIWireDict))
+                            .flatMap { String(data: $0, encoding: .utf8) } ?? ""
+                        return total + ContextManagement.estimatedTokens(in: tool.name)
+                            + ContextManagement.estimatedTokens(in: tool.description)
+                            + ContextManagement.estimatedTokens(in: parameters)
+                    }
+                let outputTokens = ContextManagement.estimatedTokens(in: rawResult.text)
+                    + rawResult.toolCalls.reduce(0) {
+                        $0 + ContextManagement.estimatedTokens(in: $1.name)
+                            + ContextManagement.estimatedTokens(in: $1.arguments)
+                    }
+                completedTurnUsageTracker.record(ModelTokenUsage(
+                    inputTokens: inputTokens, outputTokens: outputTokens, isEstimated: true
+                ))
+            }
             AppLogger.shared.info(
                 "engine.turn round=\(rounds) provider=\(serviceType) textChars=\(rawResult.text.count) toolCalls=\(rawResult.toolCalls.count)"
             )
@@ -517,6 +568,20 @@ class ChatmiceEngine: APIService, AgentActivityReporting {
         case text(role: String, content: String)
         case assistant(text: String, toolCalls: [ToolCall])
         case toolResults([ToolExecutionResult])
+
+        var estimatedTokens: Int {
+            switch self {
+            case .text(_, let content):
+                return ContextManagement.estimatedTokens(in: content)
+            case .assistant(let text, let calls):
+                return ContextManagement.estimatedTokens(in: text) + calls.reduce(0) {
+                    $0 + ContextManagement.estimatedTokens(in: $1.name)
+                        + ContextManagement.estimatedTokens(in: $1.arguments)
+                }
+            case .toolResults(let results):
+                return results.reduce(0) { $0 + ContextManagement.estimatedTokens(in: $1.output) }
+            }
+        }
 
         var isSystemText: Bool {
             if case .text(let role, _) = self {
@@ -730,7 +795,15 @@ class ChatmiceEngine: APIService, AgentActivityReporting {
             "temperature": temperature,
             "stream": true,
         ]
+        ReasoningRequestEncoder.apply(
+            selection: ReasoningPreferenceStore.selection(for: config.model),
+            profile: ModelReasoningRegistry.resolve(modelID: config.model, serviceType: serviceType, serviceID: config.providerID),
+            maxTokens: 32_768, to: &body
+        )
         if !toolsPayload.isEmpty { body["tools"] = toolsPayload }
+        if ["chatgpt", "openai", "openai-responses", "openrouter", "deepseek"].contains(serviceType) {
+            body["stream_options"] = ["include_usage": true]
+        }
         if nativeSearchEnabled {
             if serviceType == "openrouter" {
                 body["plugins"] = [["id": "web", "engine": "native"]]
@@ -740,6 +813,7 @@ class ChatmiceEngine: APIService, AgentActivityReporting {
             }
         }
         req.httpBody = try JSONSerialization.data(withJSONObject: body)
+        ProviderHeaderStore.apply(config.requestHeaders, to: &req)
 
         let (bytes, response) = try await session.bytes(for: req)
         guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
@@ -758,8 +832,9 @@ class ChatmiceEngine: APIService, AgentActivityReporting {
             guard line.hasPrefix("data:") else { continue }
             let payload = line.dropFirst(5).trimmingCharacters(in: .whitespaces)
             if payload == "[DONE]" { break }
-            guard let data = payload.data(using: .utf8),
-                let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+            guard let data = payload.data(using: .utf8) else { continue }
+            tokenUsageTracker.record(data: data)
+            guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
                 let choice = (object["choices"] as? [[String: Any]])?.first,
                 let delta = choice["delta"] as? [String: Any]
             else { continue }
@@ -837,8 +912,9 @@ class ChatmiceEngine: APIService, AgentActivityReporting {
             guard line.hasPrefix("data:") else { continue }
             let payload = line.dropFirst(5).trimmingCharacters(in: .whitespaces)
             if payload == "[DONE]" { break }
-            guard let data = payload.data(using: .utf8),
-                let event = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+            guard let data = payload.data(using: .utf8) else { continue }
+            tokenUsageTracker.record(data: data)
+            guard let event = try JSONSerialization.jsonObject(with: data) as? [String: Any]
             else { continue }
 
             switch event["type"] as? String {
@@ -909,6 +985,7 @@ class ChatmiceEngine: APIService, AgentActivityReporting {
             AppLogger.shared.error("engine.responses.failed stream=false status=\(http.statusCode) model=\(config.model) body=\(body)")
             throw APIError.serverError(body)
         }
+        tokenUsageTracker.record(data: data)
         guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             throw APIError.decodingFailed("Invalid Responses payload")
         }
@@ -923,7 +1000,7 @@ class ChatmiceEngine: APIService, AgentActivityReporting {
         temperature: Float,
         stream: Bool
     ) throws -> URLRequest {
-        var request = URLRequest(url: baseURL)
+        var request = URLRequest(url: OpenAIEndpointURL.responses(from: baseURL))
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("responses=v1", forHTTPHeaderField: "OpenAI-Beta")
@@ -968,8 +1045,8 @@ class ChatmiceEngine: APIService, AgentActivityReporting {
         if stream { body["stream"] = true }
         if !toolPayload.isEmpty { body["tools"] = toolPayload }
         let reasoningSelection = ReasoningPreferenceStore.selection(for: config.model)
-        let reasoningProfile = ModelReasoningRegistry.resolve(modelID: config.model, serviceType: serviceType)
-        if reasoningSelection == .default {
+        let reasoningProfile = ModelReasoningRegistry.resolve(modelID: config.model, serviceType: serviceType, serviceID: config.providerID)
+        if reasoningSelection == .default, OpenAIResponsesHandler.shouldSendTemperature(for: config.model) {
             body["temperature"] = temperature
         }
         ReasoningRequestEncoder.apply(
@@ -979,6 +1056,7 @@ class ChatmiceEngine: APIService, AgentActivityReporting {
             to: &body
         )
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        ProviderHeaderStore.apply(config.requestHeaders, to: &request)
         return request
     }
 
@@ -1073,6 +1151,11 @@ class ChatmiceEngine: APIService, AgentActivityReporting {
             "options": ["temperature": temperature],
         ]
         if !toolPayload.isEmpty { body["tools"] = toolPayload }
+        ReasoningRequestEncoder.apply(
+            selection: ReasoningPreferenceStore.selection(for: config.model),
+            profile: ModelReasoningRegistry.resolve(modelID: config.model, serviceType: serviceType, serviceID: config.providerID),
+            maxTokens: 32_768, to: &body
+        )
 
         var request = URLRequest(url: baseURL)
         request.httpMethod = "POST"
@@ -1080,6 +1163,7 @@ class ChatmiceEngine: APIService, AgentActivityReporting {
         let key = effectiveKey
         if !key.isEmpty { request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization") }
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        ProviderHeaderStore.apply(config.requestHeaders, to: &request)
 
         let (bytes, response) = try await session.bytes(for: request)
         guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
@@ -1091,8 +1175,9 @@ class ChatmiceEngine: APIService, AgentActivityReporting {
         var text = ""
         var calls: [ToolCall] = []
         for try await line in bytes.lines where !line.isEmpty {
-            guard let data = line.data(using: .utf8),
-                let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+            guard let data = line.data(using: .utf8) else { continue }
+            tokenUsageTracker.record(data: data)
+            guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
                 let message = object["message"] as? [String: Any]
             else { continue }
             if let chunk = message["content"] as? String, !chunk.isEmpty {
@@ -1225,6 +1310,13 @@ class ChatmiceEngine: APIService, AgentActivityReporting {
                 "temperature": temperature
             ],
         ]
+        var generation = body["generationConfig"] as? [String: Any] ?? [:]
+        ReasoningRequestEncoder.apply(
+            selection: ReasoningPreferenceStore.selection(for: config.model),
+            profile: ModelReasoningRegistry.resolve(modelID: config.model, serviceType: serviceType, serviceID: config.providerID),
+            maxTokens: 32_768, to: &generation
+        )
+        body["generationConfig"] = generation
         if !systemText.isEmpty {
             body["systemInstruction"] = [
                 "role": "user",
@@ -1234,6 +1326,7 @@ class ChatmiceEngine: APIService, AgentActivityReporting {
 
         req.httpBody = try JSONSerialization.data(withJSONObject: body)
         req.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+        ProviderHeaderStore.apply(config.requestHeaders, to: &req)
         let (bytes, response) = try await session.bytes(for: req)
 
         guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
@@ -1249,8 +1342,9 @@ class ChatmiceEngine: APIService, AgentActivityReporting {
         for try await line in bytes.lines {
             guard line.hasPrefix("data:") else { continue }
             let payload = line.dropFirst(5).trimmingCharacters(in: .whitespaces)
-            guard let data = payload.data(using: .utf8),
-                let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+            guard let data = payload.data(using: .utf8) else { continue }
+            tokenUsageTracker.record(data: data)
+            guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
                 let candidate = (object["candidates"] as? [[String: Any]])?.first,
                 let content = candidate["content"] as? [String: Any],
                 let parts = content["parts"] as? [[String: Any]]
@@ -1306,7 +1400,8 @@ class ChatmiceEngine: APIService, AgentActivityReporting {
             config.model,
             baseURL: baseURL,
             apiKey: key,
-            session: session
+            session: session,
+            headers: config.requestHeaders
         )
 
         let systemText = messages.compactMap { message -> String? in
@@ -1391,6 +1486,11 @@ class ChatmiceEngine: APIService, AgentActivityReporting {
             body["tools"] = claudeTools
         }
         ClaudeRequestCompatibility.addTemperature(temperature, model: config.model, to: &body)
+        ReasoningRequestEncoder.apply(
+            selection: ReasoningPreferenceStore.selection(for: config.model),
+            profile: ModelReasoningRegistry.resolve(modelID: config.model, serviceType: serviceType, serviceID: config.providerID),
+            maxTokens: 4096, to: &body
+        )
         if !systemText.isEmpty {
             body["system"] = systemText
         }
@@ -1400,6 +1500,7 @@ class ChatmiceEngine: APIService, AgentActivityReporting {
             "engine.claude.request messages=\(claudeMsgs.count) tools=\(claudeTools.count) bodyBytes=\(req.httpBody?.count ?? 0)"
         )
         req.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+        ProviderHeaderStore.apply(config.requestHeaders, to: &req)
         let (bytes, response) = try await session.bytes(for: req)
 
         guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
@@ -1420,8 +1521,9 @@ class ChatmiceEngine: APIService, AgentActivityReporting {
         for try await line in bytes.lines {
             guard line.hasPrefix("data:") else { continue }
             let payload = line.dropFirst(5).trimmingCharacters(in: .whitespaces)
-            guard let data = payload.data(using: .utf8),
-                let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+            guard let data = payload.data(using: .utf8) else { continue }
+            tokenUsageTracker.record(data: data)
+            guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
                 let eventType = object["type"] as? String
             else { continue }
 

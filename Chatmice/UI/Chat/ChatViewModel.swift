@@ -294,7 +294,8 @@ class ChatViewModel: NSObject, ObservableObject, NSFetchedResultsControllerDeleg
             apiUrl: apiServiceUrl,
             apiKey: apiKey,
             model: chat.gptModel,
-            type: serviceType
+            type: serviceType,
+            providerID: apiService.id
         )
     }
     private func getApiServiceName() -> String {

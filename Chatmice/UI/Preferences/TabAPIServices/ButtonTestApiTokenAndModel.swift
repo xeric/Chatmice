@@ -14,6 +14,7 @@ struct ButtonTestApiTokenAndModel: View {
     var apiUrl: String = AppConstants.apiUrlOpenAIResponses
     var apiType: String = AppConstants.defaultApiType
     var imageGenerationSupported: Bool = false
+    var providerID: UUID? = nil
     @State var testOk: Bool = false
 
     @Environment(\.managedObjectContext) private var viewContext
@@ -38,7 +39,9 @@ struct ButtonTestApiTokenAndModel: View {
             name: apiType,
             apiUrl: URL(string: apiUrl)!,
             apiKey: gptToken,
-            model: gptModel
+            model: gptModel,
+            type: apiType,
+            providerID: providerID
         )
         let apiService = APIServiceFactory.createAPIService(
             config: config,

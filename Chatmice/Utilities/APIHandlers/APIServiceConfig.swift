@@ -13,4 +13,6 @@ struct APIServiceConfig: APIServiceConfiguration, Codable {
     var apiKey: String
     var model: String
     var type: String = "chatgpt"
+    var providerID: UUID? = nil
+    var customHeaders: [String: String]? = nil
 }

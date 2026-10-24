@@ -208,6 +208,9 @@ struct TabAPIServicesView: View {
             if let token = try? TokenManager.getToken(for: oldID.uuidString) {
                 try? TokenManager.setToken(token, for: newID.uuidString)
             }
+            if let headers = try? ProviderHeaderStore.load(for: oldID) {
+                try? ProviderHeaderStore.save(headers, for: newID)
+            }
             let key = "service_models_\(oldID.uuidString)"
             if let data = UserDefaults.standard.string(forKey: key) {
                 UserDefaults.standard.set(data, forKey: "service_models_\(newID.uuidString)")
@@ -219,6 +222,7 @@ struct TabAPIServicesView: View {
     private func deleteService(_ service: APIServiceEntity) {
         if let id = service.id {
             try? TokenManager.deleteToken(for: id.uuidString)
+            try? ProviderHeaderStore.remove(for: id)
             UserDefaults.standard.removeObject(forKey: "service_models_\(id.uuidString)")
         }
         viewContext.delete(service)
@@ -323,6 +327,116 @@ struct ModelTrashButton: View {
 
 // MARK: - Native Edit / Add Sheet (Scheme A - Perfectly Aligned)
 
+struct ModelConfigurationEditor: View {
+    @Environment(\.dismiss) private var dismiss
+    let model: ServiceModelRow
+    let serviceType: String
+    let tested: ModelCapabilityTestResult?
+    let automaticContextTokens: Int?
+    let automaticVision: Bool
+    let automaticFiles: Bool
+    let onSave: (ModelConfigurationOverrides) -> Void
+    @State private var overrides: ModelConfigurationOverrides
+    @State private var customContext: Bool
+    @State private var contextText: String
+
+    init(model: ServiceModelRow, serviceType: String, tested: ModelCapabilityTestResult?, automaticContextTokens: Int?, automaticVision: Bool = false, automaticFiles: Bool = false, onSave: @escaping (ModelConfigurationOverrides) -> Void) {
+        self.model = model
+        self.serviceType = serviceType
+        self.tested = tested
+        self.automaticContextTokens = automaticContextTokens
+        self.automaticVision = automaticVision
+        self.automaticFiles = automaticFiles
+        self.onSave = onSave
+        let value = model.overrides ?? ModelConfigurationOverrides()
+        _overrides = State(initialValue: value)
+        _customContext = State(initialValue: value.contextWindowTokens != nil)
+        _contextText = State(initialValue: String(value.contextWindowTokens ?? automaticContextTokens ?? 128_000))
+    }
+
+    private var validContext: Bool {
+        !customContext || (Int(contextText).map { $0 >= 1_024 } ?? false)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Model Configuration").font(.headline)
+            Text(model.modelID).font(.system(.subheadline, design: .monospaced)).textSelection(.enabled)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    GroupBox("Context Window") {
+                        VStack(alignment: .leading, spacing: 10) {
+                            Toggle("Override context window", isOn: $customContext)
+                                .accessibilityIdentifier("model.contextOverride")
+                            HStack {
+                                TextField("Tokens", text: $contextText)
+                                    .textFieldStyle(.roundedBorder)
+                                    .disabled(!customContext)
+                                    .accessibilityIdentifier("model.contextTokens")
+                                Text("tokens").foregroundStyle(.secondary)
+                            }
+                            Text(automaticContextTokens.map { "Automatic: \($0.formatted()) tokens" } ?? "Automatic: unknown")
+                                .font(.caption).foregroundStyle(.secondary)
+                            if !validContext {
+                                Text("Enter a whole number of at least 1,024 tokens.")
+                                    .font(.caption).foregroundStyle(.red)
+                            }
+                        }.padding(8)
+                    }
+                    GroupBox("Capabilities") {
+                        VStack(alignment: .leading, spacing: 12) {
+                            capability("Vision / Images", value: $overrides.visionSupported, detected: automaticVision)
+                            capability("Files / PDF", value: $overrides.filesSupported, detected: automaticFiles)
+                            capability("Audio Input", value: $overrides.audioSupported, detected: AudioInputCapability.supportsAudio(serviceType: serviceType, modelID: model.modelID))
+                            capability("Thinking", value: $overrides.thinkingSupported, detected: tested?.reasoningSupported ?? ModelReasoningRegistry.resolve(modelID: model.modelID, serviceType: serviceType).supportsReasoning)
+                        }.padding(8)
+                    }
+                    Text("Automatic uses detected or default capabilities. Overrides apply only to this model on this provider; they do not add capabilities to the server. Save the provider with Done to apply changes.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            HStack {
+                Button("Reset to Automatic") {
+                    overrides = ModelConfigurationOverrides()
+                    customContext = false
+                }
+                Spacer()
+                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
+                Button("Save") {
+                    overrides.contextWindowTokens = customContext ? Int(contextText) : nil
+                    onSave(overrides)
+                    dismiss()
+                }
+                .keyboardShortcut(.defaultAction)
+                .buttonStyle(.borderedProminent)
+                .disabled(!validContext)
+            }
+        }
+        .padding(20)
+        .foregroundStyle(Color.primary)
+        .frame(width: 460, height: 540)
+    }
+
+    private func capability(_ title: String, value: Binding<Bool?>, detected: Bool?) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Picker(title, selection: Binding<Int>(
+                get: { value.wrappedValue.map { $0 ? 1 : 0 } ?? -1 },
+                set: { value.wrappedValue = $0 == -1 ? nil : $0 == 1 }
+            )) {
+                Text("Automatic").tag(-1)
+                Text("Supported").tag(1)
+                Text("Not Supported").tag(0)
+            }
+            .pickerStyle(.menu)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityIdentifier("model.capability.\(title)")
+            Text(detected.map { "Detected / default: \($0 ? "supported" : "not supported")" } ?? "Automatic: provider defaults")
+                .font(.caption2).foregroundStyle(.secondary)
+        }
+    }
+}
+
+
 struct ProviderEditorSheet: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.managedObjectContext) private var viewContext
@@ -336,8 +450,11 @@ struct ProviderEditorSheet: View {
     @State private var urlText = ""
     @State private var typeText = "chatgpt"
     @State private var apiKeyText = ""
+    @State private var headersText = ""
+    @State private var headerError: String?
     @State private var modelsList: [ServiceModelRow] = []
     @State private var isShowingAPIKey = false
+    @State private var configuringModel: ServiceModelRow?
 
     // Add custom model alert
     @State private var showingAddModelSheet = false
@@ -400,11 +517,11 @@ struct ProviderEditorSheet: View {
                 .keyboardShortcut(.cancelAction)
 
                 Button("Done") {
-                    saveChanges()
-                    dismiss()
+                    if saveChanges() { dismiss() }
                 }
                 .buttonStyle(.borderedProminent)
                 .keyboardShortcut(.defaultAction)
+                .disabled((try? ProviderHeaderStore.parse(headersText)) == nil)
             }
             .padding(.horizontal, 20)
             .padding(.top, 16)
@@ -492,6 +609,23 @@ struct ProviderEditorSheet: View {
                         .padding(10)
                         .frame(maxWidth: .infinity, alignment: .leading)
                     }
+
+                    GroupBox("Custom HTTP Headers") {
+                        VStack(alignment: .leading, spacing: 8) {
+                            TextEditor(text: $headersText)
+                                .font(.system(.body, design: .monospaced))
+                                .frame(height: 90)
+                                .onChange(of: headersText) { _, value in
+                                    do { _ = try ProviderHeaderStore.parse(value); headerError = nil }
+                                    catch { headerError = error.localizedDescription }
+                                }
+                            Text("Header-Name: value, one per line. Overrides built-in headers, including Authorization. Values are stored in Keychain.")
+                                .font(.caption).foregroundStyle(.secondary)
+                            if let headerError { Text(headerError).font(.caption).foregroundStyle(.red) }
+                        }
+                        .padding(8)
+                    }
+
 
                     // Group 2: Models Management
                     GroupBox {
@@ -584,6 +718,14 @@ struct ProviderEditorSheet: View {
                                                     }
                                                 }
 
+                                                Button {
+                                                    configuringModel = m
+                                                } label: {
+                                                    Image(systemName: "slider.horizontal.3")
+                                                }
+                                                .buttonStyle(.borderless)
+                                                .help("Configure \(m.modelID)")
+                                                .accessibilityIdentifier("model.configure.\(m.modelID)")
                                                 ModelTrashButton(action: {
                                                     deleteModel(m.id)
                                                 })
@@ -690,6 +832,24 @@ struct ProviderEditorSheet: View {
         .onAppear {
             loadInitialData()
         }
+        .sheet(item: $configuringModel) { model in
+            ModelConfigurationEditor(
+                model: model,
+                serviceType: typeText,
+                tested: capabilityResults[model.modelID],
+                automaticContextTokens: ModelContextMetadataStore.tokens(serviceType: typeText, modelID: model.modelID)
+                    ?? ModelContextRegistry.builtInTokens(modelID: model.modelID, serviceType: typeText),
+                automaticVision: capabilityResults[model.modelID]?.visionSupported
+                    ?? service?.imageUploadsAllowed
+                    ?? AppConstants.defaultApiConfigurations[typeText]?.imageUploadsSupported ?? false,
+                automaticFiles: service?.pdfUploadsAllowed ?? AppConstants.defaultApiConfigurations[typeText]?.pdfUploadsSupported ?? false,
+                onSave: { overrides in
+                    if let index = modelsList.firstIndex(where: { $0.id == model.id }) {
+                        modelsList[index].overrides = overrides
+                    }
+                }
+            )
+        }
         .sheet(isPresented: $showingAddModelSheet) {
             addCustomModelSheet
         }
@@ -742,7 +902,7 @@ struct ProviderEditorSheet: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text("Test Models")
                     .font(.headline)
-                Text("Each selected model receives a connection request, a one-pixel image, and a thinking request.")
+                Text("Each selected model receives a connection request, a 64×64 color image, and a thinking request.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -846,9 +1006,9 @@ struct ProviderEditorSheet: View {
                 Image(systemName: "checkmark.circle.fill")
                     .foregroundStyle(Color.green)
                     .help("Connection successful")
-                Image(systemName: result.visionSupported == true ? "eye.fill" : "eye.slash")
+                Image(systemName: result.visionSupported == true ? "eye.fill" : "questionmark.circle")
                     .foregroundStyle(result.visionSupported == true ? Color.blue : Color.secondary)
-                    .help(result.visionSupported == true ? "Vision supported" : "Vision not supported")
+                    .help(result.visionSupported == true ? "Vision verified" : "Vision not verified; a failed probe does not prove lack of support")
                 Image(systemName: "brain.head.profile")
                     .foregroundStyle(result.reasoningSupported == true ? Color.purple : Color.secondary.opacity(0.35))
                     .help(result.reasoningSupported == true ? "Thinking supported" : "Thinking not supported")
@@ -867,6 +1027,7 @@ struct ProviderEditorSheet: View {
     }
 
     private func testSelectedModels() {
+        guard (try? ProviderHeaderStore.parse(headersText)) != nil else { return }
         let selectedModels = modelsList.map(\.modelID).filter { selectedModelIDsForTest.contains($0) }
         guard !selectedModels.isEmpty else { return }
 
@@ -884,7 +1045,8 @@ struct ProviderEditorSheet: View {
                     apiUrl: URL(string: urlText) ?? URL(fileURLWithPath: ""),
                     apiKey: effectiveKey,
                     model: modelID,
-                    type: typeText
+                    type: typeText,
+                    customHeaders: try? ProviderHeaderStore.parse(headersText)
                 )
                 let result = await ModelCapabilityProbe.test(config: config, modelID: modelID)
                 await MainActor.run {
@@ -917,12 +1079,16 @@ struct ProviderEditorSheet: View {
 
             if let id = service.id {
                 apiKeyText = (try? TokenManager.getToken(for: id.uuidString)) ?? ""
+                do {
+                    headersText = try ProviderHeaderStore.load(for: id).sorted { $0.key < $1.key }
+                        .map { "\($0.key): \($0.value)" }.joined(separator: "\n")
+                } catch { headerError = "Cannot load headers: \(error.localizedDescription)" }
                 capabilityResults = ModelCapabilityTestStore.results(for: id)
                 let key = "service_models_\(id.uuidString)"
                 if let data = UserDefaults.standard.string(forKey: key)?.data(using: .utf8),
                    let list = try? JSONDecoder().decode([ServiceModelRow].self, from: data) {
                     modelsList = list.map {
-                        ServiceModelRow(id: $0.id, nickname: $0.nickname == "optional" ? "" : $0.nickname, modelID: $0.modelID)
+                        ServiceModelRow(id: $0.id, nickname: $0.nickname == "optional" ? "" : $0.nickname, modelID: $0.modelID, overrides: $0.overrides)
                     }
                 }
             }
@@ -939,7 +1105,10 @@ struct ProviderEditorSheet: View {
         apiKeyText = ProcessInfo.processInfo.environment["LOCAL_SAP_AI_CORE_PROXY_KEY"] ?? ""
     }
 
-    private func saveChanges() {
+    private func saveChanges() -> Bool {
+        let headers: [String: String]
+        do { headers = try ProviderHeaderStore.parse(headersText) }
+        catch { headerError = error.localizedDescription; return false }
         let targetService: APIServiceEntity
         if let existing = service {
             targetService = existing
@@ -954,6 +1123,13 @@ struct ProviderEditorSheet: View {
                 useStreamResponse: true,
                 generateChatNames: true
             )
+        }
+        guard let providerID = targetService.id else { return false }
+        do { try ProviderHeaderStore.save(headers, for: providerID) }
+        catch {
+            headerError = "Cannot save headers to Keychain: \(error.localizedDescription)"
+            if service == nil { viewContext.delete(targetService); try? viewContext.save() }
+            return false
         }
 
         targetService.name = nameText
@@ -970,9 +1146,11 @@ struct ProviderEditorSheet: View {
                 UserDefaults.standard.set(str, forKey: key)
             }
             ModelCapabilityTestStore.save(capabilityResults, for: id)
+            NotificationCenter.default.post(name: ModelConfigurationStore.didChangeNotification, object: id)
         }
 
         onSave()
+        return true
     }
 
     private func deleteModel(_ id: String) {
@@ -982,12 +1160,14 @@ struct ProviderEditorSheet: View {
     // MARK: - Fetch Models from API
 
     private func fetchModelsFromAPI() {
+        guard let headers = try? ProviderHeaderStore.parse(headersText) else { return }
         let config = APIServiceConfig(
             name: nameText,
             apiUrl: URL(string: urlText) ?? URL(fileURLWithPath: ""),
             apiKey: apiKeyText,
             model: modelsList.first?.modelID ?? "",
-            type: typeText
+            type: typeText,
+            customHeaders: headers
         )
         let handler = APIServiceFactory.createAPIService(config: config, imageGenerationSupported: false)
         isFetchingModels = true
@@ -996,6 +1176,7 @@ struct ProviderEditorSheet: View {
         Task {
             do {
                 let models = try await handler.fetchModels()
+                ModelContextMetadataStore.save(models, serviceType: typeText)
                 await MainActor.run {
                     self.isFetchingModels = false
                     if !models.isEmpty {

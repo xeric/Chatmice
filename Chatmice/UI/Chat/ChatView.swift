@@ -82,18 +82,13 @@ struct ChatView: View {
     }
 
     private var pdfUploadsAllowed: Bool {
-        chat.apiService?.pdfUploadsAllowed ?? false
+        _ = modelCapabilityRevision
+        return ModelAttachmentCapabilities.files(service: chat.apiService, modelID: chat.gptModel)
     }
 
     private var imageUploadsAllowed: Bool {
         _ = modelCapabilityRevision
-        guard let service = chat.apiService else { return false }
-        let testedVision = service.id.flatMap {
-            ModelCapabilityTestStore.results(for: $0)[chat.gptModel]?.visionSupported
-        }
-        if testedVision == false { return false }
-        if service.imageUploadsAllowed { return true }
-        return service.type?.lowercased() == "deepseek" && testedVision == true
+        return ModelAttachmentCapabilities.vision(service: chat.apiService, modelID: chat.gptModel)
     }
 
     private var imageGenerationSupported: Bool {
@@ -101,7 +96,8 @@ struct ChatView: View {
     }
 
     private var audioInputAllowed: Bool {
-        AudioInputCapability.supportsAudio(serviceType: chat.apiService?.type, modelID: chat.gptModel)
+        _ = modelCapabilityRevision
+        return ModelAttachmentCapabilities.audio(service: chat.apiService, modelID: chat.gptModel)
     }
 
     private var isInferenceInProgress: Bool {
@@ -140,6 +136,10 @@ struct ChatView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: ModelCapabilityTestStore.didChangeNotification)) {
             notification in
+            guard notification.object as? UUID == chat.apiService?.id else { return }
+            modelCapabilityRevision += 1
+        }
+        .onReceive(NotificationCenter.default.publisher(for: ModelConfigurationStore.didChangeNotification)) { notification in
             guard notification.object as? UUID == chat.apiService?.id else { return }
             modelCapabilityRevision += 1
         }

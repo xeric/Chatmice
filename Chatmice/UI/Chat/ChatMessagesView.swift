@@ -227,6 +227,8 @@ private struct ChatActivityIndicatorView: View {
 
     private var accent: Color {
         switch snapshot.phase {
+        case .compactingContext:
+            return .orange
         case .awaitingApproval:
             return .orange
         case .runningTool:

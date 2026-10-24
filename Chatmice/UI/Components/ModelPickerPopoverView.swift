@@ -239,8 +239,9 @@ struct ModelPickerPopoverView: View {
         let isSelected = selectedChat?.apiService == service && selectedChat?.gptModel == modelID
         let isFav = favorites.contains(modelID)
         let testedCapabilities = service.id.flatMap { testedCapabilitiesByService[$0]?[modelID] }
-        let isVision = testedCapabilities?.visionSupported ?? isVisionModel(modelID)
-        let isReasoning = testedCapabilities?.reasoningSupported ?? isReasoningModel(modelID)
+        let overrides = ModelConfigurationStore.overrides(serviceID: service.id, modelID: modelID)
+        let isVision = overrides.visionSupported ?? testedCapabilities?.visionSupported ?? isVisionModel(modelID)
+        let isReasoning = overrides.thinkingSupported ?? testedCapabilities?.reasoningSupported ?? isReasoningModel(modelID)
 
         return Button(action: {
             onSelect(service, modelID)
@@ -342,7 +343,7 @@ struct ModelPickerPopoverView: View {
     private func isVisionModel(_ id: String) -> Bool {
         let lower = id.lowercased()
         return lower.contains("4o") || lower.contains("vl") || lower.contains("vision") || lower.contains("gemini")
-            || lower.contains("sonnet") || lower.contains("claude")
+            || lower.contains("sonnet") || lower.contains("claude") || lower.contains("gpt-5") || lower.contains("gpt-6")
     }
 
     private func toggleFavorite(_ id: String) {

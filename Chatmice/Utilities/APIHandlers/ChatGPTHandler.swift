@@ -15,6 +15,14 @@ private struct ChatGPTModelsResponse: Codable {
 
 private struct ChatGPTModel: Codable {
     let id: String
+    let contextLength: Int?
+    let maxCompletionTokens: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case contextLength = "context_length"
+        case maxCompletionTokens = "max_completion_tokens"
+    }
 }
 
 class ChatGPTHandler: OpenAIHandlerBase, APIService {
@@ -45,7 +53,8 @@ class ChatGPTHandler: OpenAIHandlerBase, APIService {
 
                 switch result {
                 case .success(let responseData):
-                    if let responseData = responseData {
+                    if let responseData {
+                        self.recordTokenUsage(from: responseData)
                         guard let (messageContent, _) = self.parseJSONResponse(data: responseData) else {
                             completion(.failure(.decodingFailed("Failed to parse response")))
                             return
@@ -106,17 +115,20 @@ class ChatGPTHandler: OpenAIHandlerBase, APIService {
                             }
                             let jsonData = String(line[index...]).trimmingCharacters(in: .whitespacesAndNewlines)
                             if let jsonData = jsonData.data(using: .utf8) {
-                                let (finished, error, messageData, _) = parseDeltaJSONResponse(data: jsonData)
+                                let (_, error, messageData, _) = parseDeltaJSONResponse(data: jsonData)
 
                                 if error != nil {
                                     continuation.finish(throwing: error)
+                                    return
                                 }
                                 else {
                                     if messageData != nil {
                                         continuation.yield(messageData!)
                                     }
-                                    if finished {
+                                    // finish_reason ends content; usage may follow in a separate chunk.
+                                    if String(data: jsonData, encoding: .utf8) == "[DONE]" {
                                         continuation.finish()
+                                        return
                                     }
                                 }
                             }
@@ -151,6 +163,7 @@ class ChatGPTHandler: OpenAIHandlerBase, APIService {
         if !effectiveKey.isEmpty {
             request.setValue("Bearer \(effectiveKey)", forHTTPHeaderField: "Authorization")
         }
+        ProviderHeaderStore.apply(requestHeaders, to: &request)
 
         do {
             let (data, response) = try await session.data(for: request)
@@ -159,16 +172,22 @@ class ChatGPTHandler: OpenAIHandlerBase, APIService {
             case .success(let responseData):
                 guard let responseData else { throw APIError.invalidResponse }
                 if let gptResponse = try? JSONDecoder().decode(ChatGPTModelsResponse.self, from: responseData) {
-                    return gptResponse.data.map { AIModel(id: $0.id) }
+                    return gptResponse.data.map {
+                        AIModel(
+                            id: $0.id,
+                            contextWindowTokens: $0.contextLength,
+                            maxOutputTokens: $0.maxCompletionTokens
+                        )
+                    }
                 }
                 if let obj = try? JSONSerialization.jsonObject(with: responseData) as? [String: Any] {
                     if let dataArr = obj["data"] as? [[String: Any]] {
-                        let ids = dataArr.compactMap { $0["id"] as? String }
-                        if !ids.isEmpty { return ids.map { AIModel(id: $0) } }
+                        let models = dataArr.compactMap(AIModel.init(json:))
+                        if !models.isEmpty { return models }
                     }
                     if let modelsArr = obj["models"] as? [[String: Any]] {
-                        let ids = modelsArr.compactMap { ($0["name"] as? String) ?? ($0["id"] as? String) }
-                        if !ids.isEmpty { return ids.map { AIModel(id: $0) } }
+                        let models = modelsArr.compactMap(AIModel.init(json:))
+                        if !models.isEmpty { return models }
                     }
                 }
                 throw APIError.decodingFailed("Failed to parse models list")
@@ -251,15 +270,19 @@ class ChatGPTHandler: OpenAIHandlerBase, APIService {
             "temperature": temperatureOverride,
         ]
         let serviceType = (self as OpenAIHandlerBase).serviceType
-        let profile = ModelReasoningRegistry.resolve(modelID: self.model, serviceType: serviceType)
+        let profile = ModelReasoningRegistry.resolve(modelID: self.model, serviceType: serviceType, serviceID: providerID)
         ReasoningRequestEncoder.apply(
             selection: ReasoningPreferenceStore.selection(for: self.model),
             profile: profile,
             maxTokens: 32_768,
             to: &jsonDict
         )
+        if stream, ["chatgpt", "openrouter", "deepseek"].contains(serviceType) {
+            jsonDict["stream_options"] = ["include_usage": true]
+        }
 
         request.httpBody = try? JSONSerialization.data(withJSONObject: jsonDict, options: [])
+        ProviderHeaderStore.apply(requestHeaders, to: &request)
 
         return request
     }
@@ -298,6 +321,7 @@ class ChatGPTHandler: OpenAIHandlerBase, APIService {
             print("No data received.")
             return (true, APIError.decodingFailed("No data received in SSE event"), nil, nil)
         }
+        recordTokenUsage(from: data)
 
         let defaultRole = "assistant"
         let dataString = String(data: data, encoding: .utf8)

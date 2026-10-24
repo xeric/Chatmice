@@ -39,7 +39,6 @@ struct EntityListView<Entity: NSManagedObject & Identifiable, DetailContent: Vie
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .animation(.easeInOut(duration: 0.16), value: selectedEntityID)
         .onDisappear {
             draggedEntityID = nil
             dropTarget = nil
@@ -61,43 +60,34 @@ struct EntityListView<Entity: NSManagedObject & Identifiable, DetailContent: Vie
             RoundedRectangle(cornerRadius: 6, style: .continuous)
                 .fill(selectedEntityID == entity.objectID ? Color.accentColor.opacity(0.2) : .clear)
         )
-        .onTapGesture(count: 2) {
-            selectedEntityID = entity.objectID
-            onEdit?()
-        }
-        .simultaneousGesture(
-            TapGesture().onEnded {
-                selectedEntityID = entity.objectID
-            }
-        )
 
         if onMove != nil {
             VStack(spacing: 2) {
                 if dropTarget?.id == entity.objectID, dropTarget?.before == true {
                     ReorderDropPlaceholder()
                 }
-                row
-                    .overlay {
-                        ReorderDragSource(
-                            payload: { entity.objectID.uriRepresentation().absoluteString },
-                            preview: row,
-                            onStarted: { draggedEntityID = entity.objectID },
-                            onEnded: {
-                                if draggedEntityID == entity.objectID {
-                                    draggedEntityID = nil
-                                    dropTarget = nil
-                                }
-                            },
-                            onClick: { count in
-                                selectedEntityID = entity.objectID
-                                if count == 2 { onEdit?() }
-                            }
-                        )
-                    }
-                    .opacity(draggedEntityID == entity.objectID ? 0.6 : 1)
-                if selectedEntityID == entity.objectID {
+                DisclosureGroup(isExpanded: expansionBinding(for: entity)) {
                     inlineDetail(for: entity)
-                        .transition(.opacity.combined(with: .move(edge: .top)))
+                } label: {
+                    row
+                        .overlay {
+                            ReorderDragSource(
+                                payload: { entity.objectID.uriRepresentation().absoluteString },
+                                preview: row,
+                                onStarted: { draggedEntityID = entity.objectID },
+                                onEnded: {
+                                    if draggedEntityID == entity.objectID {
+                                        draggedEntityID = nil
+                                        dropTarget = nil
+                                    }
+                                },
+                                onClick: { count in
+                                    selectedEntityID = entity.objectID
+                                    if count == 2 { onEdit?() }
+                                }
+                            )
+                        }
+                        .opacity(draggedEntityID == entity.objectID ? 0.6 : 1)
                 }
                 if dropTarget?.id == entity.objectID, dropTarget?.before == false {
                     ReorderDropPlaceholder()
@@ -125,14 +115,27 @@ struct EntityListView<Entity: NSManagedObject & Identifiable, DetailContent: Vie
             })
         }
         else {
-            VStack(spacing: 2) {
+            DisclosureGroup(isExpanded: expansionBinding(for: entity)) {
+                inlineDetail(for: entity)
+            } label: {
                 row
-                if selectedEntityID == entity.objectID {
-                    inlineDetail(for: entity)
-                        .transition(.opacity.combined(with: .move(edge: .top)))
-                }
             }
+            .simultaneousGesture(
+                TapGesture(count: 2).onEnded {
+                    selectedEntityID = entity.objectID
+                    onEdit?()
+                }
+            )
         }
+    }
+
+    private func expansionBinding(for entity: Entity) -> Binding<Bool> {
+        Binding(
+            get: { selectedEntityID == entity.objectID },
+            set: { isExpanded in
+                selectedEntityID = isExpanded ? entity.objectID : nil
+            }
+        )
     }
 
     private func inlineDetail(for entity: Entity) -> some View {

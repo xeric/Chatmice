@@ -25,6 +25,7 @@ struct ErrorMessage {
         case .rateLimited:
             return "Rate Limited"
         case .serverError(let message):
+            if Self.isAuthenticationError(message) { return "Authentication Error" }
             return Self.isUsageLimitError(message) ? "Usage Limit Reached" : "Server Error"
         case .unknown:
             return "Unknown Error"
@@ -77,6 +78,14 @@ struct ErrorMessage {
             || readable.localizedCaseInsensitiveContains("monthly AI budget")
             || readable.localizedCaseInsensitiveContains("usage limit")
             || readable.localizedCaseInsensitiveContains("quota")
+    }
+
+    private static func isAuthenticationError(_ message: String) -> Bool {
+        let readable = extractedUpstreamMessage(from: message) ?? message
+        return readable.localizedCaseInsensitiveContains("authentication error")
+            || readable.localizedCaseInsensitiveContains("authentication_error")
+            || readable.localizedCaseInsensitiveContains("token request failed")
+            || readable.localizedCaseInsensitiveContains("sign-in action")
     }
 
     private static func extractedUpstreamMessage(from raw: String) -> String? {

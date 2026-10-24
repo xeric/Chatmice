@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import CryptoKit
 
 private struct ClaudeModelsResponse: Codable {
     let data: [ClaudeModel]
@@ -30,10 +31,13 @@ actor ClaudeModelResolver {
         _ configuredModel: String,
         baseURL: URL,
         apiKey: String,
-        session: URLSession
+        session: URLSession,
+        headers: [String: String] = [:]
     ) async -> String {
         let modelsURL = Self.modelsURL(for: baseURL)
-        let cacheKey = modelsURL.absoluteString
+        let credentialData = Data((apiKey + "\n" + headers.sorted { $0.key < $1.key }
+            .map { "\($0.key.lowercased()):\($0.value)" }.joined(separator: "\n")).utf8)
+        let cacheKey = modelsURL.absoluteString + SHA256.hash(data: credentialData).description
         if let resolved = mappingsByEndpoint[cacheKey]?[configuredModel] {
             return resolved
         }
@@ -45,6 +49,7 @@ actor ClaudeModelResolver {
             request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         }
         request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
+        ProviderHeaderStore.apply(headers, to: &request)
 
         guard let (data, response) = try? await session.data(for: request),
               let http = response as? HTTPURLResponse,
@@ -104,16 +109,21 @@ final class ClaudeHandler: APIService, @unchecked Sendable {
     let baseURL: URL
     private let apiKey: String
     let model: String
+    private let providerID: UUID?
+    private let requestHeaders: [String: String]
     private let session: URLSession
     private var activeDataTask: URLSessionDataTask?
     private var activeStreamTask: Task<Void, Never>?
     private var activeResolutionTask: Task<Void, Never>?
+    private let tokenUsageTracker = ModelTokenUsageTracker()
 
     init(config: APIServiceConfiguration, session: URLSession) {
         self.name = config.name
         self.baseURL = config.apiUrl
         self.apiKey = config.apiKey
         self.model = config.model
+        self.providerID = config.providerID
+        self.requestHeaders = config.requestHeaders
         self.session = session
     }
 
@@ -131,6 +141,7 @@ final class ClaudeHandler: APIService, @unchecked Sendable {
             request.setValue(effectiveKey, forHTTPHeaderField: "X-API-Key")
         }
         request.setValue("2023-06-01", forHTTPHeaderField: "Anthropic-Version")
+        ProviderHeaderStore.apply(requestHeaders, to: &request)
         
         do {
             let (data, response) = try await session.data(for: request)
@@ -170,7 +181,8 @@ final class ClaudeHandler: APIService, @unchecked Sendable {
                 model,
                 baseURL: baseURL,
                 apiKey: effectiveAPIKey,
-                session: session
+                session: session,
+                headers: requestHeaders
             )
             guard !Task.isCancelled else { return }
 
@@ -186,8 +198,12 @@ final class ClaudeHandler: APIService, @unchecked Sendable {
                     let result = self.handleAPIResponse(response, data: data, error: error)
                     switch result {
                     case .success(let responseData):
-                        guard let responseData,
-                              let (messageContent, _) = self.parseJSONResponse(data: responseData) else {
+                        guard let responseData else {
+                            completion(.failure(.decodingFailed("Missing Claude response")))
+                            return
+                        }
+                        self.tokenUsageTracker.record(data: responseData)
+                        guard let (messageContent, _) = self.parseJSONResponse(data: responseData) else {
                             completion(.failure(.decodingFailed("Failed to parse Claude response")))
                             return
                         }
@@ -213,7 +229,8 @@ final class ClaudeHandler: APIService, @unchecked Sendable {
                         model,
                         baseURL: baseURL,
                         apiKey: effectiveAPIKey,
-                        session: session
+                        session: session,
+                        headers: requestHeaders
                     )
                     try Task.checkCancellation()
                     let request = self.prepareRequest(
@@ -239,6 +256,7 @@ final class ClaudeHandler: APIService, @unchecked Sendable {
                     }
 
                     for try await line in stream.lines {
+                        self.tokenUsageTracker.record(sseLine: line)
                         let (finished, error, content, _) = self.parseSSEEvent(line)
 
                         if let error = error {
@@ -266,6 +284,10 @@ final class ClaudeHandler: APIService, @unchecked Sendable {
                 streamTask.cancel()
             }
         }
+    }
+
+    func consumeLatestTokenUsage() -> ModelTokenUsage? {
+        tokenUsageTracker.consume()
     }
 
     private var effectiveAPIKey: String {
@@ -345,7 +367,7 @@ final class ClaudeHandler: APIService, @unchecked Sendable {
 
         ClaudeRequestCompatibility.addTemperature(temperature, model: model, to: &jsonDict)
         let reasoningSelection = ReasoningPreferenceStore.selection(for: model)
-        let reasoningProfile = ModelReasoningRegistry.resolve(modelID: model, serviceType: "claude")
+        let reasoningProfile = ModelReasoningRegistry.resolve(modelID: model, serviceType: "claude", serviceID: providerID)
         ReasoningRequestEncoder.apply(
             selection: reasoningSelection,
             profile: reasoningProfile,
@@ -356,6 +378,7 @@ final class ClaudeHandler: APIService, @unchecked Sendable {
             jsonDict.removeValue(forKey: "temperature")
         }
         request.httpBody = try? JSONSerialization.data(withJSONObject: jsonDict, options: [])
+        ProviderHeaderStore.apply(requestHeaders, to: &request)
         return request
     }
 

@@ -20,15 +20,20 @@ class OllamaHandler: APIService {
     let baseURL: URL
     private let apiKey: String
     let model: String
+    private let providerID: UUID?
+    private let requestHeaders: [String: String]
     private let session: URLSession
     private var activeDataTask: URLSessionDataTask?
     private var activeStreamTask: Task<Void, Never>?
+    private let tokenUsageTracker = ModelTokenUsageTracker()
 
     init(config: APIServiceConfiguration, session: URLSession) {
         self.name = config.name
         self.baseURL = config.apiUrl
         self.apiKey = config.apiKey
         self.model = config.model
+        self.providerID = config.providerID
+        self.requestHeaders = config.requestHeaders
         self.session = session
     }
 
@@ -52,7 +57,8 @@ class OllamaHandler: APIService {
 
                 switch result {
                 case .success(let responseData):
-                    if let responseData = responseData {
+                    if let responseData {
+                        self.tokenUsageTracker.record(data: responseData)
                         guard let (messageContent, _) = self.parseJSONResponse(data: responseData) else {
                             completion(.failure(.decodingFailed("Failed to parse Ollama response")))
                             return
@@ -108,6 +114,7 @@ class OllamaHandler: APIService {
                         if line.data(using: .utf8) != nil {
                             let jsonData = line.trimmingCharacters(in: .whitespacesAndNewlines)
                             if let jsonData = jsonData.data(using: .utf8) {
+                                self.tokenUsageTracker.record(data: jsonData)
                                 let (finished, error, messageData, _) = parseDeltaJSONResponse(data: jsonData)
 
                                 if let error = error {
@@ -143,6 +150,7 @@ class OllamaHandler: APIService {
         
         var request = URLRequest(url: tagsURL)
         request.httpMethod = "GET"
+        ProviderHeaderStore.apply(requestHeaders, to: &request)
         
         do {
             let (data, response) = try await session.data(for: request)
@@ -166,6 +174,10 @@ class OllamaHandler: APIService {
         }
     }
 
+    func consumeLatestTokenUsage() -> ModelTokenUsage? {
+        tokenUsageTracker.consume()
+    }
+
     private func prepareRequest(requestMessages: [[String: String]], model: String, temperature: Float, stream: Bool)
         -> URLRequest
     {
@@ -173,14 +185,20 @@ class OllamaHandler: APIService {
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
-        let jsonDict: [String: Any] = [
+        var jsonDict: [String: Any] = [
             "model": self.model,
             "stream": stream,
             "messages": requestMessages,
             "temperature": temperature,
         ]
+        ReasoningRequestEncoder.apply(
+            selection: ReasoningPreferenceStore.selection(for: model),
+            profile: ModelReasoningRegistry.resolve(modelID: model, serviceType: "ollama", serviceID: providerID),
+            maxTokens: 32_768, to: &jsonDict
+        )
 
         request.httpBody = try? JSONSerialization.data(withJSONObject: jsonDict, options: [])
+        ProviderHeaderStore.apply(requestHeaders, to: &request)
 
         return request
     }
