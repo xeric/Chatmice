@@ -89,17 +89,33 @@ enum ModelReasoningRegistry {
             case "claude":
                 return ModelReasoningProfile(dialect: isAdaptiveClaude(modelID) ? .anthropicAdaptive : .anthropicBudget(min: 1_024, max: claudeBudgetMaximum(modelID)), supportedEfforts: efforts)
             case "gemini":
-                return ModelReasoningProfile(dialect: modelID.contains("gemini-3") ? .geminiLevel : .geminiBudget(min: 0, max: 24_576), supportedEfforts: efforts)
+                let usesLevel = modelID.range(of: #"gemini[-_. ]?(?:[3-9]|\d{2,})(?:\D|$)"#, options: .regularExpression) != nil
+                return ModelReasoningProfile(
+                    dialect: usesLevel ? .geminiLevel : .geminiBudget(min: 0, max: 24_576),
+                    supportedEfforts: efforts
+                )
             case "ollama":
                 return ModelReasoningProfile(dialect: .ollamaThink, supportedEfforts: efforts)
             default:
                 return ModelReasoningProfile(dialect: .openAIEffort, supportedEfforts: efforts)
             }
         }
+        let testedReasoning = serviceID.flatMap {
+            ModelCapabilityTestStore.results(for: $0)[rawModelID]?.reasoningSupported
+        }
+        let metadataDefaults = ModelConfigurationStore.metadataDefaults(
+            serviceID: serviceID,
+            modelID: rawModelID
+        )
+        let automaticReasoning = testedReasoning
+            ?? metadataDefaults.thinkingSupported
+            ?? ModelMetadataCatalog.shared
+                .metadata(modelID: rawModelID, serviceType: rawServiceType)?.metadata.reasoning
+        if automaticReasoning == false { return unsupported }
 
         switch serviceType {
         case "claude":
-            guard modelID.contains("claude") else { return unsupported }
+            guard automaticReasoning == true || modelID.contains("claude") else { return unsupported }
             if isAdaptiveClaude(modelID) {
                 return ModelReasoningProfile(
                     dialect: .anthropicAdaptive,
@@ -112,8 +128,8 @@ enum ModelReasoningRegistry {
             )
 
         case "gemini":
-            guard modelID.contains("gemini") else { return unsupported }
-            if modelID.range(of: #"gemini[-_. ]?3(?:\D|$)"#, options: .regularExpression) != nil {
+            guard automaticReasoning == true || modelID.contains("gemini") else { return unsupported }
+            if modelID.range(of: #"gemini[-_. ]?(?:[3-9]|\d{2,})(?:\D|$)"#, options: .regularExpression) != nil {
                 return ModelReasoningProfile(
                     dialect: .geminiLevel,
                     supportedEfforts: [.default, .none, .auto, .low, .medium, .high]
@@ -128,21 +144,25 @@ enum ModelReasoningRegistry {
             return unsupported
 
         case "openai", "openai-responses":
-            guard looksLikeReasoningModel(modelID) else { return unsupported }
+            guard automaticReasoning == true || looksLikeReasoningModel(modelID) else { return unsupported }
             return ModelReasoningProfile(
                 dialect: .openAIResponses,
                 supportedEfforts: [.default, .none, .auto, .low, .medium, .high]
             )
 
         case "chatgpt", "openrouter", "deepseek", "perplexity":
-            guard looksLikeReasoningModel(modelID) else { return unsupported }
+            guard automaticReasoning == true || looksLikeReasoningModel(modelID) else { return unsupported }
             return ModelReasoningProfile(
                 dialect: .openAIEffort,
                 supportedEfforts: [.default, .none, .auto, .low, .medium, .high]
             )
 
         default:
-            return unsupported
+            guard automaticReasoning == true else { return unsupported }
+            return ModelReasoningProfile(
+                dialect: .openAIEffort,
+                supportedEfforts: [.default, .none, .auto, .low, .medium, .high]
+            )
         }
     }
 
@@ -378,25 +398,48 @@ extension APIService {
 struct ModelCapabilityTestResult: Codable, Equatable, Sendable {
     let connectionSucceeded: Bool
     let visionSupported: Bool?
+    let audioSupported: Bool?
     let reasoningSupported: Bool?
     let testedAt: Date
     let errorMessage: String?
+
+    init(
+        connectionSucceeded: Bool,
+        visionSupported: Bool?,
+        audioSupported: Bool? = nil,
+        reasoningSupported: Bool?,
+        testedAt: Date,
+        errorMessage: String?
+    ) {
+        self.connectionSucceeded = connectionSucceeded
+        self.visionSupported = visionSupported
+        self.audioSupported = audioSupported
+        self.reasoningSupported = reasoningSupported
+        self.testedAt = testedAt
+        self.errorMessage = errorMessage
+    }
 }
 
 enum ModelCapabilityTestStore {
-    private static let prefix = "modelCapabilityTests.v2."
+    private static let prefix = "modelCapabilityTests.v3."
+    private static let legacyPrefix = "modelCapabilityTests.v2."
     static let didChangeNotification = Notification.Name("ModelCapabilityTestStore.didChange")
 
-
     static func results(for serviceID: UUID) -> [String: ModelCapabilityTestResult] {
-        guard let data = UserDefaults.standard.data(forKey: prefix + serviceID.uuidString),
-              let results = try? JSONDecoder().decode([String: ModelCapabilityTestResult].self, from: data)
+        let defaults = UserDefaults.standard
+        if let data = defaults.data(forKey: prefix + serviceID.uuidString),
+            let results = try? JSONDecoder().decode([String: ModelCapabilityTestResult].self, from: data)
+        {
+            return results
+        }
+        guard let legacyData = defaults.data(forKey: legacyPrefix + serviceID.uuidString),
+            let legacyResults = try? JSONDecoder().decode([String: ModelCapabilityTestResult].self, from: legacyData)
         else { return [:] }
-        // Earlier probes used a one-pixel image and insufficient output budget.
-        return results.mapValues { result in
+        return legacyResults.mapValues { result in
             ModelCapabilityTestResult(
                 connectionSucceeded: result.connectionSucceeded,
                 visionSupported: result.visionSupported == true ? true : nil,
+                audioSupported: nil,
                 reasoningSupported: result.reasoningSupported,
                 testedAt: result.testedAt,
                 errorMessage: result.errorMessage
@@ -414,40 +457,55 @@ enum ModelCapabilityTestStore {
 enum ModelCapabilityProbe {
     private enum ProbeKind {
         case connection
+        case audio
         case vision
         case reasoning
     }
 
-    private static let pixelPNGBase64 = "iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAIAAAAlC+aJAAAAfElEQVR4nNXOQREAMAjAsK7+PTMRPLhGQd7QJnESJ3ESJ3ESJ3ESJ3ESJ3ESJ3ESJ3ESJ3ESJ3ESJ3ESJ3ESJ3ESJ3ESJ3ESJ3ESJ3ESJ3ESJ3ESJ3ESJ3ESJ3ESJ3ESJ3ESJ3ESJ3ESJ3ESJ3ESJ3ESJ3ESJ3ESJ3ESJ3ESJ3ESJ3ESJ3ESJ3ES53Vg6wNShQF/fRSLfgAAAABJRU5ErkJggg=="
+    private static let pixelPNGBase64 = "iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAIAAAAlC+aJAAAAfElEQVR4nNXOQREAMAjAsK7+PTMRPLhGQd7QJnESJ3ESJ3ESJ3ESJ3ESJ3ESJ3ESJ3ESJ3ESJ3ESJ3ESJ3ESJ3ESJ3ESJ3ESJ3ESJ3ESJ3ESJ3ESJ3ESJ3ESJ3ESJ3ESJ3ESJ3ESJ3ESJ3ESJ3ESJ3ESJ3ESJ3ESJ3ESJ3ES53Vg6wNShQF/fRSLfgAAAABJRU5ErkJggg=="
     private static let visionPrompt =
         "What is the only color in this image? Reply with exactly one lowercase color word."
+    private static let audioPrompt =
+        "How many separate beeps are in this audio? Reply with exactly one lowercase number word."
+    private static let twoBeepWAVBase64 = makeTwoBeepWAV().base64EncodedString()
 
-
-    static func test(config: APIServiceConfig, modelID: String) async -> ModelCapabilityTestResult {
+    static func test(
+        config: APIServiceConfig,
+        modelID: String,
+        session: URLSession = .shared
+    ) async -> ModelCapabilityTestResult {
         do {
-            try await perform(config: config, modelID: modelID, kind: .connection)
+            try await perform(config: config, modelID: modelID, kind: .connection, session: session)
         } catch {
             return ModelCapabilityTestResult(
                 connectionSucceeded: false,
                 visionSupported: nil,
+                audioSupported: nil,
                 reasoningSupported: nil,
                 testedAt: Date(),
                 errorMessage: error.localizedDescription
             )
         }
 
-        let visionSupported: Bool?
+        let audioSupported: Bool
         do {
-            try await perform(config: config, modelID: modelID, kind: .vision)
+            try await perform(config: config, modelID: modelID, kind: .audio, session: session)
+            audioSupported = true
+        } catch {
+            audioSupported = false
+        }
+
+        let visionSupported: Bool
+        do {
+            try await perform(config: config, modelID: modelID, kind: .vision, session: session)
             visionSupported = true
         } catch {
-            // A failed probe is not proof that the model lacks image input.
-            visionSupported = nil
+            visionSupported = false
         }
 
         let reasoningSupported: Bool
         do {
-            try await perform(config: config, modelID: modelID, kind: .reasoning)
+            try await perform(config: config, modelID: modelID, kind: .reasoning, session: session)
             reasoningSupported = true
         } catch {
             reasoningSupported = false
@@ -456,15 +514,21 @@ enum ModelCapabilityProbe {
         return ModelCapabilityTestResult(
             connectionSucceeded: true,
             visionSupported: visionSupported,
+            audioSupported: audioSupported,
             reasoningSupported: reasoningSupported,
             testedAt: Date(),
             errorMessage: nil
         )
     }
 
-    private static func perform(config: APIServiceConfig, modelID: String, kind: ProbeKind) async throws {
+    private static func perform(
+        config: APIServiceConfig,
+        modelID: String,
+        kind: ProbeKind,
+        session: URLSession
+    ) async throws {
         let request = try makeRequest(config: config, modelID: modelID, kind: kind)
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await session.data(for: request)
         guard let httpResponse = response as? HTTPURLResponse else {
             throw APIError.invalidResponse
         }
@@ -473,9 +537,10 @@ enum ModelCapabilityProbe {
             throw APIError.serverError("HTTP \(httpResponse.statusCode): \(detail)")
         }
 
-        if kind == .vision,
-            !responseProvesVision(data: data, serviceType: config.type)
-        {
+        if kind == .vision, !responseProvesVision(data: data, serviceType: config.type) {
+            throw APIError.invalidResponse
+        }
+        if kind == .audio, !responseProvesAudio(data: data, serviceType: config.type) {
             throw APIError.invalidResponse
         }
     }
@@ -544,7 +609,12 @@ enum ModelCapabilityProbe {
 
     private static func chatCompletionsBody(modelID: String, kind: ProbeKind) -> [String: Any] {
         var message: [String: Any] = ["role": "user", "content": "Reply with OK."]
-        if kind == .vision {
+        if kind == .audio {
+            message["content"] = [
+                ["type": "text", "text": audioPrompt],
+                ["type": "input_audio", "input_audio": ["data": twoBeepWAVBase64, "format": "wav"]]
+            ]
+        } else if kind == .vision {
             message["content"] = [
                 ["type": "text", "text": visionPrompt],
                 ["type": "image_url", "image_url": ["url": "data:image/png;base64,\(pixelPNGBase64)"]]
@@ -561,7 +631,12 @@ enum ModelCapabilityProbe {
 
     private static func responsesBody(modelID: String, kind: ProbeKind) -> [String: Any] {
         var content: [[String: Any]] = [["type": "input_text", "text": "Reply with OK."]]
-        if kind == .vision {
+        if kind == .audio {
+            content = [
+                ["type": "input_text", "text": audioPrompt],
+                ["type": "input_audio", "input_audio": ["data": twoBeepWAVBase64, "format": "wav"]]
+            ]
+        } else if kind == .vision {
             content = [
                 ["type": "input_text", "text": visionPrompt],
                 ["type": "input_image", "image_url": "data:image/png;base64,\(pixelPNGBase64)"]
@@ -578,7 +653,15 @@ enum ModelCapabilityProbe {
 
     private static func claudeBody(modelID: String, kind: ProbeKind) -> [String: Any] {
         var content: Any = "Reply with OK."
-        if kind == .vision {
+        if kind == .audio {
+            content = [
+                [
+                    "type": "audio",
+                    "source": ["type": "base64", "media_type": "audio/wav", "data": twoBeepWAVBase64]
+                ],
+                ["type": "text", "text": audioPrompt]
+            ]
+        } else if kind == .vision {
             content = [
                 ["type": "image", "source": ["type": "base64", "media_type": "image/png", "data": pixelPNGBase64]],
                 ["type": "text", "text": visionPrompt]
@@ -603,7 +686,12 @@ enum ModelCapabilityProbe {
 
     private static func geminiBody(modelID: String, kind: ProbeKind) -> [String: Any] {
         var parts: [[String: Any]] = [["text": "Reply with OK."]]
-        if kind == .vision {
+        if kind == .audio {
+            parts = [
+                ["inline_data": ["mime_type": "audio/wav", "data": twoBeepWAVBase64]],
+                ["text": audioPrompt]
+            ]
+        } else if kind == .vision {
             parts = [
                 ["inline_data": ["mime_type": "image/png", "data": pixelPNGBase64]],
                 ["text": visionPrompt]
@@ -623,7 +711,9 @@ enum ModelCapabilityProbe {
     }
 
     private static func ollamaBody(modelID: String, kind: ProbeKind) -> [String: Any] {
-        var message: [String: Any] = ["role": "user", "content": kind == .vision ? visionPrompt : "Reply with OK."]
+        let prompt = kind == .audio ? audioPrompt : (kind == .vision ? visionPrompt : "Reply with OK.")
+        var message: [String: Any] = ["role": "user", "content": prompt]
+        if kind == .audio { message["audios"] = [twoBeepWAVBase64] }
         if kind == .vision { message["images"] = [pixelPNGBase64] }
         var body: [String: Any] = ["model": modelID, "messages": [message], "stream": false]
         if kind == .reasoning { body["think"] = true }
@@ -636,6 +726,54 @@ enum ModelCapabilityProbe {
             .union(.punctuationCharacters)
             .union(.symbols)
         return text.trimmingCharacters(in: trimSet).lowercased() == "red"
+    }
+
+    static func responseProvesAudio(data: Data, serviceType: String) -> Bool {
+        guard let text = responseText(data: data, serviceType: serviceType) else { return false }
+        let trimSet = CharacterSet.whitespacesAndNewlines
+            .union(.punctuationCharacters)
+            .union(.symbols)
+        return text.trimmingCharacters(in: trimSet).lowercased() == "two"
+    }
+
+    private static func makeTwoBeepWAV() -> Data {
+        let sampleRate: UInt32 = 8_000
+        let sampleCount = 4_800
+        let dataSize = UInt32(sampleCount * MemoryLayout<Int16>.size)
+        var data = Data("RIFF".utf8)
+
+        func appendUInt16(_ value: UInt16) {
+            var littleEndian = value.littleEndian
+            withUnsafeBytes(of: &littleEndian) { data.append(contentsOf: $0) }
+        }
+
+        func appendUInt32(_ value: UInt32) {
+            var littleEndian = value.littleEndian
+            withUnsafeBytes(of: &littleEndian) { data.append(contentsOf: $0) }
+        }
+
+        appendUInt32(36 + dataSize)
+        data.append(Data("WAVEfmt ".utf8))
+        appendUInt32(16)
+        appendUInt16(1)
+        appendUInt16(1)
+        appendUInt32(sampleRate)
+        appendUInt32(sampleRate * 2)
+        appendUInt16(2)
+        appendUInt16(16)
+        data.append(Data("data".utf8))
+        appendUInt32(dataSize)
+
+        for index in 0..<sampleCount {
+            let firstBeep = (400..<1_600).contains(index)
+            let secondBeep = (2_800..<4_000).contains(index)
+            let amplitude = firstBeep || secondBeep
+                ? sin(2 * .pi * 440 * Double(index) / Double(sampleRate)) * 12_000
+                : 0
+            var sample = Int16(amplitude).littleEndian
+            withUnsafeBytes(of: &sample) { data.append(contentsOf: $0) }
+        }
+        return data
     }
 
     private static func responseText(data: Data, serviceType: String) -> String? {

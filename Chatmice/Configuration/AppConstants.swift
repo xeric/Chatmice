@@ -26,39 +26,31 @@ enum ChatFontWeightPreference: String, CaseIterable, Identifiable {
 }
 
 struct ChatTypography {
-    struct ParagraphMetrics {
-        let lineHeightMultiple: CGFloat
-        let lineSpacing: CGFloat
-        let paragraphSpacingEm: CGFloat
-        let letterSpacingEm: CGFloat
-    }
-
-    static let assistantParagraph = ParagraphMetrics(
-        lineHeightMultiple: 1.58,
-        lineSpacing: 0,
-        paragraphSpacingEm: 0.8,
-        letterSpacingEm: 0
-    )
-    static let outgoingParagraph = ParagraphMetrics(
-        lineHeightMultiple: 1.35,
-        lineSpacing: 0,
-        paragraphSpacingEm: 0.4,
-        letterSpacingEm: 0
-    )
-
-    static let bodyAlignment: NSTextAlignment = .left
-    static let contentBlockSpacing: CGFloat = 14
+    static let contentBlockSpacing: CGFloat = 12
     static let assistantContentMaxWidth: CGFloat = 720
     static let messageVerticalPadding: CGFloat = 12
-    static let listItemSpacingEm: CGFloat = 0.5
-    static let listHangingIndentEm: CGFloat = 1.55
-    static let majorHeadingSpacingBeforeEm: CGFloat = 1.33
-    static let minorHeadingSpacingBeforeEm: CGFloat = 0.93
-    static let headingSpacingAfterEm: CGFloat = 0.6
-    static let assistantTextOpacityDark: CGFloat = 0.78
-    static let assistantTextOpacityLight: CGFloat = 0.82
-    static let headingTextOpacityDark: CGFloat = 0.94
-    static let headingTextOpacityLight: CGFloat = 0.9
+    static let listItemSpacingEm: CGFloat = 8.0 / 15
+    static let majorHeadingSpacingBeforeEm: CGFloat = 1.2
+    static let minorHeadingSpacingBeforeEm: CGFloat = 1.2
+    static let headingSpacingAfterEm: CGFloat = 0.8
+    static let assistantTextOpacityDark: CGFloat = 0.84
+    static let assistantTextOpacityLight: CGFloat = 0.86
+    static let headingTextOpacityDark: CGFloat = 0.96
+    static let headingTextOpacityLight: CGFloat = 0.94
+
+    static func paragraphStyle(fontSize: CGFloat, own: Bool = false) -> NSMutableParagraphStyle {
+        let style = NSMutableParagraphStyle()
+        style.alignment = .left
+        // A minimum, not a cap: inline formula attachments and larger glyphs must still fit.
+        style.minimumLineHeight = fontSize * (own ? 1.5 : 25.0 / 15)
+        style.paragraphSpacing = fontSize * (own ? 0.4 : 0.8)
+        style.lineBreakMode = .byWordWrapping
+        return style
+    }
+
+    static func headingSize(level: Int, bodySize: CGFloat) -> CGFloat {
+        bodySize * (level == 1 ? 24.0 / 15 : level == 2 ? 19.0 / 15 : level == 3 ? 17.0 / 15 : 1)
+    }
 }
 
 struct AppConstants {
@@ -98,7 +90,6 @@ struct AppConstants {
     static let chatGptGenerateChatInstruction: String =
         "Return a short chat name as summary for this chat based on the previous message content and system message if it's not default. Start chat name with one appropriate emoji. Don't answer to my message, just generate a name."
     static let defaultRole: String = "assistant"
-    static let longStringCount = 1000
     static let defaultPersonaName = "Default ChatGPT Assistant"
     static let defaultPersonaColor = "#007AFF"
     static let defaultPersonasFlag = "defaultPersonasAdded"

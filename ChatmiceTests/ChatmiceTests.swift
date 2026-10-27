@@ -40,7 +40,6 @@ final class ChatmiceTests: XCTestCase {
             ("openai-responses", #"{"output":[{"content":[{"type":"output_text","text":"red"}]}]}"#),
             ("ollama", #"{"message":{"content":"red"}}"#),
         ]
-
         for response in responses {
             XCTAssertTrue(
                 ModelCapabilityProbe.responseProvesVision(
@@ -50,7 +49,6 @@ final class ChatmiceTests: XCTestCase {
                 response.type
             )
         }
-
         let genericSuccess = #"{"choices":[{"message":{"content":"OK"}}]}"#
         XCTAssertFalse(
             ModelCapabilityProbe.responseProvesVision(
@@ -65,8 +63,20 @@ final class ChatmiceTests: XCTestCase {
         let key = "modelCapabilityTests.v2.\(serviceID.uuidString)"
         defer { UserDefaults.standard.removeObject(forKey: key) }
         let results = [
-            "failed": ModelCapabilityTestResult(connectionSucceeded: true, visionSupported: false, reasoningSupported: true, testedAt: Date(), errorMessage: nil),
-            "verified": ModelCapabilityTestResult(connectionSucceeded: true, visionSupported: true, reasoningSupported: nil, testedAt: Date(), errorMessage: nil),
+            "failed": ModelCapabilityTestResult(
+                connectionSucceeded: true,
+                visionSupported: false,
+                reasoningSupported: true,
+                testedAt: Date(),
+                errorMessage: nil
+            ),
+            "verified": ModelCapabilityTestResult(
+                connectionSucceeded: true,
+                visionSupported: true,
+                reasoningSupported: nil,
+                testedAt: Date(),
+                errorMessage: nil
+            ),
         ]
         UserDefaults.standard.set(try JSONEncoder().encode(results), forKey: key)
         let restored = ModelCapabilityTestStore.results(for: serviceID)
@@ -74,6 +84,7 @@ final class ChatmiceTests: XCTestCase {
         XCTAssertEqual(restored["verified"]?.visionSupported, true)
         XCTAssertEqual(restored["failed"]?.reasoningSupported, true)
     }
+
 
     @MainActor
     func testStreamingMessageIsVisibleBeforeStreamCompletes() async {

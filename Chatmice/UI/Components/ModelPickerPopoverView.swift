@@ -186,11 +186,18 @@ struct ModelPickerPopoverView: View {
         .background(Color(red: 0.14, green: 0.14, blue: 0.15))
         .onAppear {
             loadFavorites()
-            testedCapabilitiesByService = Dictionary(uniqueKeysWithValues: apiServices.compactMap { service in
-                guard let id = service.id else { return nil }
-                return (id, ModelCapabilityTestStore.results(for: id))
-            })
+            reloadTestedCapabilities()
         }
+        .onReceive(NotificationCenter.default.publisher(for: ModelCapabilityTestStore.didChangeNotification)) { _ in
+            reloadTestedCapabilities()
+        }
+    }
+
+    private func reloadTestedCapabilities() {
+        testedCapabilitiesByService = Dictionary(uniqueKeysWithValues: apiServices.compactMap { service in
+            guard let id = service.id else { return nil }
+            return (id, ModelCapabilityTestStore.results(for: id))
+        })
     }
 
     private func filterChip(_ title: String, mode: FilterMode) -> some View {
@@ -240,8 +247,24 @@ struct ModelPickerPopoverView: View {
         let isFav = favorites.contains(modelID)
         let testedCapabilities = service.id.flatMap { testedCapabilitiesByService[$0]?[modelID] }
         let overrides = ModelConfigurationStore.overrides(serviceID: service.id, modelID: modelID)
-        let isVision = overrides.visionSupported ?? testedCapabilities?.visionSupported ?? isVisionModel(modelID)
-        let isReasoning = overrides.thinkingSupported ?? testedCapabilities?.reasoningSupported ?? isReasoningModel(modelID)
+        let defaults = ModelConfigurationStore.metadataDefaults(serviceID: service.id, modelID: modelID)
+        let metadata = ModelMetadataCatalog.shared
+            .metadata(modelID: modelID, serviceType: service.type ?? "")?.metadata
+        let isVision = overrides.visionSupported
+            ?? testedCapabilities?.visionSupported
+            ?? defaults.visionSupported
+            ?? metadata?.supportsVision
+            ?? isVisionModel(modelID)
+        let isAudio = overrides.audioSupported
+            ?? testedCapabilities?.audioSupported
+            ?? defaults.audioSupported
+            ?? metadata?.supportsAudio
+            ?? false
+        let isReasoning = overrides.thinkingSupported
+            ?? testedCapabilities?.reasoningSupported
+            ?? defaults.thinkingSupported
+            ?? metadata?.reasoning
+            ?? isReasoningModel(modelID)
 
         return Button(action: {
             onSelect(service, modelID)
@@ -276,6 +299,13 @@ struct ModelPickerPopoverView: View {
                         .font(.system(size: 10))
                         .foregroundStyle(Color.blue)
                         .help("Supports vision / image input")
+                }
+
+                if isAudio {
+                    Image(systemName: "waveform")
+                        .font(.system(size: 10))
+                        .foregroundStyle(Color.orange)
+                        .help("Supports audio input")
                 }
 
                 // Reasoning brain icon 🧠

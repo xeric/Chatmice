@@ -14,6 +14,16 @@ enum MCPFormMode: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
+private struct MCPServerEditorPresentation: Identifiable {
+    let id = UUID()
+    let server: MCPServerConfig?
+}
+
+private enum MCPOAuthSetupMode {
+    case configurationURL
+    case details
+}
+
 private struct MCPToolInspector: Identifiable {
     let serverName: String
     let tools: [MCPToolSummary]
@@ -89,8 +99,8 @@ struct MCPOAuthRedirectEditor: View {
 struct TabMCPServersView: View {
     @AppStorage("mcpServersJSON") private var mcpServersJSON: String = "[]"
     @State private var servers: [MCPServerConfig] = []
-    @State private var showingEditSheet = false
-    @State private var editingServer: MCPServerConfig? = nil
+    @State private var editorPresentation: MCPServerEditorPresentation?
+    private var editingServer: MCPServerConfig? { editorPresentation?.server }
     @State private var toolInspector: MCPToolInspector?
     @State private var reconnectingServerNames: Set<String> = []
     @State private var authorizedServerIDs: Set<String> = []
@@ -109,6 +119,24 @@ struct TabMCPServersView: View {
     @State private var oauthForm = MCPOAuthConfiguration()
     @State private var oauthSecret = ""
     @State private var oauthError: String?
+    @State private var oauthSetupMode: MCPOAuthSetupMode = .details
+    @State private var metadataAddress = ""
+    @State private var detectedMetadataAddress: String?
+    @State private var detectedServerURL: String?
+    @State private var isDiscoveringOAuth = false
+    @State private var discoveryMessage: String?
+    @State private var activeDiscoveryID: UUID?
+
+    private var configuredOAuth: MCPOAuthConfiguration {
+        var config = oauthForm
+        config.metadataURL = oauthSetupMode == .configurationURL
+            ? metadataAddress.trimmingCharacters(in: .whitespacesAndNewlines) : nil
+        if config.metadataURL != nil {
+            config.authorizationURL = ""
+            config.tokenURL = ""
+        }
+        return config
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -165,8 +193,12 @@ struct TabMCPServersView: View {
                 refreshStatus()
             }
         }
-        .sheet(isPresented: $showingEditSheet) {
-            serverFormSheet
+        .sheet(item: $editorPresentation, onDismiss: {
+            activeDiscoveryID = UUID()
+            isDiscoveringOAuth = false
+        }) { presentation in
+            serverFormSheet(editing: presentation.server)
+                .onAppear { loadEditor(presentation.server) }
         }
         .sheet(item: $toolInspector) { inspector in
             toolInspectorSheet(inspector)
@@ -288,6 +320,7 @@ struct TabMCPServersView: View {
             }
             .buttonStyle(.plain)
             .help("Edit Server Configuration")
+            .accessibilityIdentifier("mcp.edit.\(server.name)")
             .padding(.trailing, 2)
 
             // Enable toggle
@@ -392,6 +425,8 @@ struct TabMCPServersView: View {
         if formMode == .json {
             return rawJSON.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || jsonError != nil
         }
+        if formKind == .http, oauthEnabled, oauthSetupMode == .configurationURL,
+           detectedMetadataAddress != metadataAddress.trimmingCharacters(in: .whitespacesAndNewlines) { return true }
         if formName.trimmingCharacters(in: .whitespaces).isEmpty { return true }
         if formKind == .stdio {
             return formCommand.trimmingCharacters(in: .whitespaces).isEmpty
@@ -400,10 +435,120 @@ struct TabMCPServersView: View {
         }
     }
 
-    private var serverFormSheet: some View {
+    private var oauthClientFields: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Picker("Grant", selection: $oauthForm.grant) {
+                Text("Authorization Code + PKCE").tag(MCPOAuthConfiguration.Grant.authorizationCode)
+                Text("Client Credentials").tag(MCPOAuthConfiguration.Grant.clientCredentials)
+            }.pickerStyle(.menu)
+            if oauthForm.grant == .authorizationCode {
+                if oauthSetupMode == .details {
+                    TextField("Authorization URL", text: $oauthForm.authorizationURL)
+                        .accessibilityIdentifier("oauth.authorization.url")
+                }
+                MCPOAuthRedirectEditor(redirectURI: $oauthForm.redirectURI)
+            }
+            if oauthSetupMode == .details {
+                TextField("Token URL", text: $oauthForm.tokenURL)
+                    .accessibilityIdentifier("oauth.token.url")
+            }
+            TextField("Client ID", text: $oauthForm.clientID)
+                .accessibilityIdentifier("oauth.client.id")
+            SecureField("Client Secret (optional for PKCE)", text: $oauthSecret)
+            TextField("Scopes (space-separated)", text: $oauthForm.scope)
+            TextField("Resource / Audience URI (optional)", text: $oauthForm.resource)
+        }
+    }
+
+    private func useManualConfiguration(_ reason: String? = nil) {
+        activeDiscoveryID = UUID()
+        isDiscoveringOAuth = false
+        oauthSetupMode = .details
+        detectedMetadataAddress = nil
+        detectedServerURL = nil
+        discoveryMessage = reason
+    }
+
+    private func acceptMetadata(_ result: MCPOAuthDiscovery.Result) throws {
+        var config = oauthForm
+        config.metadataURL = result.url.absoluteString
+        try result.metadata.validate(for: config, hasClientSecret: !oauthSecret.isEmpty,
+                                     hasRegisteredClient: MCPOAuthManager.hasRegisteredClient(config))
+        metadataAddress = result.url.absoluteString
+        detectedMetadataAddress = metadataAddress
+        detectedServerURL = formURL
+        oauthSetupMode = .configurationURL
+        oauthEnabled = true
+        discoveryMessage = nil
+        if oauthForm.resource.isEmpty, let resource = result.resource { oauthForm.resource = resource }
+    }
+
+    private func validateMetadataAddress() async {
+        let attempt = UUID()
+        activeDiscoveryID = attempt
+        let address = metadataAddress.trimmingCharacters(in: .whitespacesAndNewlines)
+        isDiscoveringOAuth = true
+        defer { if activeDiscoveryID == attempt { isDiscoveringOAuth = false } }
+        do {
+            let url = try MCPOAuthConfiguration.endpoint(address)
+            let metadata = try await MCPOAuthDiscovery.shared.load(url)
+            guard activeDiscoveryID == attempt, oauthSetupMode == .configurationURL,
+                  metadataAddress.trimmingCharacters(in: .whitespacesAndNewlines) == address else { return }
+            try acceptMetadata(.init(url: url, metadata: metadata, resource: nil))
+        } catch {
+            guard activeDiscoveryID == attempt, !Task.isCancelled else { return }
+            useManualConfiguration("Configuration cannot complete OAuth: \(error.localizedDescription)")
+        }
+    }
+
+    private func discoverOAuthConfiguration() async {
+        let attempt = UUID()
+        activeDiscoveryID = attempt
+        if let detectedServerURL, detectedServerURL != formURL, metadataAddress == detectedMetadataAddress {
+            metadataAddress = ""
+            oauthSetupMode = .details
+        }
+        detectedServerURL = nil
+        detectedMetadataAddress = nil
+        discoveryMessage = nil
+        guard formKind == .http, formMode == .form, (try? MCPOAuthConfiguration.endpoint(formURL)) != nil else {
+            isDiscoveringOAuth = false
+            return
+        }
+        let url = formURL
+        let initialMode = oauthSetupMode
+        let initialAddress = metadataAddress
+        isDiscoveringOAuth = true
+        defer { if activeDiscoveryID == attempt { isDiscoveringOAuth = false } }
+        do {
+            try await Task.sleep(for: .milliseconds(400))
+            let result: MCPOAuthDiscovery.Result?
+            if initialMode == .configurationURL && !initialAddress.isEmpty {
+                let metadataURL = try MCPOAuthConfiguration.endpoint(initialAddress)
+                let metadata = try await MCPOAuthDiscovery.shared.load(metadataURL)
+                result = .init(url: metadataURL, metadata: metadata, resource: nil)
+            } else {
+                result = try await MCPOAuthDiscovery.shared.discover(serverURL: url, authorizationHint: oauthForm.authorizationURL)
+            }
+            try Task.checkCancellation()
+            guard activeDiscoveryID == attempt, formURL == url,
+                  oauthSetupMode == initialMode, metadataAddress == initialAddress else { return }
+            if let result {
+                try acceptMetadata(result)
+            } else {
+                useManualConfiguration("No usable well-known configuration was found. Fill in Manual Configuration, or supply a configuration URL.")
+            }
+        } catch {
+            guard !Task.isCancelled, activeDiscoveryID == attempt else { return }
+            useManualConfiguration("Automatic configuration unavailable: \(error.localizedDescription) Fill in Manual Configuration.")
+        }
+    }
+
+
+    private func serverFormSheet(editing server: MCPServerConfig?) -> some View {
         VStack(spacing: 16) {
             HStack {
-                Text(editingServer == nil ? "Add MCP Server" : "Edit MCP Server")
+                Text(server == nil ? "Add MCP Server" : "Edit MCP Server")
                     .font(.headline)
                 Spacer()
                 Picker("", selection: $formMode) {
@@ -425,7 +570,7 @@ struct TabMCPServersView: View {
             ScrollView {
                 if formMode == .form { visualFormView } else { rawJSONView }
             }
-            .frame(maxHeight: 520)
+            .frame(height: formMode == .form ? 520 : 260)
 
             if let err = jsonError {
                 Text(err)
@@ -436,7 +581,7 @@ struct TabMCPServersView: View {
 
             HStack {
                 Button("Cancel") {
-                    showingEditSheet = false
+                    editorPresentation = nil
                 }
                 .keyboardShortcut(.cancelAction)
 
@@ -444,7 +589,7 @@ struct TabMCPServersView: View {
 
                 Button("Save") {
                     if saveServerForm() {
-                        showingEditSheet = false
+                        editorPresentation = nil
                     }
                 }
                 .buttonStyle(.borderedProminent)
@@ -454,6 +599,9 @@ struct TabMCPServersView: View {
         }
         .padding()
         .frame(width: 520)
+        .task(id: formKind == .http && formMode == .form ? formURL : "") {
+            await discoverOAuthConfiguration()
+        }
     }
 
     private var visualFormView: some View {
@@ -463,6 +611,7 @@ struct TabMCPServersView: View {
                 Text("Remote (HTTP / SSE)").tag(MCPServerConfig.Kind.http)
             }
             .pickerStyle(.segmented)
+            .accessibilityIdentifier("mcp.editor.transport")
 
             VStack(alignment: .leading, spacing: 4) {
                 Text("Server Name:")
@@ -470,6 +619,7 @@ struct TabMCPServersView: View {
                     .foregroundStyle(.secondary)
                 TextField("Server Name", text: $formName, prompt: Text(formKind == .stdio ? "e.g. filesystem" : "e.g. jira"))
                     .textFieldStyle(.roundedBorder)
+                    .accessibilityIdentifier("mcp.editor.name")
             }
 
             if formKind == .stdio {
@@ -506,6 +656,7 @@ struct TabMCPServersView: View {
                         .foregroundStyle(.secondary)
                     TextField("Server URL", text: $formURL, prompt: Text("http://127.0.0.1:7766/mcp/jira or http://.../sse"))
                         .textFieldStyle(.roundedBorder)
+                        .accessibilityIdentifier("mcp.editor.url")
                 }
 
                 VStack(alignment: .leading, spacing: 4) {
@@ -524,26 +675,49 @@ struct TabMCPServersView: View {
                         .foregroundStyle(.tertiary)
                 }
 
+                if isDiscoveringOAuth {
+                    HStack(spacing: 8) {
+                        ProgressView().controlSize(.small)
+                        Text("Detecting OAuth configuration…").font(.caption)
+                    }
+                }
                 Toggle("OAuth 2.0", isOn: $oauthEnabled)
+                    .accessibilityIdentifier("oauth.enabled")
                 if oauthEnabled {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Picker("Grant", selection: $oauthForm.grant) {
-                            Text("Authorization Code + PKCE").tag(MCPOAuthConfiguration.Grant.authorizationCode)
-                            Text("Client Credentials").tag(MCPOAuthConfiguration.Grant.clientCredentials)
+                    VStack(alignment: .leading, spacing: 10) {
+                        if oauthSetupMode == .configurationURL {
+                            Text("Server-authoritative OAuth Configuration").font(.caption).foregroundStyle(.secondary)
+                            if let detectedMetadataAddress {
+                                Text(detectedMetadataAddress).font(.system(.body, design: .monospaced))
+                                    .textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
+                                    .accessibilityIdentifier("oauth.discovered.url")
+                                Text("Authorization and token endpoints are reloaded from the server. If its configuration becomes unusable, OAuth stops rather than using old or manually overridden endpoints.")
+                                    .font(.caption).foregroundStyle(.secondary)
+                            } else {
+                                TextField("Well-known configuration URL", text: $metadataAddress)
+                                    .accessibilityIdentifier("oauth.configuration.url")
+                                Button("Validate Configuration") { Task { await validateMetadataAddress() } }
+                                    .disabled(isDiscoveringOAuth)
+                            }
+                            Button("Use Manual Configuration") { useManualConfiguration() }
+                        } else {
+                            HStack {
+                                Text("Manual Configuration").font(.headline)
+                                Spacer()
+                                Button("Use Configuration URL") {
+                                    activeDiscoveryID = UUID()
+                                    isDiscoveringOAuth = false
+                                    oauthSetupMode = .configurationURL
+                                    detectedMetadataAddress = nil
+                                    discoveryMessage = nil
+                                }
+                            }
+                            if let discoveryMessage {
+                                Text(discoveryMessage).font(.caption).foregroundStyle(.secondary)
+                            }
+                            oauthClientFields
                         }
-                        .pickerStyle(.menu)
-                        if oauthForm.grant == .authorizationCode {
-                            TextField("Authorization URL", text: $oauthForm.authorizationURL)
-                            MCPOAuthRedirectEditor(redirectURI: $oauthForm.redirectURI)
-                            Text("Register this exact URI with the OAuth server. HTTP callbacks bind only to loopback; the URL port is the listening port.")
-                                .font(.caption).foregroundStyle(.secondary)
-                        }
-                        TextField("Token URL", text: $oauthForm.tokenURL)
-                        TextField("Client ID", text: $oauthForm.clientID)
-                        SecureField("Client Secret (optional for PKCE)", text: $oauthSecret)
-                        TextField("Scopes (space-separated)", text: $oauthForm.scope)
-                        TextField("Resource / Audience URI (optional)", text: $oauthForm.resource)
-                        Text("Secrets and tokens are stored in Keychain, not configuration JSON. OAuth overrides the Authorization header. Save, then use Sign In for browser authorization.")
+                        Text("Secrets and tokens are stored in Keychain, not configuration JSON. Save, then use Sign In for browser authorization.")
                             .font(.caption).foregroundStyle(.secondary)
                     }
                     .textFieldStyle(.roundedBorder)
@@ -596,7 +770,7 @@ struct TabMCPServersView: View {
             dict["url"] = formURL
             if !envObj.isEmpty { dict["headers"] = envObj }
             if oauthEnabled,
-               let data = try? JSONEncoder().encode(oauthForm),
+               let data = try? JSONEncoder().encode(configuredOAuth),
                let object = try? JSONSerialization.jsonObject(with: data) {
                 dict["oauth"] = object
             }
@@ -635,6 +809,10 @@ struct TabMCPServersView: View {
                     oauthSecret = (try? MCPOAuthManager.secret(for: oauth)) ?? ""
                 }
                 oauthForm = oauth
+                metadataAddress = oauth.metadataURL ?? ""
+                oauthSetupMode = oauth.metadataURL == nil ? .details : .configurationURL
+                detectedMetadataAddress = nil
+                detectedServerURL = nil
             }
             if let headers = (targetObj["headers"] as? [String: String]) ?? (targetObj["env"] as? [String: String]) {
                 formEnv = headers.map { "\($0.key)=\($0.value)" }.joined(separator: "\n")
@@ -668,35 +846,31 @@ struct TabMCPServersView: View {
     }
 
     private func openAddServer() {
-        editingServer = nil
-        formMode = .form
-        formKind = .stdio
-        formName = ""
-        formCommand = ""
-        formURL = "http://localhost:8000/sse"
-        formEnv = ""
-        oauthEnabled = false
-        oauthForm = MCPOAuthConfiguration()
-        oauthSecret = ""
-        rawJSON = ""
-        jsonError = nil
-        showingEditSheet = true
+        editorPresentation = MCPServerEditorPresentation(server: nil)
     }
 
     private func openEditServer(_ server: MCPServerConfig) {
-        editingServer = server
+        editorPresentation = MCPServerEditorPresentation(server: server)
+    }
+
+    private func loadEditor(_ server: MCPServerConfig?) {
         formMode = .form
-        formKind = server.kind
-        formName = server.name
-        formCommand = ([server.command ?? ""] + server.args).filter { !$0.isEmpty }.joined(separator: " ")
-        formURL = server.url ?? ""
-        formEnv = server.env.map { "\($0.key)=\($0.value)" }.sorted().joined(separator: "\n")
+        formKind = server?.kind ?? .stdio
+        formName = server?.name ?? ""
+        formCommand = ([server?.command ?? ""] + (server?.args ?? [])).filter { !$0.isEmpty }.joined(separator: " ")
+        formURL = server?.url ?? "http://localhost:8000/sse"
+        formEnv = (server?.env ?? [:]).map { "\($0.key)=\($0.value)" }.sorted().joined(separator: "\n")
         rawJSON = ""
         jsonError = nil
-        oauthEnabled = server.oauth != nil
-        oauthForm = server.oauth ?? MCPOAuthConfiguration()
-        oauthSecret = (try? MCPOAuthManager.secret(for: oauthForm)) ?? ""
-        showingEditSheet = true
+        oauthEnabled = server?.oauth != nil
+        oauthForm = server?.oauth ?? MCPOAuthConfiguration()
+        oauthSecret = server?.oauth.flatMap { try? MCPOAuthManager.secret(for: $0) } ?? ""
+        metadataAddress = oauthForm.metadataURL ?? ""
+        oauthSetupMode = oauthForm.metadataURL == nil ? .details : .configurationURL
+        detectedMetadataAddress = nil
+        detectedServerURL = nil
+        discoveryMessage = nil
+        isDiscoveringOAuth = false
     }
 
     private func loadServers() {
@@ -751,7 +925,7 @@ struct TabMCPServersView: View {
                 env: envMap,
                 url: formURL.trimmingCharacters(in: .whitespaces),
                 enabled: editingServer?.enabled ?? true,
-                oauth: oauthEnabled ? oauthForm : nil
+                oauth: oauthEnabled ? configuredOAuth : nil
             )
         }
         if let oauth = config.oauth {

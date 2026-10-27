@@ -37,6 +37,174 @@ private struct StreamingMarkdownTestHarness: View {
 }
 
 final class ChatLayoutTests: XCTestCase {
+    @MainActor
+    func testShortMarkdownUsesParagraphSpacingAndHangingLists() async throws {
+        let markdown = """
+            ## 1. 模型名称匹配 · Typography
+
+            中英文正文应该保持舒适的行距。This paragraph wraps naturally at the available width, without becoming a dense block of text.
+
+
+            - Unordered list content wraps onto another line so its continuation aligns with the text, not the bullet.
+              continuation text stays in the same list paragraph.
+            123. Ordered list content wraps onto another line; a wide numeric marker must not overlap the content column.
+              - Nested detail remains indented relative to its parent list item.
+            - [x] Completed task retains its status color without recoloring the body.
+            - [ ] Pending task retains its secondary status color.
+
+            A final paragraph with **emphasis**, `inline code`, and a [link](https://example.com).
+            Secondary Heading
+            =================
+
+            Hard break<br>next line
+            """
+        let state = StreamingMarkdownTestState(content: markdown, isStreaming: false)
+        let host = NSHostingView(rootView: StreamingMarkdownTestHarness(state: state))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 720, height: 700),
+                              styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        window.orderFront(nil)
+        defer { window.close() }
+        try await Task.sleep(for: .milliseconds(100))
+        host.layoutSubtreeIfNeeded()
+        func textViews(_ view: NSView) -> [SelectableRichTextView] {
+            (view as? SelectableRichTextView).map { [$0] } ?? view.subviews.flatMap(textViews)
+        }
+        let text = try XCTUnwrap(textViews(host).first)
+        let storage = try XCTUnwrap(text.textStorage)
+        XCTAssertFalse(storage.string.contains("\n\n"), "Source blank lines must not add empty visual paragraphs")
+        let manager = try XCTUnwrap(text.layoutManager)
+        let container = try XCTUnwrap(text.textContainer)
+        // Exercise a narrow drawing width, not just the attributed paragraph settings.
+        text.setFrameSize(NSSize(width: 320, height: 1200))
+        manager.ensureLayout(for: container)
+        let source = storage.string as NSString
+        for word in ["Unordered", "Ordered", "Nested"] {
+            let start = source.range(of: word)
+            XCTAssertNotEqual(start.location, NSNotFound)
+            let paragraph = source.paragraphRange(for: start)
+            let glyphs = manager.glyphRange(forCharacterRange: paragraph, actualCharacterRange: nil)
+            var fragments: [(NSRect, NSRange)] = []
+            manager.enumerateLineFragments(forGlyphRange: glyphs) { rect, _, _, range, _ in
+                fragments.append((rect, range))
+            }
+            XCTAssertGreaterThan(fragments.count, 1)
+            let firstContent = manager.glyphIndexForCharacter(at: start.location)
+            let firstX = manager.boundingRect(forGlyphRange: NSRange(location: firstContent, length: 1), in: container).minX
+            let wrappedX = manager.boundingRect(forGlyphRange: NSRange(location: fragments[1].1.location, length: 1), in: container).minX
+            XCTAssertEqual(firstX, wrappedX, accuracy: 1, "\(word) continuation must align with content")
+            XCTAssertGreaterThanOrEqual(fragments[1].0.minY - fragments[0].0.minY, 24)
+        }
+        let nested = source.range(of: "Nested")
+        let top = source.range(of: "Unordered")
+        let nestedStyle = try XCTUnwrap(storage.attribute(.paragraphStyle, at: nested.location, effectiveRange: nil) as? NSParagraphStyle)
+        let topStyle = try XCTUnwrap(storage.attribute(.paragraphStyle, at: top.location, effectiveRange: nil) as? NSParagraphStyle)
+        XCTAssertGreaterThan(nestedStyle.firstLineHeadIndent, topStyle.firstLineHeadIndent)
+        let link = source.range(of: "link")
+        XCTAssertNotNil(storage.attribute(.link, at: link.location, effectiveRange: nil))
+        let heading = source.range(of: "1. 模型名称")
+        let headingStyle = try XCTUnwrap(storage.attribute(.paragraphStyle, at: heading.location, effectiveRange: nil) as? NSParagraphStyle)
+        XCTAssertEqual(headingStyle.headIndent, 0, "Numbered headings must not be reclassified as lists")
+        let secondary = source.range(of: "Secondary Heading")
+        let normal = source.range(of: "A final paragraph")
+        let headingFont = try XCTUnwrap(storage.attribute(.font, at: secondary.location, effectiveRange: nil) as? NSFont)
+        let normalFont = try XCTUnwrap(storage.attribute(.font, at: normal.location, effectiveRange: nil) as? NSFont)
+        XCTAssertGreaterThan(headingFont.pointSize, normalFont.pointSize)
+        let hardBreak = source.range(of: "Hard break")
+        let nextLine = source.range(of: "next line")
+        let firstGlyph = manager.glyphIndexForCharacter(at: hardBreak.location)
+        let nextGlyph = manager.glyphIndexForCharacter(at: nextLine.location)
+        let firstRect = manager.lineFragmentRect(forGlyphAt: firstGlyph, effectiveRange: nil)
+        let nextRect = manager.lineFragmentRect(forGlyphAt: nextGlyph, effectiveRange: nil)
+        XCTAssertEqual(nextRect.minY - firstRect.minY, 25, accuracy: 1, "Hard breaks must not add paragraph spacing")
+        for (label, expectedColor) in [("Completed task", NSColor.systemGreen), ("Pending task", NSColor.secondaryLabelColor)] {
+            let content = source.range(of: label)
+            let paragraph = source.paragraphRange(for: content)
+            let markerColor = try XCTUnwrap(storage.attribute(.foregroundColor, at: paragraph.location, effectiveRange: nil) as? NSColor)
+            let bodyColor = try XCTUnwrap(storage.attribute(.foregroundColor, at: content.location, effectiveRange: nil) as? NSColor)
+            XCTAssertEqual(markerColor, expectedColor)
+            XCTAssertNotEqual(bodyColor, markerColor, "Task status color belongs only to the checkbox")
+        }
+    }
+
+    @MainActor
+    func testStreamingProseKeepsCompletedTypography() async throws {
+        let state = StreamingMarkdownTestState(
+            content: "正文与 English 混排。" + String(repeating: "Readable prose wraps naturally. ", count: 8),
+            isStreaming: true
+        )
+        let host = NSHostingView(rootView: StreamingMarkdownTestHarness(state: state))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 720, height: 400),
+                              styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        window.orderFront(nil)
+        defer { window.close() }
+        func findText(_ view: NSView) -> SelectableRichTextView? {
+            if let text = view as? SelectableRichTextView { return text }
+            return view.subviews.lazy.compactMap(findText).first
+        }
+        try await Task.sleep(for: .milliseconds(100))
+        host.layoutSubtreeIfNeeded()
+        let live = try XCTUnwrap(findText(host))
+        let before = live.measuredSize(for: 320)
+        let liveContent = try XCTUnwrap(live.textStorage).copy() as! NSAttributedString
+        state.isStreaming = false
+        try await Task.sleep(for: .milliseconds(100))
+        host.layoutSubtreeIfNeeded()
+        let completed = try XCTUnwrap(findText(host))
+        XCTAssertEqual(completed.measuredSize(for: 320), before)
+        XCTAssertTrue(try XCTUnwrap(completed.textStorage).isEqual(to: liveContent))
+    }
+    @MainActor
+    func testOutgoingTextKeepsCompactStableSizingAcrossWidthAndContentChanges() async throws {
+        func message(_ content: String, width: CGFloat) -> some View {
+            MessageContentView(
+                message: nil, content: content, isStreaming: false, own: true,
+                effectiveFontSize: 15, colorScheme: .dark, inlineAttachments: true,
+                reasoningDuration: nil, isActiveReasoning: false, prefetchedElements: nil,
+                searchText: .constant(""), allowsStreamingLayout: false
+            ).frame(width: width, alignment: .trailing)
+        }
+        func nativeText(_ view: NSView) -> SelectableRichTextView? {
+            if let text = view as? SelectableRichTextView { return text }
+            return view.subviews.lazy.compactMap(nativeText).first
+        }
+        let short = "收到。"
+        let host = NSHostingView(rootView: message(short, width: 720))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 720, height: 500),
+                              styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        window.orderFront(nil)
+        defer { window.close() }
+        try await Task.sleep(for: .milliseconds(100))
+        host.layoutSubtreeIfNeeded()
+        let compactSize = try XCTUnwrap(nativeText(host)).frame.size
+        XCTAssertLessThan(compactSize.width, 100, "Short outgoing messages must not stretch to fill the chat column")
+        XCTAssertGreaterThan(compactSize.width, 20)
+        let long = String(repeating: "Long outgoing text should wrap at the available width. ", count: 12)
+        for width: CGFloat in [280, 640, 280] {
+            host.rootView = message(long, width: width)
+            try await Task.sleep(for: .milliseconds(50))
+            host.layoutSubtreeIfNeeded()
+            let text = try XCTUnwrap(nativeText(host))
+            let expected = text.frame.size
+            XCTAssertLessThanOrEqual(expected.width, width)
+            XCTAssertGreaterThan(expected.height, compactSize.height)
+            for _ in 0..<5 {
+                host.layoutSubtreeIfNeeded()
+                XCTAssertEqual(text.frame.size, expected, "Width probes must converge without a measurement loop")
+            }
+        }
+        host.rootView = message(short, width: 280)
+        try await Task.sleep(for: .milliseconds(50))
+        host.layoutSubtreeIfNeeded()
+        XCTAssertEqual(try XCTUnwrap(nativeText(host)).frame.size, compactSize)
+    }
+
+
     func testAutomaticScrollingDoesNotChangeFollowIntent() {
         var state = ChatScrollFollowState()
         state.phaseChanged(from: .idle, to: .animating, distanceFromBottom: 600)
@@ -196,14 +364,9 @@ final class ChatLayoutTests: XCTestCase {
         let richText = try XCTUnwrap(richTextViews(in: host).first)
         let rendered = try XCTUnwrap(richText.textStorage)
         XCTAssertFalse(rendered.string.contains("<br>"))
-        XCTAssertTrue(rendered.string.contains("removed  \nnext line"))
-        XCTAssertTrue(rendered.string.contains("│ NOTE"))
-        XCTAssertTrue(rendered.string.contains("│ │ Nested quote"))
         XCTAssertFalse(rendered.string.contains("[!NOTE]"))
         XCTAssertTrue(rendered.string.contains("Alternative Heading"))
         XCTAssertFalse(rendered.string.contains("==================="))
-        XCTAssertTrue(rendered.string.contains("☑︎ Completed task"))
-        XCTAssertTrue(rendered.string.contains("☐ Pending task"))
         XCTAssertTrue(rendered.string.contains("H2O and X2"))
         XCTAssertFalse(rendered.string.contains("H~2~O"))
         XCTAssertFalse(rendered.string.contains("X^2^"))
@@ -242,13 +405,6 @@ final class ChatLayoutTests: XCTestCase {
             rendered.attribute(.strikethroughStyle, at: removedRange.location, effectiveRange: nil) as? Int,
             NSUnderlineStyle.single.rawValue
         )
-        let topRange = (rendered.string as NSString).range(of: "- Top item")
-        let nestedRange = (rendered.string as NSString).range(of: "- Nested item")
-        let topStyle = rendered.attribute(.paragraphStyle, at: topRange.location, effectiveRange: nil)
-            as? NSParagraphStyle
-        let nestedStyle = rendered.attribute(.paragraphStyle, at: nestedRange.location, effectiveRange: nil)
-            as? NSParagraphStyle
-        XCTAssertGreaterThan(try XCTUnwrap(nestedStyle).firstLineHeadIndent, try XCTUnwrap(topStyle).firstLineHeadIndent)
 
         var visited = Set<ObjectIdentifier>()
         func accessibilityText(from object: AnyObject) -> [String] {
@@ -1068,8 +1224,20 @@ extension ChatLayoutTests {
         chat.gptModel = "private-test-model"
         chat.requestMessages = []
         let api = APIServiceEntity(context: context)
-        api.contextWindowOverrideTokens = 100
+        let serviceID = UUID()
+        api.id = serviceID
         chat.apiService = api
+        let modelConfigurationKey = "service_models_\(serviceID.uuidString)"
+        let modelConfiguration = [
+            ServiceModelRow(
+                modelID: chat.gptModel,
+                overrides: ModelConfigurationOverrides(contextWindowTokens: 100)
+            )
+        ]
+        UserDefaults.standard.set(
+            String(decoding: try JSONEncoder().encode(modelConfiguration), as: UTF8.self),
+            forKey: modelConfigurationKey
+        )
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [UsageRegressionURLProtocol.self]
         let session = URLSession(configuration: configuration)
@@ -1077,6 +1245,7 @@ extension ChatLayoutTests {
             session.invalidateAndCancel()
             UsageRegressionURLProtocol.reported = false
             UsageRegressionURLProtocol.requestKinds = []
+            UserDefaults.standard.removeObject(forKey: modelConfigurationKey)
         }
         let config = APIServiceConfig(name: "Usage fixture", apiUrl: URL(string: "https://usage.invalid/v1")!, apiKey: "fixture", model: "private-test-model", type: "chatgpt")
         let manager = MessageManager(apiService: ChatGPTHandler(config: config, session: session), viewContext: context)
@@ -1174,7 +1343,11 @@ extension ChatLayoutTests {
     func testModelOverridesPreserveAutomaticFallbackAndProviderIsolation() throws {
         let first = UUID(), second = UUID()
         let key = "service_models_\(first.uuidString)"
-        defer { UserDefaults.standard.removeObject(forKey: key) }
+        let capabilityKey = "modelCapabilityTests.v3.\(first.uuidString)"
+        defer {
+            UserDefaults.standard.removeObject(forKey: key)
+            UserDefaults.standard.removeObject(forKey: capabilityKey)
+        }
         let coordinator = NSPersistentStoreCoordinator(managedObjectModel: PersistenceController.shared.container.managedObjectModel)
         try coordinator.addPersistentStore(ofType: NSInMemoryStoreType, configurationName: nil, at: nil)
         let context = NSManagedObjectContext(concurrencyType: .mainQueueConcurrencyType)
@@ -1183,16 +1356,58 @@ extension ChatLayoutTests {
         service.id = first; service.type = "openai-responses"
         service.imageUploadsAllowed = false; service.pdfUploadsAllowed = true
         let override = ModelConfigurationOverrides(contextWindowTokens: 64_000, visionSupported: true, filesSupported: false, audioSupported: true, thinkingSupported: true)
-        let rows = [ServiceModelRow(modelID: "private-model", overrides: override), ServiceModelRow(modelID: "gpt-5.6-sol", overrides: ModelConfigurationOverrides(thinkingSupported: false))]
+        let otherOverride = ModelConfigurationOverrides(contextWindowTokens: 32_000)
+        let rows = [
+            ServiceModelRow(modelID: "private-model", overrides: override),
+            ServiceModelRow(modelID: "other-model", overrides: otherOverride),
+            ServiceModelRow(
+                modelID: "gpt-5.6-sol",
+                overrides: ModelConfigurationOverrides(thinkingSupported: false)
+            ),
+            ServiceModelRow(
+                modelID: "tested-model",
+                metadataDefaults: ModelConfigurationOverrides(
+                    contextWindowTokens: 256_000,
+                    visionSupported: true,
+                    filesSupported: true,
+                    audioSupported: true,
+                    thinkingSupported: true
+                )
+            )
+        ]
         UserDefaults.standard.set(String(data: try JSONEncoder().encode(rows), encoding: .utf8), forKey: key)
+        ModelCapabilityTestStore.save(
+            [
+                "tested-model": ModelCapabilityTestResult(
+                    connectionSucceeded: true,
+                    visionSupported: false,
+                    audioSupported: false,
+                    reasoningSupported: false,
+                    testedAt: Date(),
+                    errorMessage: nil
+                )
+            ],
+            for: first
+        )
         XCTAssertEqual(ModelConfigurationStore.overrides(serviceID: first, modelID: "private-model"), override)
         XCTAssertEqual(ModelConfigurationStore.overrides(serviceID: second, modelID: "private-model"), ModelConfigurationOverrides())
         XCTAssertEqual(ModelContextRegistry.resolve(service: service, modelID: "private-model")?.tokens, 64_000)
+        XCTAssertEqual(ModelContextRegistry.resolve(service: service, modelID: "other-model")?.tokens, 32_000)
         XCTAssertTrue(ModelAttachmentCapabilities.vision(service: service, modelID: "private-model"))
         XCTAssertFalse(ModelAttachmentCapabilities.files(service: service, modelID: "private-model"))
         XCTAssertTrue(ModelAttachmentCapabilities.audio(service: service, modelID: "private-model"))
         XCTAssertFalse(ModelAttachmentCapabilities.vision(service: service, modelID: "other-model"))
         XCTAssertTrue(ModelAttachmentCapabilities.files(service: service, modelID: "other-model"))
+        XCTAssertFalse(ModelAttachmentCapabilities.vision(service: service, modelID: "tested-model"))
+        XCTAssertTrue(ModelAttachmentCapabilities.files(service: service, modelID: "tested-model"))
+        XCTAssertFalse(ModelAttachmentCapabilities.audio(service: service, modelID: "tested-model"))
+        XCTAssertFalse(
+            ModelReasoningRegistry.resolve(
+                modelID: "tested-model",
+                serviceType: "openai-responses",
+                serviceID: first
+            ).supportsReasoning
+        )
         var body: [String: Any] = [:]
         ReasoningRequestEncoder.apply(selection: .high, profile: ModelReasoningRegistry.resolve(modelID: "private-model", serviceType: "openai-responses", serviceID: first), maxTokens: 1000, to: &body)
         XCTAssertEqual((body["reasoning"] as? [String: String])?["effort"], "high")
@@ -1201,11 +1416,128 @@ extension ChatLayoutTests {
         XCTAssertNil(body["reasoning"])
         XCTAssertTrue(ModelReasoningRegistry.resolve(modelID: "gpt-5.6-sol", serviceType: "openai-responses", serviceID: second).supportsReasoning)
         UserDefaults.standard.removeObject(forKey: key)
-        XCTAssertEqual(ModelContextRegistry.resolve(service: service, modelID: "gpt-5.6-sol")?.tokens, 400_000)
+        XCTAssertEqual(ModelContextRegistry.resolve(service: service, modelID: "gpt-5.6-sol")?.tokens, 1_050_000)
+        XCTAssertEqual(
+            ModelContextRegistry.builtInTokens(modelID: "glm-5.3-flash-dev-preview", serviceType: "chatgpt"),
+            1_000_000
+        )
         XCTAssertFalse(ModelAttachmentCapabilities.vision(service: service, modelID: "private-model"))
         XCTAssertTrue(ModelAttachmentCapabilities.files(service: service, modelID: "private-model"))
         let legacy = Data("[{\"id\":\"legacy\",\"nickname\":\"\",\"modelID\":\"old\"}]".utf8)
         XCTAssertNil(try JSONDecoder().decode([ServiceModelRow].self, from: legacy).first?.overrides)
+        let defaulted = ServiceModelRow.withMetadataDefaults(
+            modelID: "gemini-3.8-flash",
+            serviceType: "gemini"
+        )
+        XCTAssertEqual(defaulted.metadataDefaults?.contextWindowTokens, 1_048_576)
+        XCTAssertEqual(defaulted.metadataDefaults?.visionSupported, true)
+        XCTAssertEqual(defaulted.metadataDefaults?.filesSupported, true)
+        XCTAssertEqual(defaulted.metadataDefaults?.audioSupported, true)
+        XCTAssertEqual(defaulted.metadataDefaults?.thinkingSupported, true)
+
+        let imageDefaults = ServiceModelRow.withMetadataDefaults(
+            modelID: "gemini-3.1-flash-image",
+            serviceType: "gemini"
+        ).metadataDefaults
+        XCTAssertEqual(imageDefaults?.visionSupported, true)
+        XCTAssertEqual(imageDefaults?.filesSupported, true)
+        XCTAssertEqual(imageDefaults?.audioSupported, false)
+        XCTAssertEqual(imageDefaults?.thinkingSupported, true)
+
+        let nativeAudioDefaults = ServiceModelRow.withMetadataDefaults(
+            modelID: "gemini-live-2.5-flash-native-audio",
+            serviceType: "gemini"
+        ).metadataDefaults
+        XCTAssertEqual(nativeAudioDefaults?.audioSupported, true)
+    }
+
+    func testBuiltInPopularModelMetadataAndProviderMappings() {
+        let gpt = ModelMetadataCatalog.builtInMetadata(modelID: "openai/gpt-6.1-sol")
+        XCTAssertEqual(gpt?.limit.context, 1_050_000)
+        XCTAssertTrue(gpt?.supportsFiles == true)
+
+        let claude = ModelMetadataCatalog.builtInMetadata(modelID: "claude-3-7-sonnet-20250219")
+        XCTAssertEqual(claude?.limit.context, 200_000)
+        XCTAssertTrue(claude?.reasoning == true)
+
+        let gemini = ModelMetadataCatalog.builtInMetadata(modelID: "gemini-3.8-flash")
+        XCTAssertEqual(gemini?.limit.context, 1_048_576)
+        XCTAssertTrue(gemini?.supportsAudio == true)
+
+        let deepSeek = ModelMetadataCatalog.builtInMetadata(modelID: "deepseek-chat")
+        XCTAssertEqual(deepSeek?.limit.context, 1_000_000)
+        XCTAssertNil(deepSeek?.limit.output)
+
+        XCTAssertEqual(ModelMetadataCatalog.remoteProvider(modelID: "glm-5.9"), "zai")
+        XCTAssertEqual(ModelMetadataCatalog.remoteProvider(modelID: "zhipuai/glm-5.9"), "zai")
+        XCTAssertEqual(ModelMetadataCatalog.remoteProvider(modelID: "qwen4-max"), "alibaba")
+        XCTAssertEqual(ModelMetadataCatalog.remoteProvider(modelID: "claude-sonnet-6"), "anthropic")
+        let popularMappings = [
+            "kimi-k3": "moonshotai",
+            "MiniMax-M3": "minimax",
+            "mistral-large-latest": "mistral",
+            "llama-4-maverick": "meta",
+            "perplexity-sonar-pro": "perplexity",
+            "doubao-seed-2-0-pro": "volcengine",
+            "mimo-v2-flash": "xiaomi"
+        ]
+        for (modelID, provider) in popularMappings {
+            XCTAssertEqual(ModelMetadataCatalog.remoteProvider(modelID: modelID), provider)
+        }
+        XCTAssertEqual(ModelMetadataCatalog.remoteProvider(modelID: "doubao/custom-model"), "volcengine")
+        XCTAssertEqual(ModelMetadataCatalog.remoteProvider(modelID: "mimo/custom-model"), "xiaomi")
+        XCTAssertNil(ModelMetadataCatalog.remoteProvider(modelID: "private-model", serviceType: "chatgpt"))
+        XCTAssertEqual(
+            ModelMetadataCatalog.remoteProvider(modelID: "custom-model", serviceType: "gemini"),
+            "google"
+        )
+    }
+
+    func testUnknownKnownFamilyFetchesAndCachesBaseLLMMetadata() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [ModelMetadataURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        let cacheURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("model-metadata-\(UUID().uuidString).json")
+        defer {
+            session.invalidateAndCancel()
+            ModelMetadataURLProtocol.requestHandler = nil
+            try? FileManager.default.removeItem(at: cacheURL)
+        }
+
+        ModelMetadataURLProtocol.requestHandler = { request in
+            XCTAssertEqual(request.url?.path, "/llm-metadata/api/models/zai/glm-5.9.json")
+            let response = HTTPURLResponse(
+                url: try XCTUnwrap(request.url),
+                statusCode: 200,
+                httpVersion: nil,
+                headerFields: ["Content-Type": "application/json", "ETag": "fixture"]
+            )!
+            let body = Data(
+                #"{"id":"glm-5.9","canonical_model_id":"zhipuai/glm-5.9","limit":{"context":1500000,"output":131072},"modalities":{"input":["text","image","pdf"],"output":["text"]},"reasoning":true,"tool_call":true,"structured_output":true,"temperature":true}"#.utf8
+            )
+            return (response, body)
+        }
+
+        let updated = expectation(
+            forNotification: ModelMetadataCatalog.didChangeNotification,
+            object: nil
+        ) { notification in
+            notification.object as? String == "zai/glm-5.9"
+        }
+        let catalog = ModelMetadataCatalog(session: session, cacheURL: cacheURL)
+        XCTAssertNil(catalog.metadata(modelID: "glm-5.9"))
+        await fulfillment(of: [updated], timeout: 2)
+
+        let cached = try XCTUnwrap(catalog.metadata(modelID: "glm-5.9"))
+        XCTAssertEqual(cached.source, .remoteCache)
+        XCTAssertEqual(cached.metadata.limit.context, 1_500_000)
+        XCTAssertTrue(cached.metadata.supportsVision)
+        XCTAssertTrue(cached.metadata.supportsFiles)
+
+        let reloadedCatalog = ModelMetadataCatalog(session: session, cacheURL: cacheURL)
+        let persisted = try XCTUnwrap(reloadedCatalog.metadata(modelID: "glm-5.9"))
+        XCTAssertEqual(persisted.metadata.limit.context, 1_500_000)
     }
 }
 
@@ -1377,7 +1709,13 @@ private final class UsageRegressionURLProtocol: URLProtocol {
         let json = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any] ?? [:]
         let streaming = json["stream"] as? Bool == true
         let messages = json["messages"] as? [[String: Any]] ?? []
-        let summary = (messages.first?["content"] as? String)?.contains("durable conversation checkpoint") == true
+        let content = messages.first?["content"]
+        let prompt = (content as? String)
+            ?? (content as? [[String: Any]])?.compactMap { part in
+                part["type"] as? String == "text" ? part["text"] as? String : nil
+            }.joined()
+            ?? ""
+        let summary = prompt.contains("durable conversation checkpoint")
         Self.requestKinds.append(summary ? "compaction" : "response")
         let text = summary ? "Checkpoint summary" : String(repeating: "文", count: 400)
         let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: ["Content-Type": streaming ? "text/event-stream" : "application/json"])!
@@ -1398,5 +1736,26 @@ private final class UsageRegressionURLProtocol: URLProtocol {
         }
         client?.urlProtocolDidFinishLoading(self)
     }
+    override func stopLoading() {}
+}
+
+private final class ModelMetadataURLProtocol: URLProtocol {
+    static var requestHandler: ((URLRequest) throws -> (HTTPURLResponse, Data))?
+
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        do {
+            let handler = try XCTUnwrap(Self.requestHandler)
+            let (response, data) = try handler(request)
+            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didLoad: data)
+            client?.urlProtocolDidFinishLoading(self)
+        } catch {
+            client?.urlProtocol(self, didFailWithError: error)
+        }
+    }
+
     override func stopLoading() {}
 }

@@ -28,11 +28,11 @@ extension ChatFontWeightPreference {
 }
 
 extension MarkdownTableAlignment {
-    fileprivate var textAlignment: TextAlignment {
+    fileprivate var textAlignment: NSTextAlignment {
         switch self {
-        case .leading: .leading
+        case .leading: .left
         case .center: .center
-        case .trailing: .trailing
+        case .trailing: .right
         }
     }
 
@@ -56,8 +56,9 @@ private struct MarkdownTableCellText: View {
     let baseWeight: NSFont.Weight
     let emphasizedWeight: NSFont.Weight
     let alignment: MarkdownTableAlignment
+    @Environment(\.colorScheme) private var colorScheme
 
-    private func renderedText() -> (text: AttributedString, title: String?) {
+    private func renderedText() -> NSAttributedString {
         let options = AttributedString.MarkdownParsingOptions(
             interpretedSyntax: .inlineOnlyPreservingWhitespace
         )
@@ -71,6 +72,16 @@ private struct MarkdownTableCellText: View {
             value: NSFont.systemFont(ofSize: fontSize, weight: baseWeight),
             range: fullRange
         )
+        let style = ChatTypography.paragraphStyle(fontSize: fontSize)
+        style.paragraphSpacing = 0
+        style.alignment = alignment.textAlignment
+        result.addAttribute(.paragraphStyle, value: style, range: fullRange)
+        result.addAttribute(
+            .foregroundColor,
+            value: NSColor(deviceWhite: colorScheme == .dark ? 1 : 0,
+                           alpha: colorScheme == .dark ? ChatTypography.assistantTextOpacityDark : ChatTypography.assistantTextOpacityLight),
+            range: fullRange
+        )
 
         result.enumerateAttribute(.inlinePresentationIntent, in: fullRange) { value, range, _ in
             guard let rawValue = value as? Int else { return }
@@ -78,7 +89,7 @@ private struct MarkdownTableCellText: View {
             if intent.contains(.code) {
                 result.addAttribute(
                     .font,
-                    value: NSFont.monospacedSystemFont(ofSize: max(fontSize - 0.5, 10), weight: baseWeight),
+                    value: NSFont.monospacedSystemFont(ofSize: max(fontSize - 1, 10), weight: .regular),
                     range: range
                 )
             }
@@ -101,10 +112,7 @@ private struct MarkdownTableCellText: View {
 
         MarkdownLinkTitleSupport.apply(to: result)
         applySearchHighlights(to: result)
-        return (
-            AttributedString(result),
-            MarkdownLinkTitleSupport.firstTitle(in: result)
-        )
+        return result
     }
 
     private func applySearchHighlights(to result: NSMutableAttributedString) {
@@ -146,18 +154,8 @@ private struct MarkdownTableCellText: View {
         }
     }
 
-    @ViewBuilder
     var body: some View {
-        let rendered = renderedText()
-        let text = Text(rendered.text)
-            .multilineTextAlignment(alignment.textAlignment)
-            .textSelection(.enabled)
-        if let title = rendered.title {
-            text.help(title)
-        }
-        else {
-            text
-        }
+        SelectableRichText(renderedText())
     }
 }
 
@@ -169,10 +167,10 @@ struct TableHeaderView: View {
     var currentSearchOccurrence: SearchOccurrence?
     let elementIndex: Int
     @AppStorage("chatFontSize") private var chatFontSize: Double = 15.0
-    @AppStorage("chatFontWeight") private var chatFontWeight = ChatFontWeightPreference.light.rawValue
+    @AppStorage("chatFontWeight") private var chatFontWeight = ChatFontWeightPreference.regular.rawValue
 
     private var preferredFontWeight: ChatFontWeightPreference {
-        ChatFontWeightPreference(rawValue: chatFontWeight) ?? .light
+        ChatFontWeightPreference(rawValue: chatFontWeight) ?? .regular
     }
 
     var body: some View {
@@ -200,6 +198,7 @@ struct TableHeaderView: View {
                 }
             }
         }
+        .fixedSize(horizontal: false, vertical: true)
         .background(Color.gray.opacity(0.15))
     }
 }
@@ -213,10 +212,10 @@ struct TableRowView: View {
     var currentSearchOccurrence: SearchOccurrence?
     let elementIndex: Int
     @AppStorage("chatFontSize") private var chatFontSize: Double = 15.0
-    @AppStorage("chatFontWeight") private var chatFontWeight = ChatFontWeightPreference.light.rawValue
+    @AppStorage("chatFontWeight") private var chatFontWeight = ChatFontWeightPreference.regular.rawValue
 
     private var preferredFontWeight: ChatFontWeightPreference {
-        ChatFontWeightPreference(rawValue: chatFontWeight) ?? .light
+        ChatFontWeightPreference(rawValue: chatFontWeight) ?? .regular
     }
 
     var body: some View {
@@ -244,6 +243,7 @@ struct TableRowView: View {
                 }
             }
         }
+        .fixedSize(horizontal: false, vertical: true)
         .background(rowIndex % 2 == 0 ? Color.gray.opacity(0.1) : Color.clear)
     }
 }

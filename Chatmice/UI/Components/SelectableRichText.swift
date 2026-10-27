@@ -4,9 +4,11 @@ import SwiftUI
 /// TextKit owns selection; SwiftUI asks for a size instead of receiving size state during layout.
 struct SelectableRichText: NSViewRepresentable {
     let text: NSAttributedString
+    let fitsContentWidth: Bool
 
-    init(_ text: NSAttributedString) {
+    init(_ text: NSAttributedString, fitsContentWidth: Bool = false) {
         self.text = text
+        self.fitsContentWidth = fitsContentWidth
     }
 
     func makeNSView(context: Context) -> SelectableRichTextView {
@@ -29,7 +31,10 @@ struct SelectableRichText: NSViewRepresentable {
     }
 
     func sizeThatFits(_ proposal: ProposedViewSize, nsView: SelectableRichTextView, context: Context) -> CGSize? {
-        nsView.measuredSize(for: proposal.width)
+        let width = fitsContentWidth
+            ? min(proposal.width ?? .greatestFiniteMagnitude, nsView.measuredSize(for: nil).width)
+            : proposal.width
+        return nsView.measuredSize(for: width)
     }
 
     func makeCoordinator() -> Coordinator { Coordinator() }

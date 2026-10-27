@@ -232,30 +232,38 @@ class ChatGPTHandler: OpenAIHandlerBase, APIService {
 
             if let content = message["content"] {
                 let imageUUIDs = AttachmentParser.extractImageUUIDs(from: content)
+                let fileUUIDs = AttachmentParser.extractFileUUIDs(from: content)
                 let textContent = AttachmentParser.stripAttachments(from: content)
+                var contentArray: [[String: Any]] = []
 
-                if !imageUUIDs.isEmpty {
-                    var contentArray: [[String: Any]] = []
-
-                    if !textContent.isEmpty {
-                        contentArray.append(["type": "text", "text": textContent])
+                if !textContent.isEmpty {
+                    contentArray.append(["type": "text", "text": textContent])
+                }
+                for uuid in imageUUIDs {
+                    if let imageData = self.loadImageFromCoreData(uuid: uuid) {
+                        contentArray.append([
+                            "type": "image_url",
+                            "image_url": ["url": "data:image/jpeg;base64,\(imageData.base64EncodedString())"]
+                        ])
                     }
+                }
+                for uuid in fileUUIDs {
+                    guard let file = self.loadFileFromCoreData(uuid: uuid),
+                        file.mimeType?.hasPrefix("audio/") == true
+                    else { continue }
+                    let extensionName = (file.filename as NSString?)?.pathExtension.lowercased()
+                    let format = extensionName == "mp3" || file.mimeType == "audio/mpeg" ? "mp3" : "wav"
+                    contentArray.append([
+                        "type": "input_audio",
+                        "input_audio": ["data": file.data.base64EncodedString(), "format": format]
+                    ])
+                }
 
-                    for uuid in imageUUIDs {
-                        if let imageData = self.loadImageFromCoreData(uuid: uuid) {
-                            contentArray.append([
-                                "type": "image_url",
-                                "image_url": ["url": "data:image/jpeg;base64,\(imageData.base64EncodedString())"],
-                            ])
-                        }
-                    }
-
+                if !contentArray.isEmpty {
                     processedMessage["content"] = contentArray
-                }
-                else if textContent != content {
+                } else if textContent != content {
                     processedMessage["content"] = textContent
-                }
-                else {
+                } else {
                     processedMessage["content"] = content
                 }
             }

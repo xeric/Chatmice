@@ -13,6 +13,7 @@
 		C4A700082026101200000008 /* WorkspaceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4A700072026101200000007 /* WorkspaceTests.swift */; };
 		C4A7000A202610120000000A /* SelectableRichText.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4A700092026101200000009 /* SelectableRichText.swift */; };
 		C4A7000C202610120000000C /* ChatLayoutTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4A7000B202610120000000B /* ChatLayoutTests.swift */; };
+		C4A700142026102700000014 /* MCPOAuthDiscoveryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4A700152026102700000015 /* MCPOAuthDiscoveryTests.swift */; };
 		A17C71012026102400000001 /* ChatActivityStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A17C71022026102400000002 /* ChatActivityStoreTests.swift */; };
 		A17C71032026102400000003 /* PersistenceControllerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A17C71042026102400000004 /* PersistenceControllerTests.swift */; };
 		C4A7000E202610130000000E /* WorkspaceReferenceInputTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4A7000D202610130000000D /* WorkspaceReferenceInputTests.swift */; };
@@ -25,6 +26,7 @@
 		C1A0DE010000000000000001 /* ClaudeRequestCompatibilityTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1A0DE010000000000000002 /* ClaudeRequestCompatibilityTests.swift */; };
 		F0A5E0012026102200000001 /* WebSearchSettingsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0A5E0022026102200000002 /* WebSearchSettingsTests.swift */; };
 		0E7C2F2B3A4D4E5F9B8C7D6E /* MessageCellTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0E7C2F2A3A4D4E5F9B8C7D6E /* MessageCellTests.swift */; };
+		C4A700122026102600000012 /* CapabilityDetectionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4A700132026102600000013 /* CapabilityDetectionTests.swift */; };
 		1001F81047D94F5484238553 /* APIServiceTemplateAddView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5774456B942348B88C536014 /* APIServiceTemplateAddView.swift */; };
 		1232C0D881FF38BE2677A446 /* BashExecutor.swift in Sources */ = {isa = PBXBuildFile; fileRef = F53F64CEBB6B8132C4B6225C /* BashExecutor.swift */; };
 		D4F100012F40000100F11E01 /* FileTools.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4F100022F40000100F11E02 /* FileTools.swift */; };
@@ -146,6 +148,8 @@
 		F595CD3876D345D794C42AFF /* APIServiceTemplateAddViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 25B74289407745C983DD1294 /* APIServiceTemplateAddViewModel.swift */; };
 		F6B206AEFF2F7C12FEBA4C7C /* ChatmiceTools.swift in Sources */ = {isa = PBXBuildFile; fileRef = 58AA4C20D9658F9F22010192 /* ChatmiceTools.swift */; };
 		C0A700012026102200000001 /* ContextManagement.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0A700022026102200000002 /* ContextManagement.swift */; };
+		C0A700032026102600000003 /* ModelMetadata.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0A700042026102600000004 /* ModelMetadata.swift */; };
+		C0A700052026102600000005 /* BuiltInModelMetadata.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0A700062026102600000006 /* BuiltInModelMetadata.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -185,6 +189,7 @@
 		C4A700072026101200000007 /* WorkspaceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceTests.swift; sourceTree = "<group>"; };
 		C4A700092026101200000009 /* SelectableRichText.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SelectableRichText.swift; sourceTree = "<group>"; };
 		C4A7000B202610120000000B /* ChatLayoutTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatLayoutTests.swift; sourceTree = "<group>"; };
+		C4A700152026102700000015 /* MCPOAuthDiscoveryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MCPOAuthDiscoveryTests.swift; sourceTree = "<group>"; };
 		A17C71022026102400000002 /* ChatActivityStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatActivityStoreTests.swift; sourceTree = "<group>"; };
 		A17C71042026102400000004 /* PersistenceControllerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersistenceControllerTests.swift; sourceTree = "<group>"; };
 		C4A7000D202610130000000D /* WorkspaceReferenceInputTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceReferenceInputTests.swift; sourceTree = "<group>"; };
@@ -201,6 +206,7 @@
 		1D1475CF2DC44692A9E47B9A /* GeminiHandlerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GeminiHandlerTests.swift; sourceTree = "<group>"; };
 		C1A0DE010000000000000002 /* ClaudeRequestCompatibilityTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeRequestCompatibilityTests.swift; sourceTree = "<group>"; };
 		F0A5E0022026102200000002 /* WebSearchSettingsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebSearchSettingsTests.swift; sourceTree = "<group>"; };
+		C4A700132026102600000013 /* CapabilityDetectionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CapabilityDetectionTests.swift; sourceTree = "<group>"; };
 		25B74289407745C983DD1294 /* APIServiceTemplateAddViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIServiceTemplateAddViewModel.swift; sourceTree = "<group>"; };
 		2C64AA5DC1942A285D46D9A8 /* ComputerUseTool.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComputerUseTool.swift; sourceTree = "<group>"; };
 		D4F100022F40000100F11E02 /* FileTools.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileTools.swift; sourceTree = "<group>"; };
@@ -237,6 +243,7 @@
 		D5B800012026101200000001 /* macaiDataModel 5.xcdatamodel */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcdatamodel; path = "macaiDataModel 5.xcdatamodel"; sourceTree = "<group>"; };
 		E6C900012026102100000001 /* macaiDataModel 6.xcdatamodel */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcdatamodel; path = "macaiDataModel 6.xcdatamodel"; sourceTree = "<group>"; };
 		F7DA00012026102200000001 /* macaiDataModel 7.xcdatamodel */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcdatamodel; path = "macaiDataModel 7.xcdatamodel"; sourceTree = "<group>"; };
+		F8EB00012026102600000001 /* macaiDataModel 8.xcdatamodel */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcdatamodel; path = "macaiDataModel 8.xcdatamodel"; sourceTree = "<group>"; };
 		4A37B8542C2A399800F36CC4 /* Credits.rtf */ = {isa = PBXFileReference; lastKnownFileType = text.rtf; path = Credits.rtf; sourceTree = "<group>"; };
 		4A399C9529BC8FEF00E98796 /* Chatmice.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Chatmice.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		4A399C9829BC8FEF00E98796 /* ChatmiceApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatmiceApp.swift; sourceTree = "<group>"; };
@@ -305,6 +312,8 @@
 		5774456B942348B88C536014 /* APIServiceTemplateAddView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIServiceTemplateAddView.swift; sourceTree = "<group>"; };
 		58AA4C20D9658F9F22010192 /* ChatmiceTools.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatmiceTools.swift; sourceTree = "<group>"; };
 		C0A700022026102200000002 /* ContextManagement.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContextManagement.swift; sourceTree = "<group>"; };
+		C0A700042026102600000004 /* ModelMetadata.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelMetadata.swift; sourceTree = "<group>"; };
+		C0A700062026102600000006 /* BuiltInModelMetadata.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BuiltInModelMetadata.swift; sourceTree = "<group>"; };
 		62B9230773084F7E92FFB3AD /* APIServiceTemplate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIServiceTemplate.swift; sourceTree = "<group>"; };
 		7C2B9A4A2F1E4B1F00D1A111 /* DatabaseMigrationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DatabaseMigrationTests.swift; sourceTree = "<group>"; };
 		7E9696501A3843E4A2D9926B /* APIServiceTemplates.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = APIServiceTemplates.json; sourceTree = "<group>"; };
@@ -557,6 +566,8 @@
 				D4F100042F40000100C0DE04 /* CodeExecutionTool.swift */,
 				58AA4C20D9658F9F22010192 /* ChatmiceTools.swift */,
 				C0A700022026102200000002 /* ContextManagement.swift */,
+				C0A700042026102600000004 /* ModelMetadata.swift */,
+				C0A700062026102600000006 /* BuiltInModelMetadata.swift */,
 				B7C100022F30000100BEEF02 /* WebSearch.swift */,
 				4AC37B642F12D0F8006FD196 /* AttachmentActionHelper.swift */,
 				4A146A032F103E5E004249A2 /* AttachmentParser.swift */,
@@ -627,6 +638,8 @@
 				A17C71022026102400000002 /* ChatActivityStoreTests.swift */,
 				A17C71042026102400000004 /* PersistenceControllerTests.swift */,
 				C4A7000B202610120000000B /* ChatLayoutTests.swift */,
+				C4A700152026102700000015 /* MCPOAuthDiscoveryTests.swift */,
+				C4A700132026102600000013 /* CapabilityDetectionTests.swift */,
 				C4A7000D202610130000000D /* WorkspaceReferenceInputTests.swift */,
 				0E7C2F293A4D4E5F9B8C7D6E /* UI */,
 				4ABDBE6729F86E6300661B2D /* Utilities */,
@@ -865,6 +878,8 @@
 				D4F100032F40000100C0DE03 /* CodeExecutionTool.swift in Sources */,
 				F6B206AEFF2F7C12FEBA4C7C /* ChatmiceTools.swift in Sources */,
 				C0A700012026102200000001 /* ContextManagement.swift in Sources */,
+				C0A700032026102600000003 /* ModelMetadata.swift in Sources */,
+				C0A700052026102600000005 /* BuiltInModelMetadata.swift in Sources */,
 				4A2D3CEB2D5794B10082A262 /* ThemeMode.swift in Sources */,
 				4A8560DC2EF0C429007A5E42 /* V1ToV3Migration.swift in Sources */,
 				4A1F0A0A29CEFB7F002A139A /* MessageCell.swift in Sources */,
@@ -964,6 +979,8 @@
 				A17C71012026102400000001 /* ChatActivityStoreTests.swift in Sources */,
 				A17C71032026102400000003 /* PersistenceControllerTests.swift in Sources */,
 				C4A7000C202610120000000C /* ChatLayoutTests.swift in Sources */,
+				C4A700142026102700000014 /* MCPOAuthDiscoveryTests.swift in Sources */,
+				C4A700122026102600000012 /* CapabilityDetectionTests.swift in Sources */,
 				C4A7000E202610130000000E /* WorkspaceReferenceInputTests.swift in Sources */,
 				4ABDBE6B29F86E8D00661B2D /* MessageParserTests.swift in Sources */,
 				4F432A6BC5E64A3390D5F2C5 /* PDFHandlingTests.swift in Sources */,
@@ -1127,7 +1144,7 @@
 				CODE_SIGN_IDENTITY = "Apple Development";
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 13;
+				CURRENT_PROJECT_VERSION = 14;
 				DEVELOPMENT_TEAM = KJ5KHP7B96;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
@@ -1149,7 +1166,7 @@
 				LD_RUNPATH_SEARCH_PATHS = "@executable_path/Frameworks";
 				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = "@executable_path/../Frameworks";
 				MACOSX_DEPLOYMENT_TARGET = 15.0;
-				MARKETING_VERSION = 1.1.3;
+				MARKETING_VERSION = 1.1.4;
 				ONLY_ACTIVE_ARCH = YES;
 				PRODUCT_BUNDLE_IDENTIFIER = xeric.com.chatmice;
 				PRODUCT_NAME = Chatmice;
@@ -1173,7 +1190,7 @@
 				CODE_SIGN_IDENTITY = "Developer ID Application";
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Developer ID Application";
 				CODE_SIGN_STYLE = Manual;
-				CURRENT_PROJECT_VERSION = 13;
+				CURRENT_PROJECT_VERSION = 14;
 				DEVELOPMENT_TEAM = KJ5KHP7B96;
 				ENABLE_HARDENED_RUNTIME = YES;
 				MOMC_NO_INVERSE_RELATIONSHIP_WARNINGS = YES;
@@ -1197,7 +1214,7 @@
 				LD_RUNPATH_SEARCH_PATHS = "@executable_path/Frameworks";
 				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = "@executable_path/../Frameworks";
 				MACOSX_DEPLOYMENT_TARGET = 15.0;
-				MARKETING_VERSION = 1.1.3;
+				MARKETING_VERSION = 1.1.4;
 				ONLY_ACTIVE_ARCH = NO;
 				PRODUCT_BUNDLE_IDENTIFIER = xeric.com.chatmice;
 				PRODUCT_NAME = Chatmice;
@@ -1423,8 +1440,9 @@
 				D5B800012026101200000001 /* macaiDataModel 5.xcdatamodel */,
 				E6C900012026102100000001 /* macaiDataModel 6.xcdatamodel */,
 				F7DA00012026102200000001 /* macaiDataModel 7.xcdatamodel */,
+				F8EB00012026102600000001 /* macaiDataModel 8.xcdatamodel */,
 			);
-			currentVersion = F7DA00012026102200000001 /* macaiDataModel 7.xcdatamodel */;
+			currentVersion = F8EB00012026102600000001 /* macaiDataModel 8.xcdatamodel */;
 			path = macaiDataModel.xcdatamodeld;
 			sourceTree = "<group>";
 			versionGroupType = wrapper.xcdatamodel;

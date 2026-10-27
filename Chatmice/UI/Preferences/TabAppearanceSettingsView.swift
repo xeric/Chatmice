@@ -8,12 +8,13 @@ import SwiftUI
 
 struct TabAppearanceSettingsView: View {
     @AppStorage("chatFontSize") private var chatFontSize: Double = 15.0
-    @AppStorage("chatFontWeight") private var chatFontWeight = ChatFontWeightPreference.light.rawValue
+    @AppStorage("chatFontWeight") private var chatFontWeight = ChatFontWeightPreference.regular.rawValue
     @AppStorage("preferredColorScheme") private var preferredColorSchemeRaw: Int = 0
     @AppStorage("codeFont") private var codeFont: String = AppConstants.firaCode
     @AppStorage("mainWindowBackgroundOpacity") private var mainWindowBackgroundOpacity: Double = 75
     @AppStorage("mainWindowBlurLevel") private var mainWindowBlurLevel: Double = 10
     @State private var selectedColorSchemeRaw: Int = 0
+    @Environment(\.colorScheme) private var colorScheme
 
 
     private var preferredColorScheme: Binding<ColorScheme?> {
@@ -46,76 +47,44 @@ struct TabAppearanceSettingsView: View {
         )
     }
 
-    private var previewFontWeight: Font.Weight {
-        switch ChatFontWeightPreference(rawValue: chatFontWeight) ?? .light {
-        case .light: return .light
-        case .regular: return .regular
-        case .medium: return .medium
-        }
-    }
-
-    private var previewEmphasisWeight: Font.Weight {
-        switch ChatFontWeightPreference(rawValue: chatFontWeight) ?? .light {
-        case .light: return .regular
-        case .regular: return .medium
-        case .medium: return .semibold
-        }
-    }
-
     private var typographyPreview: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("Lorem Ipsum")
-                .font(.system(size: chatFontSize + 8, weight: previewEmphasisWeight))
+        MessageContentView(
+            message: nil,
+            content: """
+                ## Clear hierarchy
 
-            Text("A compact preview with **bold text**, *italics*, ~~strikethrough~~, and `inline code`.")
-                .font(.system(size: chatFontSize, weight: previewFontWeight))
+                Comfortable line spacing keeps body text and `inline code` easy to read. Use **emphasis** sparingly, with *italics* and ~~strikethrough~~ when needed.
 
-            HStack(alignment: .top, spacing: 10) {
-                RoundedRectangle(cornerRadius: 1)
-                    .fill(Color.secondary.opacity(0.45))
-                    .frame(width: 3)
-                Text("Good typography keeps quoted material distinct without interrupting the reading flow.")
-                    .italic()
-                    .foregroundStyle(.secondary)
-            }
+                - Wrapped list items stay aligned with the text, making longer explanations and technical details easier to read.
+                  - Nested details retain their indentation.
+                - [x] Completed task
 
-            Text("Lists and hierarchy")
-                .font(.system(size: chatFontSize + 4, weight: previewEmphasisWeight))
+                > Keep quoted material distinct while preserving **emphasis** and `inline code`.
 
-            VStack(alignment: .leading, spacing: 5) {
-                Text("• Primary item")
-                Text("    • Nested supporting detail")
-                Text("• A second item with a sample link")
-                    .foregroundStyle(.blue)
-            }
+                Style | Purpose
+                :--- | :---
+                Heading | Establish hierarchy
+                Body | Keep long-form text readable
 
-            Text("func greeting(for name: String) -> String {\n    \"Hello, \\(name)\"\n}")
-                .font(.custom(codeFont, size: max(chatFontSize - 1, 10)))
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(12)
-                .background(Color.secondary.opacity(0.1), in: RoundedRectangle(cornerRadius: 7))
-
-            Grid(alignment: .leading, horizontalSpacing: 24, verticalSpacing: 6) {
-                GridRow {
-                    Text("Style").fontWeight(previewEmphasisWeight)
-                    Text("Purpose").fontWeight(previewEmphasisWeight)
+                ```swift
+                func greeting() -> String {
+                    "Hello, world"
                 }
-                Divider()
-                GridRow {
-                    Text("Heading")
-                    Text("Establish hierarchy")
-                }
-                GridRow {
-                    Text("Body")
-                    Text("Keep long-form text readable")
-                }
-            }
+                ```
 
-            Text("Inline formula: a² + b² = c²")
-                .italic()
-        }
-        .font(.system(size: chatFontSize, weight: previewFontWeight))
-        .foregroundStyle(.primary)
+                Inline formula: $a^2 + b^2 = c^2$
+                """,
+            isStreaming: false,
+            own: false,
+            effectiveFontSize: chatFontSize,
+            colorScheme: colorScheme,
+            inlineAttachments: true,
+            reasoningDuration: nil,
+            isActiveReasoning: false,
+            prefetchedElements: nil,
+            searchText: .constant(""),
+            allowsStreamingLayout: false
+        )
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 

@@ -115,6 +115,8 @@ enum ContextWindowSource: String, Codable, Sendable {
     case userOverride
     case providerMetadata
     case builtInRegistry
+    case remoteMetadata
+    case modelMetadataDefault
 }
 
 struct ContextWindowResolution: Equatable, Sendable {
@@ -153,11 +155,9 @@ enum ModelContextMetadataStore {
 
 enum ModelContextRegistry {
     static func resolve(service: APIServiceEntity?, modelID: String) -> ContextWindowResolution? {
-        if let tokens = ModelConfigurationStore.overrides(serviceID: service?.id, modelID: modelID).contextWindowTokens, tokens > 0 {
+        let overrides = ModelConfigurationStore.overrides(serviceID: service?.id, modelID: modelID)
+        if let tokens = overrides.contextWindowTokens, tokens > 0 {
             return ContextWindowResolution(tokens: tokens, source: .userOverride)
-        }
-        if let override = service?.contextWindowOverrideTokens, override > 0 {
-            return ContextWindowResolution(tokens: Int(override), source: .userOverride)
         }
 
         let serviceType = service?.type ?? ""
@@ -165,18 +165,34 @@ enum ModelContextRegistry {
             return ContextWindowResolution(tokens: tokens, source: .providerMetadata)
         }
 
-        guard let tokens = builtInTokens(modelID: modelID, serviceType: serviceType) else { return nil }
+        let defaults = ModelConfigurationStore.metadataDefaults(serviceID: service?.id, modelID: modelID)
+        if let tokens = defaults.contextWindowTokens, tokens > 0 {
+            return ContextWindowResolution(tokens: tokens, source: .modelMetadataDefault)
+        }
+
+        if let resolution = ModelMetadataCatalog.shared.metadata(modelID: modelID, serviceType: serviceType) {
+            let source: ContextWindowSource = resolution.source == .builtIn ? .builtInRegistry : .remoteMetadata
+            return ContextWindowResolution(tokens: resolution.metadata.limit.context, source: source)
+        }
+
+        guard let tokens = legacyBuiltInTokens(modelID: modelID, serviceType: serviceType) else { return nil }
         return ContextWindowResolution(tokens: tokens, source: .builtInRegistry)
     }
 
-    static func builtInTokens(modelID rawModelID: String, serviceType rawServiceType: String) -> Int? {
+    static func builtInTokens(modelID: String, serviceType: String) -> Int? {
+        if let metadata = ModelMetadataCatalog.builtInMetadata(modelID: modelID) {
+            return metadata.limit.context
+        }
+        return legacyBuiltInTokens(modelID: modelID, serviceType: serviceType)
+    }
+
+    private static func legacyBuiltInTokens(modelID rawModelID: String, serviceType rawServiceType: String) -> Int? {
         let modelID = rawModelID.lowercased()
         let serviceType = rawServiceType.lowercased()
 
         if modelID.contains("gemini-1.5-pro") { return 2_097_152 }
         if modelID.contains("gemini") { return 1_048_576 }
         if modelID.contains("gpt-4.1") { return 1_047_576 }
-        if modelID.contains("gpt-5") { return 400_000 }
         if modelID.contains("gpt-4o") || modelID.contains("gpt-4-turbo") { return 128_000 }
         if modelID.range(of: #"(?:^|[/_-])o[134](?:$|[/_.-])"#, options: .regularExpression) != nil {
             return 200_000

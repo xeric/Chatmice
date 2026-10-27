@@ -198,36 +198,9 @@ struct APIServiceDetailView: View {
                             .frame(width: 90)
                     }
 
-                    Toggle("Override model context window", isOn: $viewModel.contextWindowOverrideEnabled)
-
-                    HStack {
-                        Text("Context window")
-                        Spacer()
-                        TextField(
-                            "Tokens",
-                            value: $viewModel.contextWindowOverrideTokens,
-                            format: .number.grouping(.never)
-                        )
-                        .frame(width: 120)
-                        .disabled(!viewModel.contextWindowOverrideEnabled)
-                        Text("tokens")
-                            .foregroundStyle(.secondary)
-                    }
-
-                    if !viewModel.contextWindowOverrideEnabled {
-                        if let resolution = viewModel.automaticContextWindow {
-                            Text(
-                                "Automatically matched \(resolution.tokens.formatted()) tokens from \(resolution.source == .providerMetadata ? "provider metadata" : "Chatmice's model registry")."
-                            )
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        }
-                        else {
-                            Text("Context window is unknown. Enable the override to use automatic compaction.")
-                                .font(.caption)
-                                .foregroundStyle(.orange)
-                        }
-                    }
+                    Text("Context-window limits are configured per model using the sliders button in the model list.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
                 .padding(8)
             }

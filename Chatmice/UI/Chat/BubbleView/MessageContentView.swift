@@ -452,38 +452,137 @@ extension ChatFontWeightPreference {
     }
 }
 
+enum MarkdownParagraphLayout {
+    private static let listPattern = try! NSRegularExpression(
+        pattern: "^([ \\t]*)((?:[-*+][ \\t]+(?:\\[[ xX]\\][ \\t]+)?)|(?:\\d+[.)][ \\t]+))"
+    )
+    private static let blankParagraphs = try! NSRegularExpression(pattern: "\\n[ \\t]*\\n(?:[ \\t]*\\n)*")
+
+    private static let headingPattern = try! NSRegularExpression(pattern: "^ {0,3}(?:#{1,6}[ \\t]|(?:=+|-+)[ \\t]*$)")
+    private static let setextPattern = try! NSRegularExpression(pattern: "^ {0,3}(?:=+|-+)[ \\t]*$")
+
+    static func prepareSource(_ source: String) -> String {
+        let lines = source.components(separatedBy: "\n")
+        var result = ""
+        result.reserveCapacity(source.utf16.count)
+        var previousWasBoundary = true
+        for (index, line) in lines.enumerated() {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            let range = NSRange(location: 0, length: line.utf16.count)
+            let heading = headingPattern.firstMatch(in: line, range: range) != nil
+            let nextLine = index + 1 < lines.count ? lines[index + 1] : ""
+            let setextTitle = !trimmed.isEmpty && setextPattern.firstMatch(
+                in: nextLine, range: NSRange(location: 0, length: nextLine.utf16.count)
+            ) != nil
+            let quote = trimmed.hasPrefix(">")
+            let list = listPattern.firstMatch(in: line, range: range) != nil
+            let boundary = trimmed.isEmpty || heading || setextTitle || quote
+            if index > 0 {
+                result += previousWasBoundary || boundary || list ? "\n" : " "
+            }
+            result += previousWasBoundary || boundary || list ? line : trimmed
+            previousWasBoundary = boundary
+        }
+        return result
+    }
+
+    static func apply(to text: NSMutableAttributedString, baseStyle: NSParagraphStyle, font: NSFont) {
+        let source = text.string as NSString
+        var offset = 0
+        var continuationIndent: CGFloat?
+        var edits: [(range: NSRange, prefix: NSRange, marker: String, style: NSMutableParagraphStyle)] = []
+        while offset < source.length {
+            let range = source.paragraphRange(for: NSRange(location: offset, length: 0))
+            let line = source.substring(with: range) as NSString
+            defer { offset = NSMaxRange(range) }
+            // A numbered heading is still a heading after its Markdown prefix is removed.
+            if let style = text.attribute(.paragraphStyle, at: offset, effectiveRange: nil) as? NSParagraphStyle,
+               style.paragraphSpacingBefore > 0 {
+                continuationIndent = nil
+                continue
+            }
+            if let match = listPattern.firstMatch(in: line as String, range: NSRange(location: 0, length: line.length)) {
+                let whitespace = line.substring(with: match.range(at: 1))
+                let rawMarker = line.substring(with: match.range(at: 2)).trimmingCharacters(in: .whitespaces)
+                let marker: String
+                if rawMarker.contains("[") {
+                    marker = rawMarker.lowercased().contains("[x]") ? "☑︎" : "☐"
+                } else if rawMarker.first?.isNumber == true {
+                    marker = rawMarker
+                } else {
+                    marker = "•"
+                }
+                let indentation = CGFloat(whitespace.reduce(0) { $0 + ($1 == "\t" ? 4 : 1) }) * font.pointSize * 0.5
+                let markerWidth = (marker as NSString).size(withAttributes: [.font: font]).width
+                let contentIndent = indentation + max(font.pointSize * 4 / 3, ceil(markerWidth) + font.pointSize * 0.5)
+                let style = baseStyle.mutableCopy() as! NSMutableParagraphStyle
+                style.firstLineHeadIndent = indentation
+                style.headIndent = contentIndent
+                style.tabStops = [NSTextTab(textAlignment: .left, location: contentIndent)]
+                style.paragraphSpacing = font.pointSize * ChatTypography.listItemSpacingEm
+                edits.append((range, NSRange(location: offset, length: match.range.length), marker + "\t", style))
+                continuationIndent = contentIndent
+            } else if line.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                continue
+            } else if let indent = continuationIndent, line.hasPrefix(" ") || line.hasPrefix("\t") {
+                let trimmed = (line as String).drop(while: { $0 == " " || $0 == "\t" })
+                let style = baseStyle.mutableCopy() as! NSMutableParagraphStyle
+                style.firstLineHeadIndent = indent
+                style.headIndent = indent
+                style.paragraphSpacing = font.pointSize * ChatTypography.listItemSpacingEm
+                edits.append((range, NSRange(location: offset, length: line.length - trimmed.utf16.count), "", style))
+            } else {
+                continuationIndent = nil
+            }
+        }
+        for edit in edits.reversed() {
+            text.addAttribute(.paragraphStyle, value: edit.style, range: edit.range)
+            text.replaceCharacters(in: edit.prefix, with: edit.marker)
+            if !edit.marker.isEmpty {
+                text.addAttribute(.font, value: font, range: NSRange(location: edit.prefix.location, length: edit.marker.utf16.count))
+                let markerColor: NSColor?
+                if edit.marker.hasPrefix("☑︎") {
+                    markerColor = .systemGreen
+                } else if edit.marker.hasPrefix("☐") {
+                    markerColor = .secondaryLabelColor
+                } else {
+                    markerColor = nil
+                }
+                if let markerColor {
+                    text.addAttribute(.foregroundColor, value: markerColor,
+                                      range: NSRange(location: edit.prefix.location, length: edit.marker.utf16.count - 1))
+                }
+            }
+        }
+        // Source blank lines separate paragraphs; they must not also create empty line boxes.
+        let blanks = blankParagraphs.matches(in: text.string, range: NSRange(location: 0, length: text.length))
+        for match in blanks.reversed() {
+            text.deleteCharacters(in: NSRange(location: match.range.location + 1, length: match.range.length - 1))
+        }
+        while text.string.hasSuffix("\n") { text.deleteCharacters(in: NSRange(location: text.length - 1, length: 1)) }
+        while text.string.hasPrefix("\n") { text.deleteCharacters(in: NSRange(location: 0, length: 1)) }
+        guard text.length > 0 else { return }
+        let last = (text.string as NSString).paragraphRange(for: NSRange(location: text.length - 1, length: 0))
+        if let style = (text.attribute(.paragraphStyle, at: last.location, effectiveRange: nil) as? NSParagraphStyle)?
+            .mutableCopy() as? NSMutableParagraphStyle {
+            style.paragraphSpacing = 0
+            text.addAttribute(.paragraphStyle, value: style, range: last)
+        }
+    }
+}
+
 private struct MarkdownFootnoteText: View {
     let source: String
     let fontSize: CGFloat
+    @Environment(\.colorScheme) private var colorScheme
 
-    private func renderedContent() -> (text: AttributedString, title: String?) {
-        let options = AttributedString.MarkdownParsingOptions(
-            interpretedSyntax: .inlineOnlyPreservingWhitespace
-        )
-        let parsed =
-            (try? NSAttributedString(markdown: source, options: options))
-            ?? NSAttributedString(string: source)
-        let attributedString = NSMutableAttributedString(attributedString: parsed)
-        MarkdownLinkTitleSupport.apply(to: attributedString)
-        return (
-            AttributedString(attributedString),
-            MarkdownLinkTitleSupport.firstTitle(in: attributedString)
-        )
-    }
-
-    @ViewBuilder
     var body: some View {
-        let rendered = renderedContent()
-        let text = Text(rendered.text)
-            .font(.system(size: fontSize))
-            .foregroundStyle(.secondary)
-            .textSelection(.enabled)
-        if let title = rendered.title {
-            text.help(title)
-        }
-        else {
-            text
-        }
+        AnyView(MessageContentView(
+            message: nil, content: source, isStreaming: false, own: false,
+            effectiveFontSize: fontSize, colorScheme: colorScheme, inlineAttachments: true,
+            reasoningDuration: nil, isActiveReasoning: false, prefetchedElements: nil,
+            searchText: .constant(""), allowsStreamingLayout: false
+        ))
     }
 }
 
@@ -502,12 +601,10 @@ private final class MessageTextRenderCache {
     final class Entry {
         let key: Key
         let text: NSAttributedString
-        let usesTextKit: Bool
 
-        init(key: Key, text: NSAttributedString, usesTextKit: Bool) {
+        init(key: Key, text: NSAttributedString) {
             self.key = key
             self.text = NSAttributedString(attributedString: text)
-            self.usesTextKit = usesTextKit
         }
     }
 
@@ -577,10 +674,10 @@ struct MessageContentView: View {
     @State private var copiedMermaidItem: String?
     @State private var hasUsedStreamingLayout = false
     @State private var textRenderCache = MessageTextRenderCache()
-    @AppStorage("chatFontWeight") private var chatFontWeight = ChatFontWeightPreference.light.rawValue
+    @AppStorage("chatFontWeight") private var chatFontWeight = ChatFontWeightPreference.regular.rawValue
 
     private var preferredFontWeight: ChatFontWeightPreference {
-        ChatFontWeightPreference(rawValue: chatFontWeight) ?? .light
+        ChatFontWeightPreference(rawValue: chatFontWeight) ?? .regular
     }
 
     private let largeMessageSymbolsThreshold = AppConstants.largeMessageSymbolsThreshold
@@ -893,19 +990,9 @@ struct MessageContentView: View {
         .padding(.top, 8)
     }
 
-    @ViewBuilder
     private func renderText(_ text: String, elementIndex: Int = 0) -> some View {
-        let rendered = renderedText(text, elementIndex: elementIndex)
-        if rendered.usesTextKit {
-            SelectableRichText(rendered.text)
-                .frame(maxWidth: .infinity, alignment: .leading)
-        }
-        else {
-            Text(.init(rendered.text))
-                .textSelection(.enabled)
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: own ? nil : .infinity, alignment: .leading)
-        }
+        SelectableRichText(renderedText(text, elementIndex: elementIndex).text, fitsContentWidth: own)
+            .frame(maxWidth: own ? nil : .infinity, alignment: .leading)
     }
 
     private func renderedText(_ text: String, elementIndex: Int) -> MessageTextRenderCache.Entry {
@@ -915,11 +1002,11 @@ struct MessageContentView: View {
             search: searchText, messageID: message?.objectID, occurrence: currentSearchOccurrence
         )
         if let cached = textRenderCache.entry(for: elementIndex, key: key) { return cached }
-        let normalizedText = text.replacingOccurrences(
+        let normalizedText = MarkdownParagraphLayout.prepareSource(text.replacingOccurrences(
             of: "(?i)<br\\s*/?>",
-            with: "  \n",
+            with: "\u{2028}",
             options: .regularExpression
-        )
+        ).replacingOccurrences(of: " {2,}\\n", with: "\u{2028}", options: .regularExpression))
         let inlineMath = PreparedInlineMath(source: normalizedText)
         let inlineScripts = PreparedInlineScripts(source: inlineMath.markdownSource)
         let attributedString: NSAttributedString = {
@@ -941,10 +1028,6 @@ struct MessageContentView: View {
             )
             applyMarkdownFontStyles(to: mutableAttributedString, baseFont: systemFont)
 
-            let paragraphMetrics =
-                own
-                ? ChatTypography.outgoingParagraph
-                : ChatTypography.assistantParagraph
             let resolvedLabelColor = NSColor(
                 deviceWhite: colorScheme == .dark ? 1 : 0,
                 alpha: 1
@@ -962,18 +1045,7 @@ struct MessageContentView: View {
                 value: textColor,
                 range: fullRange
             )
-            mutableAttributedString.addAttribute(
-                .kern,
-                value: paragraphMetrics.letterSpacingEm * effectiveFontSize,
-                range: fullRange
-            )
-
-            let paragraphStyle = NSMutableParagraphStyle()
-            paragraphStyle.alignment = ChatTypography.bodyAlignment
-            paragraphStyle.lineHeightMultiple = paragraphMetrics.lineHeightMultiple
-            paragraphStyle.lineSpacing = paragraphMetrics.lineSpacing
-            paragraphStyle.paragraphSpacing = paragraphMetrics.paragraphSpacingEm * effectiveFontSize
-            paragraphStyle.lineBreakMode = .byWordWrapping
+            let paragraphStyle = ChatTypography.paragraphStyle(fontSize: effectiveFontSize, own: own)
             mutableAttributedString.addAttribute(.paragraphStyle, value: paragraphStyle, range: fullRange)
 
             // Setext headings use an underline on the following source line.
@@ -991,12 +1063,12 @@ struct MessageContentView: View {
                     let markerRange = match.range(at: 2)
                     let marker = (mutableAttributedString.string as NSString).substring(with: markerRange)
                     let level = marker.first == "=" ? 1 : 2
-                    let headingFontSize = max(effectiveFontSize + 10 - pow(CGFloat(level), 1.5), 6)
+                    let headingFontSize = ChatTypography.headingSize(level: level, bodySize: effectiveFontSize)
                     mutableAttributedString.addAttribute(
                         .font,
                         value: NSFont.systemFont(
                             ofSize: headingFontSize,
-                            weight: own ? .medium : preferredFontWeight.emphasizedNSFontWeight
+                            weight: .semibold
                         ),
                         range: titleRange
                     )
@@ -1010,6 +1082,7 @@ struct MessageContentView: View {
                         range: titleRange
                     )
                     let headingStyle = paragraphStyle.mutableCopy() as? NSMutableParagraphStyle
+                    headingStyle?.minimumLineHeight = effectiveFontSize * 32 / 15
                     headingStyle?.paragraphSpacingBefore =
                         effectiveFontSize * ChatTypography.majorHeadingSpacingBeforeEm
                     headingStyle?.paragraphSpacing = effectiveFontSize * ChatTypography.headingSpacingAfterEm
@@ -1044,10 +1117,10 @@ struct MessageContentView: View {
                 let contentTextRange = match.range(at: 2)
 
                 let level = prefixHashesRange.length
-                let fontSize = max(effectiveFontSize + 10 - pow(CGFloat(level), 1.5), 6)
+                let fontSize = ChatTypography.headingSize(level: level, bodySize: effectiveFontSize)
                 let font = NSFont.systemFont(
                     ofSize: fontSize,
-                    weight: own ? .medium : preferredFontWeight.emphasizedNSFontWeight
+                    weight: .semibold
                 )
 
                 mutableAttributedString.addAttribute(.font, value: font, range: contentTextRange)
@@ -1061,6 +1134,7 @@ struct MessageContentView: View {
                     range: contentTextRange
                 )
                 let headingStyle = paragraphStyle.mutableCopy() as? NSMutableParagraphStyle
+                headingStyle?.minimumLineHeight = effectiveFontSize * (level <= 3 ? 32.0 / 15 : 25.0 / 15)
                 headingStyle?.paragraphSpacingBefore =
                     effectiveFontSize
                     * (level <= 2
@@ -1113,9 +1187,6 @@ struct MessageContentView: View {
                     location: NSMaxRange(barsRange),
                     length: contentRange.length
                 )
-                let italicDescriptor = systemFont.fontDescriptor.withSymbolicTraits(.italic)
-                let italicFont = NSFont(descriptor: italicDescriptor, size: effectiveFontSize) ?? systemFont
-                mutableAttributedString.addAttribute(.font, value: italicFont, range: adjustedContentRange)
                 mutableAttributedString.addAttribute(
                     .foregroundColor,
                     value: NSColor.secondaryLabelColor,
@@ -1131,6 +1202,7 @@ struct MessageContentView: View {
 
                 let quoteStyle = paragraphStyle.mutableCopy() as? NSMutableParagraphStyle
                 quoteStyle?.paragraphSpacing = effectiveFontSize * ChatTypography.listItemSpacingEm
+                quoteStyle?.headIndent = (quoteBars as NSString).size(withAttributes: [.font: systemFont]).width
                 if let quoteStyle {
                     let renderedLineRange = (mutableAttributedString.string as NSString)
                         .paragraphRange(for: NSRange(location: fullMatchRange.location, length: 0))
@@ -1166,62 +1238,7 @@ struct MessageContentView: View {
                 }
             }
 
-            // Preserve nesting, render task markers, and align wrapped list lines with their content.
-            if let listRegex = try? NSRegularExpression(
-                pattern: "^([ \\t]*)((?:[-*+] (?:\\[[ xX]\\] )?)|(?:\\d+[.)] ))",
-                options: .anchorsMatchLines
-            ) {
-                let listMatches = listRegex.matches(
-                    in: mutableAttributedString.string,
-                    range: NSRange(location: 0, length: mutableAttributedString.length)
-                )
-                for match in listMatches.reversed() {
-                    let leadingWhitespaceRange = match.range(at: 1)
-                    let markerRange = match.range(at: 2)
-                    let source = mutableAttributedString.string as NSString
-                    let indentationSource = source.substring(with: leadingWhitespaceRange)
-                    let marker = source.substring(with: markerRange)
-                    let indentationColumns = indentationSource.reduce(0) { total, character in
-                        total + (character == "\t" ? 4 : 1)
-                    }
-                    if leadingWhitespaceRange.length > 0 {
-                        mutableAttributedString.deleteCharacters(in: leadingWhitespaceRange)
-                    }
-
-                    if marker.range(of: "\\[[ xX]\\]", options: .regularExpression) != nil {
-                        let checked = marker.lowercased().contains("[x]")
-                        let replacement = checked ? "☑︎ " : "☐ "
-                        let adjustedMarkerRange = NSRange(
-                            location: match.range.location,
-                            length: markerRange.length
-                        )
-                        mutableAttributedString.replaceCharacters(in: adjustedMarkerRange, with: replacement)
-                        mutableAttributedString.addAttribute(
-                            .foregroundColor,
-                            value: checked ? NSColor.systemGreen : NSColor.secondaryLabelColor,
-                            range: NSRange(
-                                location: adjustedMarkerRange.location,
-                                length: replacement.utf16.count
-                            )
-                        )
-                    }
-
-                    let indentation = CGFloat(indentationColumns) * effectiveFontSize * 0.5
-                    let listStyle = paragraphStyle.mutableCopy() as? NSMutableParagraphStyle
-                    listStyle?.firstLineHeadIndent = indentation
-                    listStyle?.headIndent = indentation + effectiveFontSize * ChatTypography.listHangingIndentEm
-                    listStyle?.paragraphSpacing = effectiveFontSize * ChatTypography.listItemSpacingEm
-                    if let listStyle {
-                        let paragraphRange = (mutableAttributedString.string as NSString)
-                            .paragraphRange(for: NSRange(location: match.range.location, length: 0))
-                        mutableAttributedString.addAttribute(
-                            .paragraphStyle,
-                            value: listStyle,
-                            range: paragraphRange
-                        )
-                    }
-                }
-            }
+            MarkdownParagraphLayout.apply(to: mutableAttributedString, baseStyle: paragraphStyle, font: systemFont)
 
             // Apply search highlighting if searchText is not empty
             if !searchText.isEmpty, let messageId = message?.objectID {
@@ -1276,10 +1293,7 @@ struct MessageContentView: View {
             return mutableAttributedString
         }()
 
-        let usesTextKit = !inlineMath.formulas.isEmpty || !inlineScripts.scripts.isEmpty
-            || MarkdownLinkTitleSupport.firstTitle(in: attributedString) != nil
-            || text.count > AppConstants.longStringCount
-        let rendered = MessageTextRenderCache.Entry(key: key, text: attributedString, usesTextKit: usesTextKit)
+        let rendered = MessageTextRenderCache.Entry(key: key, text: attributedString)
         textRenderCache.store(rendered, at: elementIndex)
         return rendered
     }
@@ -1386,8 +1400,8 @@ struct MessageContentView: View {
 
             if intent.contains(.code) {
                 let codeFont = NSFont.monospacedSystemFont(
-                    ofSize: max(effectiveFontSize - 0.5, 10),
-                    weight: own ? .regular : preferredFontWeight.nsFontWeight
+                    ofSize: max(effectiveFontSize - 1, 10),
+                    weight: .regular
                 )
                 attributedString.addAttribute(.font, value: codeFont, range: range)
                 return
@@ -1768,25 +1782,17 @@ private struct StreamingMarkdownContentView: View {
             }
 
             if !parts.tail.isEmpty {
-                if isStreaming {
-                    Text(verbatim: visibleTail)
-                        .font(.system(size: effectiveFontSize))
-                        .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                else {
-                    StableStreamingMarkdownBlock(
-                        message: message,
-                        content: parts.tail,
-                        effectiveFontSize: effectiveFontSize,
-                        colorScheme: colorScheme,
-                        reasoningDuration: reasoningDuration,
-                        isActiveReasoning: isActiveReasoning,
-                        isStreaming: isStreaming,
-                        searchText: $searchText,
-                        currentSearchOccurrence: currentSearchOccurrence
-                    )
-                }
+                StableStreamingMarkdownBlock(
+                    message: message,
+                    content: isStreaming ? visibleTail : parts.tail,
+                    effectiveFontSize: effectiveFontSize,
+                    colorScheme: colorScheme,
+                    reasoningDuration: reasoningDuration,
+                    isActiveReasoning: isActiveReasoning,
+                    isStreaming: isStreaming,
+                    searchText: $searchText,
+                    currentSearchOccurrence: currentSearchOccurrence
+                )
             }
         }
     }
@@ -1856,7 +1862,9 @@ enum StreamingMarkdownSplitter {
                 trimmedLine.hasPrefix(ToolActivityRecord.openingTag)
                 && trimmedLine.hasSuffix(ToolActivityRecord.closingTag)
             if trimmedLine.isEmpty || endsStructuredRecord, isCompleteBlock(current) {
-                blocks.append(current)
+                if !current.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    blocks.append(current)
+                }
                 current = ""
             }
         }

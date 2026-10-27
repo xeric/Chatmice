@@ -29,11 +29,14 @@ private struct ContextUsageBar: View {
     @ObservedObject var chat: ChatEntity
     @State private var isShowingDetails = false
     @State private var configurationRevision = 0
+    @State private var metadataRevision = 0
 
     private var resolution: ContextWindowResolution? {
         _ = configurationRevision
+        _ = metadataRevision
         return ModelContextRegistry.resolve(service: chat.apiService, modelID: chat.gptModel)
     }
+
 
     private var usedTokens: Int {
         max(0, Int(chat.contextInputTokens + chat.contextOutputTokens))
@@ -86,6 +89,9 @@ private struct ContextUsageBar: View {
             }
             .onReceive(NotificationCenter.default.publisher(for: ModelConfigurationStore.didChangeNotification)) { notification in
                 if notification.object as? UUID == chat.apiService?.id { configurationRevision += 1 }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: ModelMetadataCatalog.didChangeNotification)) { _ in
+                metadataRevision += 1
             }
         }
     }
@@ -141,6 +147,8 @@ private struct ContextUsageBar: View {
         case .userOverride: return "User override"
         case .providerMetadata: return "Provider metadata"
         case .builtInRegistry: return "Chatmice model registry"
+        case .remoteMetadata: return "BaseLLM metadata cache"
+        case .modelMetadataDefault: return "Saved model metadata"
         }
     }
 
@@ -669,6 +677,7 @@ struct MessageInputView: View {
     @AppStorage(WebSearchSettings.storageKey) private var webSearchSettingsData = Data()
     @State private var toolSelectionRevision = 0
     @State private var reasoningSelectionRevision = 0
+    @State private var modelMetadataRevision = 0
     @StateObject private var voiceRecorder = VoiceRecordingController()
     @State private var voiceRecordingError: String?
     @State private var workspaceReferences: [WorkspaceReference] = []
@@ -1072,6 +1081,11 @@ struct MessageInputView: View {
         toolSelectionRevision += 1
     }
 
+    private func contextResolution(for chat: ChatEntity) -> ContextWindowResolution? {
+        _ = modelMetadataRevision
+        return ModelContextRegistry.resolve(service: chat.apiService, modelID: chat.gptModel)
+    }
+
     private var reasoningProfile: ModelReasoningProfile {
         _ = reasoningSelectionRevision
         guard let chat, let service = chat.apiService else {
@@ -1274,7 +1288,7 @@ struct MessageInputView: View {
         }
 
         VStack(spacing: 0) {
-            if let chat, ModelContextRegistry.resolve(service: chat.apiService, modelID: chat.gptModel) != nil {
+            if let chat, contextResolution(for: chat) != nil {
                 ContextUsageBar(chat: chat)
                     .padding(.horizontal, 12)
                     .padding(.bottom, 8)
@@ -1442,6 +1456,10 @@ struct MessageInputView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: ModelConfigurationStore.didChangeNotification)) { notification in
             if notification.object as? UUID == chat?.apiService?.id { reasoningSelectionRevision += 1 }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: ModelMetadataCatalog.didChangeNotification)) { _ in
+            modelMetadataRevision += 1
+            reasoningSelectionRevision += 1
         }
         .onReceive(NotificationCenter.default.publisher(for: WorkspaceReferenceTransfer.notification)) { notification in
             guard let editor = referenceInputControl.textView,

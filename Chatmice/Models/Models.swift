@@ -14,12 +14,63 @@ public struct ServiceModelRow: Identifiable, Codable, Equatable, Sendable {
     public var nickname: String
     public var modelID: String
     public var overrides: ModelConfigurationOverrides?
+    public var metadataDefaults: ModelConfigurationOverrides?
 
-    public init(id: String = UUID().uuidString, nickname: String = "", modelID: String, overrides: ModelConfigurationOverrides? = nil) {
+    public init(
+        id: String = UUID().uuidString,
+        nickname: String = "",
+        modelID: String,
+        overrides: ModelConfigurationOverrides? = nil,
+        metadataDefaults: ModelConfigurationOverrides? = nil
+    ) {
         self.id = id
         self.nickname = nickname
         self.modelID = modelID
         self.overrides = overrides
+        self.metadataDefaults = metadataDefaults
+    }
+}
+
+extension ServiceModelRow {
+    static func withMetadataDefaults(
+        modelID: String,
+        serviceType: String,
+        providerContextTokens: Int? = nil
+    ) -> ServiceModelRow {
+        ServiceModelRow(
+            nickname: "",
+            modelID: modelID,
+            metadataDefaults: resolvedMetadataDefaults(
+                modelID: modelID,
+                serviceType: serviceType,
+                providerContextTokens: providerContextTokens
+            )
+        )
+    }
+
+    static func resolvedMetadataDefaults(
+        modelID: String,
+        serviceType: String,
+        providerContextTokens: Int? = nil
+    ) -> ModelConfigurationOverrides? {
+        let metadata = ModelMetadataCatalog.shared
+            .metadata(modelID: modelID, serviceType: serviceType)?.metadata
+        let audioSupported = metadata?.supportsAudio
+            ?? AudioInputCapability.supportsAudio(serviceType: serviceType, modelID: modelID)
+        let values = ModelConfigurationOverrides(
+            contextWindowTokens: providerContextTokens ?? metadata?.limit.context,
+            visionSupported: metadata?.supportsVision,
+            filesSupported: metadata?.supportsFiles,
+            audioSupported: audioSupported,
+            thinkingSupported: metadata?.reasoning
+        )
+        guard values.contextWindowTokens != nil
+            || values.visionSupported != nil
+            || values.filesSupported != nil
+            || values.audioSupported != nil
+            || values.thinkingSupported != nil
+        else { return nil }
+        return values
     }
 }
 
@@ -43,27 +94,60 @@ enum ModelConfigurationStore {
     static let didChangeNotification = Notification.Name("ModelConfigurationStore.didChange")
 
     static func overrides(serviceID: UUID?, modelID: String) -> ModelConfigurationOverrides {
+        row(serviceID: serviceID, modelID: modelID)?.overrides ?? ModelConfigurationOverrides()
+    }
+
+    static func metadataDefaults(serviceID: UUID?, modelID: String) -> ModelConfigurationOverrides {
+        row(serviceID: serviceID, modelID: modelID)?.metadataDefaults ?? ModelConfigurationOverrides()
+    }
+
+    private static func row(serviceID: UUID?, modelID: String) -> ServiceModelRow? {
         guard let serviceID,
             let json = UserDefaults.standard.string(forKey: "service_models_\(serviceID.uuidString)"),
             let rows = try? JSONDecoder().decode([ServiceModelRow].self, from: Data(json.utf8))
-        else { return ModelConfigurationOverrides() }
-        return rows.first { $0.modelID == modelID }?.overrides ?? ModelConfigurationOverrides()
+        else { return nil }
+        return rows.first { $0.modelID == modelID }
     }
 }
 enum ModelAttachmentCapabilities {
     static func vision(service: APIServiceEntity?, modelID: String) -> Bool {
         guard let service else { return false }
-        if let manual = ModelConfigurationStore.overrides(serviceID: service.id, modelID: modelID).visionSupported { return manual }
-        let tested = service.id.flatMap { ModelCapabilityTestStore.results(for: $0)[modelID]?.visionSupported }
-        if tested == false { return false }
-        return service.imageUploadsAllowed || (service.type?.lowercased() == "deepseek" && tested == true)
+        let overrides = ModelConfigurationStore.overrides(serviceID: service.id, modelID: modelID)
+        if let manual = overrides.visionSupported { return manual }
+        if let tested = service.id.flatMap({ ModelCapabilityTestStore.results(for: $0)[modelID]?.visionSupported }) {
+            return tested
+        }
+        let defaults = ModelConfigurationStore.metadataDefaults(serviceID: service.id, modelID: modelID)
+        if let value = defaults.visionSupported { return value }
+        if let metadata = ModelMetadataCatalog.shared.metadata(modelID: modelID, serviceType: service.type ?? "") {
+            return metadata.metadata.supportsVision
+        }
+        return service.imageUploadsAllowed
     }
+
     static func files(service: APIServiceEntity?, modelID: String) -> Bool {
-        ModelConfigurationStore.overrides(serviceID: service?.id, modelID: modelID).filesSupported ?? service?.pdfUploadsAllowed ?? false
+        let overrides = ModelConfigurationStore.overrides(serviceID: service?.id, modelID: modelID)
+        if let manual = overrides.filesSupported { return manual }
+        let defaults = ModelConfigurationStore.metadataDefaults(serviceID: service?.id, modelID: modelID)
+        if let value = defaults.filesSupported { return value }
+        if let metadata = ModelMetadataCatalog.shared.metadata(modelID: modelID, serviceType: service?.type ?? "") {
+            return metadata.metadata.supportsFiles
+        }
+        return service?.pdfUploadsAllowed ?? false
     }
+
     static func audio(service: APIServiceEntity?, modelID: String) -> Bool {
-        ModelConfigurationStore.overrides(serviceID: service?.id, modelID: modelID).audioSupported
-            ?? AudioInputCapability.supportsAudio(serviceType: service?.type, modelID: modelID)
+        let overrides = ModelConfigurationStore.overrides(serviceID: service?.id, modelID: modelID)
+        if let manual = overrides.audioSupported { return manual }
+        if let tested = service?.id.flatMap({ ModelCapabilityTestStore.results(for: $0)[modelID]?.audioSupported }) {
+            return tested
+        }
+        let defaults = ModelConfigurationStore.metadataDefaults(serviceID: service?.id, modelID: modelID)
+        if let value = defaults.audioSupported { return value }
+        if let metadata = ModelMetadataCatalog.shared.metadata(modelID: modelID, serviceType: service?.type ?? "") {
+            return metadata.metadata.supportsAudio
+        }
+        return AudioInputCapability.supportsAudio(serviceType: service?.type, modelID: modelID)
     }
 }
 
@@ -397,7 +481,6 @@ extension APIServiceEntity: NSCopying {
         copy.url = self.url
         copy.model = self.model
         copy.contextSize = self.contextSize
-        copy.contextWindowOverrideTokens = self.contextWindowOverrideTokens
         copy.useStreamResponse = self.useStreamResponse
         copy.generateChatNames = self.generateChatNames
         copy.imageUploadsAllowed = self.imageUploadsAllowed

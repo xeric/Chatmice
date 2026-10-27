@@ -143,6 +143,9 @@ struct ChatView: View {
             guard notification.object as? UUID == chat.apiService?.id else { return }
             modelCapabilityRevision += 1
         }
+        .onReceive(NotificationCenter.default.publisher(for: ModelMetadataCatalog.didChangeNotification)) { _ in
+            modelCapabilityRevision += 1
+        }
         .onChange(of: chat.objectID) { oldChatID, newChatID in
             DispatchQueue.main.async {
                 guard chat.objectID == newChatID else { return }

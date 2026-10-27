@@ -335,23 +335,38 @@ struct ModelConfigurationEditor: View {
     let automaticContextTokens: Int?
     let automaticVision: Bool
     let automaticFiles: Bool
+    let automaticAudio: Bool
+    let metadataRevision: Int
     let onSave: (ModelConfigurationOverrides) -> Void
     @State private var overrides: ModelConfigurationOverrides
     @State private var customContext: Bool
     @State private var contextText: String
 
-    init(model: ServiceModelRow, serviceType: String, tested: ModelCapabilityTestResult?, automaticContextTokens: Int?, automaticVision: Bool = false, automaticFiles: Bool = false, onSave: @escaping (ModelConfigurationOverrides) -> Void) {
+    init(
+        model: ServiceModelRow,
+        serviceType: String,
+        tested: ModelCapabilityTestResult?,
+        automaticContextTokens: Int?,
+        automaticVision: Bool = false,
+        automaticFiles: Bool = false,
+        automaticAudio: Bool = false,
+        metadataRevision: Int,
+        onSave: @escaping (ModelConfigurationOverrides) -> Void
+    ) {
         self.model = model
         self.serviceType = serviceType
         self.tested = tested
         self.automaticContextTokens = automaticContextTokens
         self.automaticVision = automaticVision
         self.automaticFiles = automaticFiles
+        self.automaticAudio = automaticAudio
+        self.metadataRevision = metadataRevision
         self.onSave = onSave
         let value = model.overrides ?? ModelConfigurationOverrides()
         _overrides = State(initialValue: value)
         _customContext = State(initialValue: value.contextWindowTokens != nil)
-        _contextText = State(initialValue: String(value.contextWindowTokens ?? automaticContextTokens ?? 128_000))
+        let initialContextTokens = value.contextWindowTokens ?? automaticContextTokens
+        _contextText = State(initialValue: initialContextTokens.map(String.init) ?? "")
     }
 
     private var validContext: Bool {
@@ -387,7 +402,7 @@ struct ModelConfigurationEditor: View {
                         VStack(alignment: .leading, spacing: 12) {
                             capability("Vision / Images", value: $overrides.visionSupported, detected: automaticVision)
                             capability("Files / PDF", value: $overrides.filesSupported, detected: automaticFiles)
-                            capability("Audio Input", value: $overrides.audioSupported, detected: AudioInputCapability.supportsAudio(serviceType: serviceType, modelID: model.modelID))
+                            capability("Audio Input", value: $overrides.audioSupported, detected: automaticAudio)
                             capability("Thinking", value: $overrides.thinkingSupported, detected: tested?.reasoningSupported ?? ModelReasoningRegistry.resolve(modelID: model.modelID, serviceType: serviceType).supportsReasoning)
                         }.padding(8)
                     }
@@ -415,6 +430,11 @@ struct ModelConfigurationEditor: View {
         .padding(20)
         .foregroundStyle(Color.primary)
         .frame(width: 460, height: 540)
+        .onChange(of: metadataRevision) { _, _ in
+            if !customContext {
+                contextText = automaticContextTokens.map(String.init) ?? ""
+            }
+        }
     }
 
     private func capability(_ title: String, value: Binding<Bool?>, detected: Bool?) -> some View {
@@ -452,9 +472,11 @@ struct ProviderEditorSheet: View {
     @State private var apiKeyText = ""
     @State private var headersText = ""
     @State private var headerError: String?
+    @State private var isHeadersExpanded = false
     @State private var modelsList: [ServiceModelRow] = []
     @State private var isShowingAPIKey = false
     @State private var configuringModel: ServiceModelRow?
+    @State private var modelMetadataRevision = 0
 
     // Add custom model alert
     @State private var showingAddModelSheet = false
@@ -493,6 +515,11 @@ struct ProviderEditorSheet: View {
         default:
             return "https://api.openai.com/v1"
         }
+    }
+
+    private var headerSummary: String {
+        let count = (try? ProviderHeaderStore.parse(headersText).count) ?? 0
+        return count == 0 ? "Optional" : "\(count) configured"
     }
 
     var body: some View {
@@ -610,19 +637,37 @@ struct ProviderEditorSheet: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                     }
 
-                    GroupBox("Custom HTTP Headers") {
-                        VStack(alignment: .leading, spacing: 8) {
-                            TextEditor(text: $headersText)
-                                .font(.system(.body, design: .monospaced))
-                                .frame(height: 90)
-                                .onChange(of: headersText) { _, value in
-                                    do { _ = try ProviderHeaderStore.parse(value); headerError = nil }
-                                    catch { headerError = error.localizedDescription }
+                    GroupBox {
+                        DisclosureGroup(isExpanded: $isHeadersExpanded) {
+                            VStack(alignment: .leading, spacing: 8) {
+                                TextEditor(text: $headersText)
+                                    .font(.system(.body, design: .monospaced))
+                                    .frame(height: 90)
+                                    .onChange(of: headersText) { _, value in
+                                        do { _ = try ProviderHeaderStore.parse(value); headerError = nil }
+                                        catch { headerError = error.localizedDescription }
+                                    }
+                                Text("Header-Name: value, one per line. Overrides built-in headers, including Authorization. Values are stored in Keychain.")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                if let headerError {
+                                    Text(headerError)
+                                        .font(.caption)
+                                        .foregroundStyle(.red)
                                 }
-                            Text("Header-Name: value, one per line. Overrides built-in headers, including Authorization. Values are stored in Keychain.")
-                                .font(.caption).foregroundStyle(.secondary)
-                            if let headerError { Text(headerError).font(.caption).foregroundStyle(.red) }
+                            }
+                            .padding(.top, 8)
+                        } label: {
+                            HStack {
+                                Text("Custom HTTP Headers")
+                                Spacer()
+                                Text(headerError == nil ? headerSummary : "Needs attention")
+                                    .font(.caption)
+                                    .foregroundStyle(headerError == nil ? Color.secondary : Color.red)
+                            }
                         }
+                        .accessibilityIdentifier("provider.customHeadersDisclosure")
+                        .accessibilityLabel("Custom HTTP Headers")
                         .padding(8)
                     }
 
@@ -688,46 +733,70 @@ struct ProviderEditorSheet: View {
                             } else {
                                 ScrollView {
                                     LazyVStack(spacing: 2) {
-                                        ForEach(modelsList, id: \.id) { m in
+                                        ForEach(modelsList, id: \.id) { model in
+                                            let capabilities = displayedCapabilities(for: model)
                                             HStack(spacing: 10) {
                                                 Image(systemName: "cpu")
                                                     .font(.system(size: 12))
                                                     .foregroundStyle(Color.secondary)
 
-                                                Text(m.modelID)
+                                                Text(model.modelID)
                                                     .font(.system(size: 12, design: .monospaced))
                                                     .foregroundStyle(Color.primary)
 
                                                 Spacer()
 
-                                                if let result = capabilityResults[m.modelID] {
-                                                    Image(systemName: result.connectionSucceeded ? "checkmark.circle.fill" : "xmark.circle.fill")
-                                                        .foregroundStyle(result.connectionSucceeded ? Color.green : Color.red)
-                                                        .help(result.connectionSucceeded ? "Connection test passed" : (result.errorMessage ?? "Connection test failed"))
-
-                                                    if result.visionSupported == true {
-                                                        Image(systemName: "eye.fill")
-                                                            .foregroundStyle(Color.blue)
-                                                            .help("Vision support verified")
-                                                    }
-
-                                                    if result.reasoningSupported == true {
-                                                        Image(systemName: "brain.head.profile")
-                                                            .foregroundStyle(Color.purple)
-                                                            .help("Thinking support verified")
-                                                    }
+                                                if let result = capabilities.tested {
+                                                    Image(
+                                                        systemName: result.connectionSucceeded
+                                                            ? "checkmark.circle.fill" : "xmark.circle.fill"
+                                                    )
+                                                    .foregroundStyle(result.connectionSucceeded ? Color.green : Color.red)
+                                                    .help(
+                                                        result.connectionSucceeded
+                                                            ? "Connection test passed"
+                                                            : (result.errorMessage ?? "Connection test failed")
+                                                    )
+                                                }
+                                                if capabilities.vision {
+                                                    capabilityBadge(
+                                                        "eye.fill",
+                                                        color: .blue,
+                                                        help: "Vision / image input enabled"
+                                                    )
+                                                }
+                                                if capabilities.files {
+                                                    capabilityBadge(
+                                                        "doc.fill",
+                                                        color: .teal,
+                                                        help: "File / PDF input enabled"
+                                                    )
+                                                }
+                                                if capabilities.audio {
+                                                    capabilityBadge(
+                                                        "waveform",
+                                                        color: .orange,
+                                                        help: "Audio input enabled"
+                                                    )
+                                                }
+                                                if capabilities.reasoning {
+                                                    capabilityBadge(
+                                                        "brain.head.profile",
+                                                        color: .purple,
+                                                        help: "Thinking enabled"
+                                                    )
                                                 }
 
                                                 Button {
-                                                    configuringModel = m
+                                                    configuringModel = model
                                                 } label: {
                                                     Image(systemName: "slider.horizontal.3")
                                                 }
                                                 .buttonStyle(.borderless)
-                                                .help("Configure \(m.modelID)")
-                                                .accessibilityIdentifier("model.configure.\(m.modelID)")
+                                                .help("Configure \(model.modelID)")
+                                                .accessibilityIdentifier("model.configure.\(model.modelID)")
                                                 ModelTrashButton(action: {
-                                                    deleteModel(m.id)
+                                                    deleteModel(model.id)
                                                 })
                                             }
                                             .padding(.horizontal, 10)
@@ -783,7 +852,7 @@ struct ProviderEditorSheet: View {
                                         ForEach(presets, id: \.self) { preset in
                                             Button(action: {
                                                 if !modelsList.contains(where: { $0.modelID == preset }) {
-                                                    modelsList.append(ServiceModelRow(nickname: "", modelID: preset))
+                                                    modelsList.append(makeModelRow(modelID: preset))
                                                 }
                                             }) {
                                                 Text("+ \(preset)")
@@ -832,17 +901,44 @@ struct ProviderEditorSheet: View {
         .onAppear {
             loadInitialData()
         }
+        .onReceive(NotificationCenter.default.publisher(for: ModelMetadataCatalog.didChangeNotification)) { _ in
+            modelMetadataRevision += 1
+            refreshMetadataDefaults()
+        }
         .sheet(item: $configuringModel) { model in
+            let metadata = ModelMetadataCatalog.shared
+                .metadata(modelID: model.modelID, serviceType: typeText)?.metadata
+            let defaults = model.metadataDefaults ?? ModelConfigurationOverrides()
+            let endpointVision = service?.imageUploadsAllowed
+                ?? AppConstants.defaultApiConfigurations[typeText]?.imageUploadsSupported ?? false
+            let endpointFiles = service?.pdfUploadsAllowed
+                ?? AppConstants.defaultApiConfigurations[typeText]?.pdfUploadsSupported ?? false
+            let endpointAudio = AudioInputCapability.supportsAudio(
+                serviceType: typeText,
+                modelID: model.modelID
+            )
             ModelConfigurationEditor(
                 model: model,
                 serviceType: typeText,
                 tested: capabilityResults[model.modelID],
-                automaticContextTokens: ModelContextMetadataStore.tokens(serviceType: typeText, modelID: model.modelID)
+                automaticContextTokens: ModelContextMetadataStore.tokens(
+                    serviceType: typeText,
+                    modelID: model.modelID
+                ) ?? defaults.contextWindowTokens
+                    ?? metadata?.limit.context
                     ?? ModelContextRegistry.builtInTokens(modelID: model.modelID, serviceType: typeText),
                 automaticVision: capabilityResults[model.modelID]?.visionSupported
-                    ?? service?.imageUploadsAllowed
-                    ?? AppConstants.defaultApiConfigurations[typeText]?.imageUploadsSupported ?? false,
-                automaticFiles: service?.pdfUploadsAllowed ?? AppConstants.defaultApiConfigurations[typeText]?.pdfUploadsSupported ?? false,
+                    ?? defaults.visionSupported
+                    ?? metadata?.supportsVision
+                    ?? endpointVision,
+                automaticFiles: defaults.filesSupported
+                    ?? metadata?.supportsFiles
+                    ?? endpointFiles,
+                automaticAudio: capabilityResults[model.modelID]?.audioSupported
+                    ?? defaults.audioSupported
+                    ?? metadata?.supportsAudio
+                    ?? endpointAudio,
+                metadataRevision: modelMetadataRevision,
                 onSave: { overrides in
                     if let index = modelsList.firstIndex(where: { $0.id == model.id }) {
                         modelsList[index].overrides = overrides
@@ -883,7 +979,7 @@ struct ProviderEditorSheet: View {
                 Button("Add") {
                     let trimmed = newModelInput.trimmingCharacters(in: .whitespacesAndNewlines)
                     if !trimmed.isEmpty && !modelsList.contains(where: { $0.modelID == trimmed }) {
-                        modelsList.append(ServiceModelRow(nickname: "", modelID: trimmed))
+                        modelsList.append(makeModelRow(modelID: trimmed))
                     }
                     newModelInput = ""
                     showingAddModelSheet = false
@@ -902,7 +998,10 @@ struct ProviderEditorSheet: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text("Test Models")
                     .font(.headline)
-                Text("Each selected model receives a connection request, a 64×64 color image, and a thinking request.")
+                Text(
+                    "Each selected model receives connection, audio-input, image-input, and thinking probes. "
+                        + "Tested results override model metadata defaults."
+                )
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -1006,9 +1105,12 @@ struct ProviderEditorSheet: View {
                 Image(systemName: "checkmark.circle.fill")
                     .foregroundStyle(Color.green)
                     .help("Connection successful")
-                Image(systemName: result.visionSupported == true ? "eye.fill" : "questionmark.circle")
-                    .foregroundStyle(result.visionSupported == true ? Color.blue : Color.secondary)
-                    .help(result.visionSupported == true ? "Vision verified" : "Vision not verified; a failed probe does not prove lack of support")
+                Image(systemName: result.audioSupported == true ? "waveform" : "waveform.slash")
+                    .foregroundStyle(result.audioSupported == true ? Color.orange : Color.secondary.opacity(0.35))
+                    .help(result.audioSupported == true ? "Audio input verified" : "Audio input not supported by this endpoint")
+                Image(systemName: result.visionSupported == true ? "eye.fill" : "eye.slash")
+                    .foregroundStyle(result.visionSupported == true ? Color.blue : Color.secondary.opacity(0.35))
+                    .help(result.visionSupported == true ? "Vision verified" : "Vision not supported by this endpoint")
                 Image(systemName: "brain.head.profile")
                     .foregroundStyle(result.reasoningSupported == true ? Color.purple : Color.secondary.opacity(0.35))
                     .help(result.reasoningSupported == true ? "Thinking supported" : "Thinking not supported")
@@ -1088,8 +1190,15 @@ struct ProviderEditorSheet: View {
                 if let data = UserDefaults.standard.string(forKey: key)?.data(using: .utf8),
                    let list = try? JSONDecoder().decode([ServiceModelRow].self, from: data) {
                     modelsList = list.map {
-                        ServiceModelRow(id: $0.id, nickname: $0.nickname == "optional" ? "" : $0.nickname, modelID: $0.modelID, overrides: $0.overrides)
+                        ServiceModelRow(
+                            id: $0.id,
+                            nickname: $0.nickname == "optional" ? "" : $0.nickname,
+                            modelID: $0.modelID,
+                            overrides: $0.overrides,
+                            metadataDefaults: $0.metadataDefaults
+                        )
                     }
+                    refreshMetadataDefaults()
                 }
             }
             return
@@ -1101,7 +1210,7 @@ struct ProviderEditorSheet: View {
         urlText = initialPreset?.defaultURL ?? defaultConfiguration?.url ?? ""
         typeText = defaultType
         let defaultModel = initialPreset?.defaultModel ?? defaultConfiguration?.defaultModel ?? ""
-        modelsList = defaultModel.isEmpty ? [] : [ServiceModelRow(nickname: "", modelID: defaultModel)]
+        modelsList = defaultModel.isEmpty ? [] : [makeModelRow(modelID: defaultModel)]
         apiKeyText = ProcessInfo.processInfo.environment["LOCAL_SAP_AI_CORE_PROXY_KEY"] ?? ""
     }
 
@@ -1151,6 +1260,52 @@ struct ProviderEditorSheet: View {
 
         onSave()
         return true
+    }
+
+    private struct DisplayedCapabilities {
+        let vision: Bool
+        let files: Bool
+        let audio: Bool
+        let reasoning: Bool
+        let tested: ModelCapabilityTestResult?
+    }
+
+    private func displayedCapabilities(for model: ServiceModelRow) -> DisplayedCapabilities {
+        let tested = capabilityResults[model.modelID]
+        let metadata = ModelMetadataCatalog.shared
+            .metadata(modelID: model.modelID, serviceType: typeText)?.metadata
+        let defaults = model.metadataDefaults ?? ServiceModelRow.resolvedMetadataDefaults(
+            modelID: model.modelID,
+            serviceType: typeText
+        )
+        return DisplayedCapabilities(
+            vision: model.overrides?.visionSupported
+                ?? tested?.visionSupported
+                ?? defaults?.visionSupported
+                ?? metadata?.supportsVision
+                ?? false,
+            files: model.overrides?.filesSupported
+                ?? defaults?.filesSupported
+                ?? metadata?.supportsFiles
+                ?? false,
+            audio: model.overrides?.audioSupported
+                ?? tested?.audioSupported
+                ?? defaults?.audioSupported
+                ?? metadata?.supportsAudio
+                ?? false,
+            reasoning: model.overrides?.thinkingSupported
+                ?? tested?.reasoningSupported
+                ?? defaults?.thinkingSupported
+                ?? metadata?.reasoning
+                ?? false,
+            tested: tested
+        )
+    }
+
+    private func capabilityBadge(_ systemName: String, color: Color, help: String) -> some View {
+        Image(systemName: systemName)
+            .foregroundStyle(color)
+            .help(help)
     }
 
     private func deleteModel(_ id: String) {
@@ -1352,9 +1507,32 @@ struct ProviderEditorSheet: View {
         }.map(\.id))
         let idsToImport = selectedModelIDsForImport.intersection(filteredIDs)
 
-        for mid in idsToImport {
-            if !modelsList.contains(where: { $0.modelID == mid }) {
-                modelsList.append(ServiceModelRow(nickname: "", modelID: mid))
+        for modelID in idsToImport {
+            if !modelsList.contains(where: { $0.modelID == modelID }) {
+                let providerModel = fetchedCandidateModels.first { $0.id == modelID }
+                modelsList.append(makeModelRow(modelID: modelID, providerModel: providerModel))
+            }
+        }
+    }
+
+    private func makeModelRow(modelID: String, providerModel: AIModel? = nil) -> ServiceModelRow {
+        ServiceModelRow.withMetadataDefaults(
+            modelID: modelID,
+            serviceType: typeText,
+            providerContextTokens: providerModel?.contextWindowTokens
+        )
+    }
+
+    private func refreshMetadataDefaults() {
+        for index in modelsList.indices {
+            let modelID = modelsList[index].modelID
+            let providerModel = fetchedCandidateModels.first { $0.id == modelID }
+            if let values = ServiceModelRow.resolvedMetadataDefaults(
+                modelID: modelID,
+                serviceType: typeText,
+                providerContextTokens: providerModel?.contextWindowTokens
+            ) {
+                modelsList[index].metadataDefaults = values
             }
         }
     }

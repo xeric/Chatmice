@@ -197,65 +197,78 @@ struct ChatBubbleView: View, Equatable {
     }
 
     private var contextCheckpointCard: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: 10) {
             Button {
                 withAnimation(.easeInOut(duration: 0.16)) {
                     isCheckpointExpanded.toggle()
                 }
             } label: {
-                HStack(spacing: 10) {
-                    Image(systemName: "doc.text.fill")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(Color.accentColor)
-                        .frame(width: 18)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Context checkpoint")
-                            .font(.callout.weight(.semibold))
-                            .foregroundStyle(.primary)
+                HStack(spacing: 12) {
+                    checkpointRule
+
+                    HStack(spacing: 7) {
+                        Text("Context compacted")
+                        Text("·")
+                            .foregroundStyle(.tertiary)
                         if let message {
                             Text(
-                                "Earlier conversation compacted · \(compactTokenCount(Int(message.checkpointOriginalTokens))) → \(compactTokenCount(Int(message.checkpointCompactedTokens))) tokens"
+                                "\(compactTokenCount(Int(message.checkpointOriginalTokens))) → \(compactTokenCount(Int(message.checkpointCompactedTokens))) tokens"
                             )
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                            .monospacedDigit()
                         }
                     }
-                    Spacer(minLength: 12)
+                    .font(.callout.weight(.medium))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 6)
+                    .background(Color.primary.opacity(0.055), in: Capsule())
+                    .overlay {
+                        Capsule()
+                            .stroke(Color.primary.opacity(0.12), lineWidth: 1)
+                    }
+
                     Image(systemName: "chevron.right")
                         .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.tertiary)
                         .rotationEffect(.degrees(isCheckpointExpanded ? 90 : 0))
+
+                    checkpointRule
                 }
-                .padding(12)
-                .frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .accessibilityIdentifier("context-checkpoint-disclosure")
-            .accessibilityLabel("Context checkpoint")
+            .accessibilityLabel("Context compacted")
             .accessibilityValue(isCheckpointExpanded ? "Expanded" : "Collapsed")
             .accessibilityHint(isCheckpointExpanded ? "Collapse checkpoint" : "Expand checkpoint")
 
             if isCheckpointExpanded {
-                VStack(alignment: .leading, spacing: 0) {
-                    Divider().padding(.horizontal, 12)
-                    Text(message?.body ?? "")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                        .textSelection(.enabled)
-                        .padding(12)
-                }
-                .transition(.identity)
+                Text(message?.body ?? "")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(14)
+                    .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 10))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 10)
+                            .stroke(Color.primary.opacity(0.1), lineWidth: 1)
+                    }
+                    .transition(.identity)
             }
         }
-        .background(Color.accentColor.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
-        .clipShape(RoundedRectangle(cornerRadius: 12))
-        .overlay {
-            RoundedRectangle(cornerRadius: 12)
-                .stroke(Color.accentColor.opacity(0.24), lineWidth: 1)
-        }
+        .clipped()
         .padding(.horizontal, 12)
         .padding(.vertical, ChatTypography.messageVerticalPadding)
+    }
+
+    private var checkpointRule: some View {
+        Rectangle()
+            .fill(Color.secondary.opacity(0.2))
+            .frame(maxWidth: .infinity)
+            .frame(height: 1)
     }
 
     private func compactTokenCount(_ value: Int) -> String {
