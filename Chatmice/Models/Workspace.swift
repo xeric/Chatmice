@@ -13,6 +13,19 @@ public final class WorkspaceEntity: NSManagedObject, Identifiable {
     public var rootURL: URL {
         URL(fileURLWithPath: path, isDirectory: true).standardizedFileURL.resolvingSymlinksInPath()
     }
+
+    func systemPrompt(appendingTo personaPrompt: String) throws -> String {
+        guard !isTemporary else { return personaPrompt }
+        let file = try WorkspacePathPolicy.containedURL(for: "AGENTS.md", root: rootURL)
+        let instructions: String
+        do {
+            instructions = try String(contentsOf: file, encoding: .utf8)
+        } catch CocoaError.fileReadNoSuchFile {
+            return personaPrompt
+        }
+        guard !instructions.allSatisfy(\.isWhitespace) else { return personaPrompt }
+        return personaPrompt + "\n\nWorkspace instructions (AGENTS.md):\n\n" + instructions
+    }
 }
 
 enum WorkspacePathPolicy {

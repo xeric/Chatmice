@@ -48,6 +48,7 @@ Chatmice is derived from [macai](https://github.com/Renset/macai), created by Re
 - **macOS-native and lightweight**
 - **User-friendly**: simple setup, minimalist light/dark UI
 - **Feature-rich**: vision, image generation, search, reasoning, import/export and more
+  User-uploaded images remain native image inputs when tools or search use the agent request path, including image-only messages, subsequent tool rounds, and Responses endpoint fallbacks. Chat Completions, Responses, Claude, Gemini, and Ollama receive their protocol-specific image fields with the stored image bytes and format rather than UUID placeholder text. Missing image attachments stop the request with an error instead of silently sending text only; the selected model must still support vision.
 - **Configurable web search**: connect a search provider, choose Web Search or model-native search per conversation, and optionally enable search by default for every new chat. New chats prefer Web Search when the configured provider is enabled and otherwise use Native Search.
 - **iCloud Sync**: keep chats, messages, and settings in sync across devices
 - **Workspace-aware**: group chats by project, keep local tools inside a selected folder, and reference files with `@`
@@ -88,6 +89,8 @@ Type `@` in the message box to search for and insert a relative file or director
 Drag a file or directory from the workspace file tree onto the message input, or choose **Reference in Message** from its context menu, to insert the same atomic `@` reference. The whole input rectangle, including its toolbar and padding, accepts reference drops and highlights its rounded border in the accent color while targeted. Directory references end in `/`; references are restricted to the current workspace and inserted only into the originating window. Existing file attachment drops remain separate.
 
 Temporary Chats does not display its internal folder path and disables the workspace file-browser button. Switching to a regular workspace makes the file browser available again.
+
+Place a UTF-8 **`AGENTS.md`** file in a workspace's root folder to provide default project instructions for every chat in that workspace. Its contents are appended to the current Persona/system prompt without changing the saved Persona. Chatmice rereads the file on each normal or streaming send and retry, so edits and removal take effect on the next request. Missing or whitespace-only files leave the Persona prompt unchanged. Temporary Chats does not load this file. Only the root file is loaded (no parent-directory or nested-file discovery); symlinks outside the workspace are rejected, and unreadable or invalid UTF-8 files fail the request rather than silently omitting instructions. The file's contents are sent to the selected model provider as part of the prompt.
 
 The conversation header uses one continuous material layer above the message content and below the header controls. Its opacity fades down through the header into the content; the message background cannot cover the fading portion, and controls remain crisp and interactive.
 

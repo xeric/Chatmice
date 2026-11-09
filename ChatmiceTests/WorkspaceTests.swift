@@ -4,6 +4,48 @@ import XCTest
 
 final class WorkspaceTests: XCTestCase {
     @MainActor
+    func testWorkspaceInstructionsReloadWithoutChangingPersona() throws {
+        let context = try makeContext()
+        let root = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let workspace = try WorkspaceManager.create(name: "Instructions", directory: root, in: context)
+        let file = root.appendingPathComponent("AGENTS.md")
+        XCTAssertEqual(try workspace.systemPrompt(appendingTo: "Persona"), "Persona")
+        try "Use Swift.".write(to: file, atomically: true, encoding: .utf8)
+        XCTAssertEqual(try workspace.systemPrompt(appendingTo: "Persona"),
+                       "Persona\n\nWorkspace instructions (AGENTS.md):\n\nUse Swift.")
+        try "Use Rust.".write(to: file, atomically: true, encoding: .utf8)
+        XCTAssertTrue(try workspace.systemPrompt(appendingTo: "Persona").hasSuffix("Use Rust."))
+        workspace.isTemporary = true
+        XCTAssertEqual(try workspace.systemPrompt(appendingTo: "Persona"), "Persona")
+        workspace.isTemporary = false
+        try FileManager.default.removeItem(at: file)
+        XCTAssertEqual(try workspace.systemPrompt(appendingTo: "Persona"), "Persona")
+    }
+
+    @MainActor
+    func testWorkspaceInstructionsRejectEscapingSymlinksAndInvalidText() throws {
+        let context = try makeContext()
+        let root = try makeDirectory()
+        let outside = try makeDirectory()
+        defer {
+            try? FileManager.default.removeItem(at: root)
+            try? FileManager.default.removeItem(at: outside)
+        }
+        let workspace = try WorkspaceManager.create(name: "Boundary", directory: root, in: context)
+        let file = root.appendingPathComponent("AGENTS.md")
+        let external = outside.appendingPathComponent("instructions.txt")
+        try "External instructions".write(to: external, atomically: true, encoding: .utf8)
+        try FileManager.default.createSymbolicLink(at: file, withDestinationURL: external)
+        XCTAssertThrowsError(try workspace.systemPrompt(appendingTo: "Persona"))
+        try FileManager.default.removeItem(at: file)
+        try Data([0xff, 0xfe, 0xff]).write(to: file)
+        XCTAssertThrowsError(try workspace.systemPrompt(appendingTo: "Persona"))
+        try " \n\t".write(to: file, atomically: true, encoding: .utf8)
+        XCTAssertEqual(try workspace.systemPrompt(appendingTo: "Persona"), "Persona")
+    }
+
+    @MainActor
     func testPreparingTemporaryWorkspacePreservesAssignedChats() throws {
         let context = try makeContext()
         let root = try makeDirectory()

@@ -75,7 +75,7 @@ class MessageManager: ObservableObject {
                     chat: chat,
                     recentMessageLimit: contextSize
                 )
-                let requestMessages = self.prepareRequestMessages(
+                let requestMessages = try self.prepareRequestMessages(
                     userMessage: message,
                     chat: chat,
                     contextSize: contextSize,
@@ -196,7 +196,7 @@ class MessageManager: ObservableObject {
                     chat: chat,
                     recentMessageLimit: contextSize
                 )
-                requestMessages = prepareRequestMessages(
+                requestMessages = try prepareRequestMessages(
                     userMessage: message,
                     chat: chat,
                     contextSize: contextSize,
@@ -442,8 +442,8 @@ class MessageManager: ObservableObject {
         chat: ChatEntity,
         contextSize: Int,
         excluding responseToReplace: MessageEntity? = nil
-    ) -> [[String: String]] {
-        var messages = constructRequestMessages(
+    ) throws -> [[String: String]] {
+        var messages = try constructRequestMessages(
             chat: chat,
             forUserMessage: userMessage,
             contextSize: contextSize,
@@ -545,19 +545,20 @@ class MessageManager: ObservableObject {
         forUserMessage userMessage: String?,
         contextSize _: Int,
         excluding responseToReplace: MessageEntity? = nil
-    ) -> [[String: String]] {
+    ) throws -> [[String: String]] {
+        let systemPrompt = try chat.workspace?.systemPrompt(appendingTo: chat.systemMessage) ?? chat.systemMessage
         var messages: [[String: String]] = []
 
         if !AppConstants.openAiReasoningModels.contains(chat.gptModel) {
             messages.append([
                 "role": "system",
-                "content": chat.systemMessage,
+                "content": systemPrompt,
             ])
         }
         else {
             messages.append([
                 "role": "user",
-                "content": "Take this message as the system message: \(chat.systemMessage)",
+                "content": "Take this message as the system message: \(systemPrompt)",
             ])
         }
 

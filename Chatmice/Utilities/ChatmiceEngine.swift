@@ -7,7 +7,9 @@
 //
 
 import AppKit
+import CoreData
 import Foundation
+import UniformTypeIdentifiers
 
 private actor BashApprovalSession {
     static let shared = BashApprovalSession()
@@ -46,6 +48,7 @@ class ChatmiceEngine: APIService, AgentActivityReporting {
     private let chatID: UUID?
     private let workspaceURL: URL
     private let session: URLSession
+    private let attachmentContext: NSManagedObjectContext?
     private var activeTask: Task<Void, Never>?
     private let activityHandlerLock = NSLock()
     private var activityHandler: (@Sendable (AgentActivitySignal) -> Void)?
@@ -64,7 +67,8 @@ class ChatmiceEngine: APIService, AgentActivityReporting {
         config: APIServiceConfiguration,
         chatID: UUID? = nil,
         workspaceURL: URL? = nil,
-        session: URLSession = .shared
+        session: URLSession = .shared,
+        attachmentContext: NSManagedObjectContext? = nil
     ) {
         self.baseService = baseService
         self.config = config
@@ -73,6 +77,7 @@ class ChatmiceEngine: APIService, AgentActivityReporting {
             .standardizedFileURL
             .resolvingSymlinksInPath()
         self.session = session
+        self.attachmentContext = attachmentContext
         self.name = config.name
         self.baseURL = config.apiUrl
     }
@@ -369,9 +374,7 @@ class ChatmiceEngine: APIService, AgentActivityReporting {
             )
         }
 
-        var conversationHistory = requestMessages.map {
-            AgentMessage.text(role: $0["role"] ?? "user", content: $0["content"] ?? "")
-        }
+        var conversationHistory = try await makeConversationHistory(from: requestMessages)
 
         var agentInstructions = [
             "When using tools, briefly tell the user what you are about to verify before each tool-call round. "
@@ -566,6 +569,7 @@ class ChatmiceEngine: APIService, AgentActivityReporting {
 
     private enum AgentMessage {
         case text(role: String, content: String)
+        case userImages(text: String, images: [ToolImagePayload])
         case assistant(text: String, toolCalls: [ToolCall])
         case toolResults([ToolExecutionResult])
 
@@ -573,6 +577,8 @@ class ChatmiceEngine: APIService, AgentActivityReporting {
             switch self {
             case .text(_, let content):
                 return ContextManagement.estimatedTokens(in: content)
+            case .userImages(let text, _):
+                return ContextManagement.estimatedTokens(in: text)
             case .assistant(let text, let calls):
                 return ContextManagement.estimatedTokens(in: text) + calls.reduce(0) {
                     $0 + ContextManagement.estimatedTokens(in: $1.name)
@@ -599,6 +605,60 @@ class ChatmiceEngine: APIService, AgentActivityReporting {
             guard case .text(let role, let content) = self else { return }
             self = .text(role: role, content: content + suffix)
         }
+    }
+
+    private func makeConversationHistory(from requestMessages: [[String: String]]) async throws -> [AgentMessage] {
+        var imageCache: [UUID: ToolImagePayload] = [:]
+        var history: [AgentMessage] = []
+        history.reserveCapacity(requestMessages.count)
+
+        for message in requestMessages {
+            let role = message["role"] ?? "user"
+            let content = message["content"] ?? ""
+            let imageIDs = role == "user" ? AttachmentParser.extractImageUUIDs(from: content) : []
+            guard !imageIDs.isEmpty else {
+                history.append(.text(role: role, content: content))
+                continue
+            }
+
+            var images: [ToolImagePayload] = []
+            images.reserveCapacity(imageIDs.count)
+            for id in imageIDs {
+                if let cached = imageCache[id] {
+                    images.append(cached)
+                }
+                else {
+                    let image = try await loadUserImage(uuid: id)
+                    imageCache[id] = image
+                    images.append(image)
+                }
+            }
+
+            // Only consume image markers; leave other attachment markers and text untouched.
+            let text = content.replacingOccurrences(
+                of: AttachmentParser.imagePattern, with: "", options: .regularExpression
+            ).trimmingCharacters(in: .whitespacesAndNewlines)
+            history.append(.userImages(text: text, images: images))
+        }
+        return history
+    }
+
+    private func loadUserImage(uuid: UUID) async throws -> ToolImagePayload {
+        let context = attachmentContext ?? PersistenceController.shared.container.viewContext
+        let payload: (data: Data, format: String) = try await context.perform {
+            let request: NSFetchRequest<ImageEntity> = ImageEntity.fetchRequest()
+            request.predicate = NSPredicate(format: "id == %@", uuid as CVarArg)
+            request.fetchLimit = 1
+            guard let entity = try context.fetch(request).first,
+                let data = entity.image, !data.isEmpty
+            else {
+                throw APIError.attachmentNotReady("Image attachment \(uuid.uuidString) is unavailable or not ready.")
+            }
+            return (data, entity.imageFormat ?? "jpeg")
+        }
+        let format = payload.format.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let mediaType = UTType(filenameExtension: format)?.preferredMIMEType ?? "image/jpeg"
+        return ToolImagePayload(mediaType: mediaType, data: payload.data.base64EncodedString())
     }
     private func makeWireToolName(_ original: String, used: inout Set<String>) -> String {
         let allowed = CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-")
@@ -769,6 +829,13 @@ class ChatmiceEngine: APIService, AgentActivityReporting {
             switch message {
             case .text(let role, let content):
                 return [["role": role, "content": content]]
+            case .userImages(let text, let images):
+                var parts: [[String: Any]] = []
+                if !text.isEmpty { parts.append(["type": "text", "text": text]) }
+                parts.append(contentsOf: images.map {
+                    ["type": "image_url", "image_url": ["url": "data:\($0.mediaType);base64,\($0.data)"]]
+                })
+                return [["role": "user", "content": parts]]
             case .assistant(let text, let calls):
                 return [
                     [
@@ -1013,6 +1080,13 @@ class ChatmiceEngine: APIService, AgentActivityReporting {
             case .text(let role, let content):
                 let contentType = role == "assistant" ? "output_text" : "input_text"
                 return [["role": role, "content": [["type": contentType, "text": AttachmentParser.stripAttachments(from: content)]]]]
+            case .userImages(let text, let images):
+                var parts: [[String: Any]] = []
+                if !text.isEmpty { parts.append(["type": "input_text", "text": text]) }
+                parts.append(contentsOf: images.map {
+                    ["type": "input_image", "image_url": "data:\($0.mediaType);base64,\($0.data)"]
+                })
+                return [["role": "user", "content": parts]]
             case .assistant(let text, let calls):
                 var items: [[String: Any]] = []
                 if !text.isEmpty {
@@ -1122,6 +1196,8 @@ class ChatmiceEngine: APIService, AgentActivityReporting {
             switch message {
             case .text(let role, let content):
                 return [["role": role, "content": content]]
+            case .userImages(let text, let images):
+                return [["role": "user", "content": text, "images": images.map(\.data)]]
             case .assistant(let text, let calls):
                 var value: [String: Any] = ["role": "assistant", "content": text]
                 if !calls.isEmpty {
@@ -1250,6 +1326,13 @@ class ChatmiceEngine: APIService, AgentActivityReporting {
                     "role": role == "assistant" ? "model" : "user",
                     "parts": [["text": content]],
                 ]
+            case .userImages(let text, let images):
+                var parts: [[String: Any]] = []
+                if !text.isEmpty { parts.append(["text": text]) }
+                parts.append(contentsOf: images.map {
+                    ["inlineData": ["mimeType": $0.mediaType, "data": $0.data]]
+                })
+                return ["role": "user", "parts": parts]
             case .assistant(let text, let calls):
                 var parts: [[String: Any]] = []
                 if !text.isEmpty {
@@ -1416,6 +1499,16 @@ class ChatmiceEngine: APIService, AgentActivityReporting {
                     "role": role == "assistant" ? "assistant" : "user",
                     "content": content,
                 ]
+            case .userImages(let text, let images):
+                var blocks: [[String: Any]] = []
+                if !text.isEmpty { blocks.append(["type": "text", "text": text]) }
+                blocks.append(contentsOf: images.map {
+                    [
+                        "type": "image",
+                        "source": ["type": "base64", "media_type": $0.mediaType, "data": $0.data],
+                    ]
+                })
+                return ["role": "user", "content": blocks]
             case .assistant(let text, let calls):
                 var blocks: [[String: Any]] = []
                 if !text.isEmpty {

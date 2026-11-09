@@ -27,6 +27,7 @@
 		F0A5E0012026102200000001 /* WebSearchSettingsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0A5E0022026102200000002 /* WebSearchSettingsTests.swift */; };
 		0E7C2F2B3A4D4E5F9B8C7D6E /* MessageCellTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0E7C2F2A3A4D4E5F9B8C7D6E /* MessageCellTests.swift */; };
 		C4A700122026102600000012 /* CapabilityDetectionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4A700132026102600000013 /* CapabilityDetectionTests.swift */; };
+		A61A6E012026110800000001 /* AgentImageTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A61A6E022026110800000002 /* AgentImageTests.swift */; };
 		1001F81047D94F5484238553 /* APIServiceTemplateAddView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5774456B942348B88C536014 /* APIServiceTemplateAddView.swift */; };
 		1232C0D881FF38BE2677A446 /* BashExecutor.swift in Sources */ = {isa = PBXBuildFile; fileRef = F53F64CEBB6B8132C4B6225C /* BashExecutor.swift */; };
 		D4F100012F40000100F11E01 /* FileTools.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4F100022F40000100F11E02 /* FileTools.swift */; };
@@ -207,6 +208,7 @@
 		C1A0DE010000000000000002 /* ClaudeRequestCompatibilityTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeRequestCompatibilityTests.swift; sourceTree = "<group>"; };
 		F0A5E0022026102200000002 /* WebSearchSettingsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebSearchSettingsTests.swift; sourceTree = "<group>"; };
 		C4A700132026102600000013 /* CapabilityDetectionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CapabilityDetectionTests.swift; sourceTree = "<group>"; };
+		A61A6E022026110800000002 /* AgentImageTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentImageTests.swift; sourceTree = "<group>"; };
 		25B74289407745C983DD1294 /* APIServiceTemplateAddViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIServiceTemplateAddViewModel.swift; sourceTree = "<group>"; };
 		2C64AA5DC1942A285D46D9A8 /* ComputerUseTool.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComputerUseTool.swift; sourceTree = "<group>"; };
 		D4F100022F40000100F11E02 /* FileTools.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileTools.swift; sourceTree = "<group>"; };
@@ -640,6 +642,7 @@
 				C4A7000B202610120000000B /* ChatLayoutTests.swift */,
 				C4A700152026102700000015 /* MCPOAuthDiscoveryTests.swift */,
 				C4A700132026102600000013 /* CapabilityDetectionTests.swift */,
+				A61A6E022026110800000002 /* AgentImageTests.swift */,
 				C4A7000D202610130000000D /* WorkspaceReferenceInputTests.swift */,
 				0E7C2F293A4D4E5F9B8C7D6E /* UI */,
 				4ABDBE6729F86E6300661B2D /* Utilities */,
@@ -981,6 +984,7 @@
 				C4A7000C202610120000000C /* ChatLayoutTests.swift in Sources */,
 				C4A700142026102700000014 /* MCPOAuthDiscoveryTests.swift in Sources */,
 				C4A700122026102600000012 /* CapabilityDetectionTests.swift in Sources */,
+				A61A6E012026110800000001 /* AgentImageTests.swift in Sources */,
 				C4A7000E202610130000000E /* WorkspaceReferenceInputTests.swift in Sources */,
 				4ABDBE6B29F86E8D00661B2D /* MessageParserTests.swift in Sources */,
 				4F432A6BC5E64A3390D5F2C5 /* PDFHandlingTests.swift in Sources */,
