@@ -89,6 +89,26 @@
             ]
         },
         {
+            "id": "openai-images",
+            "displayName": "OpenAI Images",
+            "defaultName": "GPT Image",
+            "models": [
+                {
+                    "id": "gpt-image-1",
+                    "displayName": "GPT Image 1",
+                    "isDefault": true,
+                    "settings": {
+                        "generateChatNames": false,
+                        "contextSize": 1,
+                        "useStreaming": true,
+                        "allowImageUploads": false,
+                        "allowPdfUploads": false,
+                        "imageGenerationSupported": true
+                    }
+                }
+            ]
+        },
+        {
             "id": "gemini",
             "displayName": "Gemini",
             "defaultName": "Gemini 3 Pro",

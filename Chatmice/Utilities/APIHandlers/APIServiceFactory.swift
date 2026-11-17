@@ -5,6 +5,7 @@
 //  Created by Renat on 28.07.2024.
 //
 
+import CoreData
 import Foundation
 
 class APIServiceFactory {
@@ -19,8 +20,11 @@ class APIServiceFactory {
         config: APIServiceConfiguration,
         imageGenerationSupported: Bool? = nil,
         chatID: UUID? = nil,
-        workspaceURL: URL? = nil
+        workspaceURL: URL? = nil,
+        session: URLSession? = nil,
+        imageContext: NSManagedObjectContext? = nil
     ) -> APIService {
+        let session = session ?? Self.session
         let typeCandidate: String = {
             if let c = config as? APIServiceConfig, !c.type.isEmpty {
                 return c.type.lowercased()
@@ -36,6 +40,9 @@ class APIServiceFactory {
 
         let base: APIService
         switch configName {
+        case "openai-images":
+            // Images generations has no chat turns, agent tools, or search protocol.
+            return OpenAIImagesHandler(config: config, session: session, imageContext: imageContext)
         case "openai-responses", "openai":
             let supportsImageGeneration = imageGenerationSupported ?? false
             base = OpenAIResponsesHandler(

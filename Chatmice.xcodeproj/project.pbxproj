@@ -11,6 +11,8 @@
 		C4A700042026101100000004 /* WorkspaceCreationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4A700032026101100000003 /* WorkspaceCreationView.swift */; };
 		C4A700062026101100000006 /* WorkspaceMentionSuggestions.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4A700052026101100000005 /* WorkspaceMentionSuggestions.swift */; };
 		C4A700082026101200000008 /* WorkspaceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4A700072026101200000007 /* WorkspaceTests.swift */; };
+		A611B1012026111000000001 /* SidebarWorkspaceChats.swift in Sources */ = {isa = PBXBuildFile; fileRef = A611B1022026111000000002 /* SidebarWorkspaceChats.swift */; };
+		A611B1032026111000000003 /* SidebarConversationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A611B1042026111000000004 /* SidebarConversationTests.swift */; };
 		C4A7000A202610120000000A /* SelectableRichText.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4A700092026101200000009 /* SelectableRichText.swift */; };
 		C4A7000C202610120000000C /* ChatLayoutTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4A7000B202610120000000B /* ChatLayoutTests.swift */; };
 		C4A700142026102700000014 /* MCPOAuthDiscoveryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4A700152026102700000015 /* MCPOAuthDiscoveryTests.swift */; };
@@ -28,6 +30,8 @@
 		0E7C2F2B3A4D4E5F9B8C7D6E /* MessageCellTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0E7C2F2A3A4D4E5F9B8C7D6E /* MessageCellTests.swift */; };
 		C4A700122026102600000012 /* CapabilityDetectionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4A700132026102600000013 /* CapabilityDetectionTests.swift */; };
 		A61A6E012026110800000001 /* AgentImageTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A61A6E022026110800000002 /* AgentImageTests.swift */; };
+		A611A1012026111000000001 /* OpenAIImagesTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A611A1022026111000000002 /* OpenAIImagesTests.swift */; };
+		A611A1032026111000000003 /* OpenAIImagesHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = A611A1042026111000000004 /* OpenAIImagesHandler.swift */; };
 		1001F81047D94F5484238553 /* APIServiceTemplateAddView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5774456B942348B88C536014 /* APIServiceTemplateAddView.swift */; };
 		1232C0D881FF38BE2677A446 /* BashExecutor.swift in Sources */ = {isa = PBXBuildFile; fileRef = F53F64CEBB6B8132C4B6225C /* BashExecutor.swift */; };
 		D4F100012F40000100F11E01 /* FileTools.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4F100022F40000100F11E02 /* FileTools.swift */; };
@@ -188,6 +192,8 @@
 		C4A700032026101100000003 /* WorkspaceCreationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceCreationView.swift; sourceTree = "<group>"; };
 		C4A700052026101100000005 /* WorkspaceMentionSuggestions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceMentionSuggestions.swift; sourceTree = "<group>"; };
 		C4A700072026101200000007 /* WorkspaceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceTests.swift; sourceTree = "<group>"; };
+		A611B1022026111000000002 /* SidebarWorkspaceChats.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidebarWorkspaceChats.swift; sourceTree = "<group>"; };
+		A611B1042026111000000004 /* SidebarConversationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidebarConversationTests.swift; sourceTree = "<group>"; };
 		C4A700092026101200000009 /* SelectableRichText.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SelectableRichText.swift; sourceTree = "<group>"; };
 		C4A7000B202610120000000B /* ChatLayoutTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatLayoutTests.swift; sourceTree = "<group>"; };
 		C4A700152026102700000015 /* MCPOAuthDiscoveryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MCPOAuthDiscoveryTests.swift; sourceTree = "<group>"; };
@@ -209,6 +215,8 @@
 		F0A5E0022026102200000002 /* WebSearchSettingsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebSearchSettingsTests.swift; sourceTree = "<group>"; };
 		C4A700132026102600000013 /* CapabilityDetectionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CapabilityDetectionTests.swift; sourceTree = "<group>"; };
 		A61A6E022026110800000002 /* AgentImageTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentImageTests.swift; sourceTree = "<group>"; };
+		A611A1022026111000000002 /* OpenAIImagesTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenAIImagesTests.swift; sourceTree = "<group>"; };
+		A611A1042026111000000004 /* OpenAIImagesHandler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenAIImagesHandler.swift; sourceTree = "<group>"; };
 		25B74289407745C983DD1294 /* APIServiceTemplateAddViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIServiceTemplateAddViewModel.swift; sourceTree = "<group>"; };
 		2C64AA5DC1942A285D46D9A8 /* ComputerUseTool.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComputerUseTool.swift; sourceTree = "<group>"; };
 		D4F100022F40000100F11E02 /* FileTools.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileTools.swift; sourceTree = "<group>"; };
@@ -499,6 +507,7 @@
 			children = (
 				4A885C572CEA3F7B0018BBED /* ChatListRow.swift */,
 				4A885C552CEA3F6C0018BBED /* ChatListView.swift */,
+				A611B1022026111000000002 /* SidebarWorkspaceChats.swift */,
 				4A1F0A0929CEFB7F002A139A /* MessageCell.swift */,
 			);
 			path = ChatList;
@@ -637,12 +646,14 @@
 			children = (
 				16D75E6599084CC8A6C8587C /* APIServiceTemplateProviderTests.swift */,
 				C4A700072026101200000007 /* WorkspaceTests.swift */,
+				A611B1042026111000000004 /* SidebarConversationTests.swift */,
 				A17C71022026102400000002 /* ChatActivityStoreTests.swift */,
 				A17C71042026102400000004 /* PersistenceControllerTests.swift */,
 				C4A7000B202610120000000B /* ChatLayoutTests.swift */,
 				C4A700152026102700000015 /* MCPOAuthDiscoveryTests.swift */,
 				C4A700132026102600000013 /* CapabilityDetectionTests.swift */,
 				A61A6E022026110800000002 /* AgentImageTests.swift */,
+				A611A1022026111000000002 /* OpenAIImagesTests.swift */,
 				C4A7000D202610130000000D /* WorkspaceReferenceInputTests.swift */,
 				0E7C2F293A4D4E5F9B8C7D6E /* UI */,
 				4ABDBE6729F86E6300661B2D /* Utilities */,
@@ -699,6 +710,7 @@
 				4AFEE7202C472F53006F99FB /* APIProtocol.swift */,
 				B2E47C1B2CF90E5C00ABCD12 /* OpenAIHandlerBase.swift */,
 				B2E47C1D2CF90E5C00ABCD12 /* OpenAIResponsesHandler.swift */,
+				A611A1042026111000000004 /* OpenAIImagesHandler.swift */,
 				4AFEE7222C472FA1006F99FB /* ChatGPTHandler.swift */,
 				4AFEE7242C472FB1006F99FB /* OllamaHandler.swift */,
 				4AA6EF582C565F90003B6D41 /* APIServiceConfig.swift */,
@@ -890,6 +902,7 @@
 				4A5F64B829C64E21000403F7 /* ChatBubbleView.swift in Sources */,
 				B2E47C1C2CF90E5C00ABCD12 /* OpenAIHandlerBase.swift in Sources */,
 				B2E47C1E2CF90E5C00ABCD12 /* OpenAIResponsesHandler.swift in Sources */,
+				A611A1032026111000000003 /* OpenAIImagesHandler.swift in Sources */,
 				4AFEE7232C472FA1006F99FB /* ChatGPTHandler.swift in Sources */,
 				4A5F64C129C78B64000403F7 /* SceneKitParticlesView.swift in Sources */,
 				4A27FF942DA1C4640075D730 /* MessageContent.swift in Sources */,
@@ -917,6 +930,7 @@
 				4A1614152D46C86800A1EF8D /* PersonaSelectorView.swift in Sources */,
 				4A1614112D430AE300A1EF8D /* ThinkingProcessView.swift in Sources */,
 				4A885C562CEA3F6C0018BBED /* ChatListView.swift in Sources */,
+				A611B1012026111000000001 /* SidebarWorkspaceChats.swift in Sources */,
 				4AADD98C2C924FBA00242D20 /* APIServiceManager.swift in Sources */,
 				4ACAD6632C13AE8F0081BDAC /* CodeView.swift in Sources */,
 				4A399CC429BCE67800E98796 /* PreferencesView.swift in Sources */,
@@ -979,12 +993,14 @@
 			files = (
 				0E7C2F2B3A4D4E5F9B8C7D6E /* MessageCellTests.swift in Sources */,
 				C4A700082026101200000008 /* WorkspaceTests.swift in Sources */,
+				A611B1032026111000000003 /* SidebarConversationTests.swift in Sources */,
 				A17C71012026102400000001 /* ChatActivityStoreTests.swift in Sources */,
 				A17C71032026102400000003 /* PersistenceControllerTests.swift in Sources */,
 				C4A7000C202610120000000C /* ChatLayoutTests.swift in Sources */,
 				C4A700142026102700000014 /* MCPOAuthDiscoveryTests.swift in Sources */,
 				C4A700122026102600000012 /* CapabilityDetectionTests.swift in Sources */,
 				A61A6E012026110800000001 /* AgentImageTests.swift in Sources */,
+				A611A1012026111000000001 /* OpenAIImagesTests.swift in Sources */,
 				C4A7000E202610130000000E /* WorkspaceReferenceInputTests.swift in Sources */,
 				4ABDBE6B29F86E8D00661B2D /* MessageParserTests.swift in Sources */,
 				4F432A6BC5E64A3390D5F2C5 /* PDFHandlingTests.swift in Sources */,
@@ -1148,7 +1164,7 @@
 				CODE_SIGN_IDENTITY = "Apple Development";
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 15;
+				CURRENT_PROJECT_VERSION = 16;
 				DEVELOPMENT_TEAM = KJ5KHP7B96;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
@@ -1170,7 +1186,7 @@
 				LD_RUNPATH_SEARCH_PATHS = "@executable_path/Frameworks";
 				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = "@executable_path/../Frameworks";
 				MACOSX_DEPLOYMENT_TARGET = 15.0;
-				MARKETING_VERSION = 1.1.5;
+				MARKETING_VERSION = 1.2.0;
 				ONLY_ACTIVE_ARCH = YES;
 				PRODUCT_BUNDLE_IDENTIFIER = xeric.com.chatmice;
 				PRODUCT_NAME = Chatmice;
@@ -1194,7 +1210,7 @@
 				CODE_SIGN_IDENTITY = "Developer ID Application";
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Developer ID Application";
 				CODE_SIGN_STYLE = Manual;
-				CURRENT_PROJECT_VERSION = 15;
+				CURRENT_PROJECT_VERSION = 16;
 				DEVELOPMENT_TEAM = KJ5KHP7B96;
 				ENABLE_HARDENED_RUNTIME = YES;
 				MOMC_NO_INVERSE_RELATIONSHIP_WARNINGS = YES;
@@ -1218,7 +1234,7 @@
 				LD_RUNPATH_SEARCH_PATHS = "@executable_path/Frameworks";
 				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = "@executable_path/../Frameworks";
 				MACOSX_DEPLOYMENT_TARGET = 15.0;
-				MARKETING_VERSION = 1.1.5;
+				MARKETING_VERSION = 1.2.0;
 				ONLY_ACTIVE_ARCH = NO;
 				PRODUCT_BUNDLE_IDENTIFIER = xeric.com.chatmice;
 				PRODUCT_NAME = Chatmice;

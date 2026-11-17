@@ -78,6 +78,7 @@ struct PreferencesView: View {
                 settingsRow(for: page)
                     .tag(page)
             }
+            .background(ThinScrollbarConfiguration(target: .adjacentList))
             .listStyle(.sidebar)
             .contentMargins(.top, 14, for: .scrollContent)
             .navigationSplitViewColumnWidth(min: 200, ideal: 215, max: 240)

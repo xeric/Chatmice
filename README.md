@@ -74,11 +74,26 @@ Chatmice is derived from [macai](https://github.com/Renset/macai), created by Re
   The model picker sizes to its model name and expands leftward while remaining next to chat search.
   Native `NSVisualEffectView` layers sample content behind the window. The Background Blur slider continuously blends the high-strength `popover` and `menu` endpoint materials across ten evenly spaced positions; Glass Tint stays at or below 32% opacity so it cannot flatten the frosted detail. The inspector-header toggle is the only file-panel close control; the file-tree title retains its refresh action.
   The main-content header uses within-window frosted material with a 44-point fade into the conversation below and a 48-point fade-in at its left edge to avoid an abrupt material seam beside the sidebar. This visual overlay does not intercept clicks or scrolling and does not extend into the side panels.
+  Thin overlay scrollbars are configured when each scroll container mounts, with native editor and list style resets handled on that container alone. Window focus no longer scans the entire native view tree for scrollbar styling. The main window skips native close-fade and reopen-zoom animations; SwiftUI still owns closing and reopening, while minimize, Settings, and Dock presentation policies remain unchanged.
 
 
 ## Workspaces
 
 Use the chevron beside **New Chat** to create a workspace and choose its required local folder. The sidebar groups chats by workspace; click a workspace title or its chevron to expand and collapse its chats, drag the title to reorder workspaces, or use the `+` button to start a chat there. The main conversation header shows the workspace path beneath the conversation title; sidebar chat rows do not show paths. File tools, Bash working directories, and Python execution are restricted to that workspace folder.
+
+**Sidebar conversation history** applies independently to **Temporary Chats** and every workspace. Fewer than 10 chats remain one pinned-first list. At 10 or more, pinned chats stay at the top regardless of age, without a separate heading or duplicate dated row. Unpinned chats use their last update date, falling back to their creation date: the latest 7 calendar days appear without a heading; **Previous Week** covers dates from one calendar month ago up to (but not including) 7 days ago; **Previous Month** covers two calendar months ago up to (but not including) one month ago. Exact cutoff dates belong to the newer bucket. Chats older than two calendar months, including chats with neither date, belong to **More**.
+
+**More** starts collapsed and uses a native disclosure control. Its initial query only counts older chats; it does not fetch their conversation rows or latest-message previews. Expanding loads 30 rows, and scrolling loads further bounded pages; collapsing releases the loaded history rows and reopening starts with 30 again. Other large date groups and search results are also paged, while pinned chats remain readily available. A selected chat outside the loaded pages stays visible above the date groups without forcing **More** open. Search bypasses time groups and collapsed workspaces, querying chat titles, assistant names, and message bodies across all ages so older matches are not hidden behind **More**. These sidebar queries do not change message-timeline loading.
+
+Automatic sidebar pagination queues a cursor-matched page load for the next main-queue turn instead of fetching and publishing rows inside a scroll-visibility callback. Repeated callbacks coalesce; leaving the viewport, unmounting rows, hiding or folding the workspace, collapsing **More**, changing search, or reloading the query invalidates pending requests. **Load More** still works manually and consumes a matching queued automatic request only once.
+
+The main window also uses a chat count and single-chat lookups instead of fetching the complete conversation collection: restoring the last selection and inheriting the previous chat's model do not hydrate unrelated historical conversations. Chat creation and deletion continue to update the welcome state and sidebar visibility.
+
+Loaded sidebar rows keep immutable, prepared titles, timestamps, assistant icons, and latest-message previews. Tool markers and thinking text are filtered when the latest message changes, not during row rendering or repeated window sizing; unchanged rows reuse their prepared presentation, and SF Symbol validity checks are cached. Collapsing **More** releases those historical previews except for a selected chat kept visible outside the pages. Search continues to query complete stored message bodies, not the filtered previews.
+
+Workspace containers remain mounted while the sidebar is visible; lazy rendering stays inside each workspace's conversation lists. Removing the second, workspace-level virtualization layer keeps fully traversed workspace heights stable during rapid wheel reversals without eagerly realizing offscreen conversation rows.
+
+Hiding the sidebar removes its conversation scroll and row views rather than merely concealing the split-view column. Lightweight presentation ownership preserves workspace folds, **More** and loaded-page state, search, selection, and the native scroll position. Hidden or collapsed workspace queries suspend reload and preview work; changes are marked dirty and the needed loaded pages refresh when shown again. Showing the sidebar does not expand deliberately collapsed workspaces. This does not change the main window's close/reopen policy or the conversation timeline.
 
 When reordering workspaces or draggable settings lists, a rounded dashed **Drop here** placeholder marks the insertion position. The source item fades to 60% opacity while the drag preview keeps its original size and 100% opacity. Drop on the indicated position to reorder; leaving the list or pressing **Esc** removes the hint without changing the order. The source returns to full opacity when the drag ends, including cancellation or release outside the window.
 
@@ -112,6 +127,16 @@ Here is how to get API token for all supported services:
 - OpenRouter: https://openrouter.ai/docs/api-reference/authentication#using-an-api-key
 
 OpenAI Responses providers accept either an API base URL ending in `/v1` or the full `/v1/responses` endpoint. Chatmice normalizes both ordinary and tool-enabled requests to `/responses` and omits temperature for reasoning models. Imported MCP tool schemas retain their parameter properties, descriptions, enums, references, and constraints; required arguments are not reduced to an empty object.
+
+### GPT Image generations
+
+In **Settings → Providers**, choose **OpenAI Image Generations**, or set an existing provider's **Wire API** to **Image Generations (OpenAI / GPT Image)**. Its stable protocol identifier is `openai-images`. Add the exact image model ID your endpoint accepts (including custom IDs such as `gpt-image-2.6`); Chatmice does not rewrite or restrict these IDs.
+
+This protocol sends the current user text as `prompt` to `POST /v1/images/generations`, with `model`, `n: 1`, and `output_format: png`. API base URLs, full Images endpoints, and existing `/responses` or `/chat/completions` URLs are normalized without duplicating endpoint suffixes. API keys and custom provider headers use the same authentication rules as other OpenAI APIs. Every returned `data[].b64_json` image is saved locally and rendered in the conversation, in both streaming and non-streaming mode (streaming delivers the completed image response).
+
+Image Generations is text-to-image only: input images, edits, files, and audio attachments are rejected rather than silently ignored. Prior conversation text, persona/system prompts, chat parameters, tools, and search are not sent. Automatic context compaction is skipped and titles are derived locally, so neither triggers additional image generation. **Test Connection** only checks the authenticated model catalog and exact model availability; it does not generate a paid image or run chat/vision/audio/thinking probes. Catalog availability is not proof of image-generation permission. See the [OpenAI Images API reference](https://developers.openai.com/api/reference/resources/images/methods/generate).
+
+Generation failures include the HTTP status and a bounded provider response, or an explicit empty-body explanation. A proxy may list an image model yet reject `/v1/images/generations` with HTTP 404; that is a provider endpoint/routing failure, not proof that the model ID should be changed. Check that the configured service actually exposes the Images API. Chatmice does not retry paid generation automatically or switch to a different API.
 
 ### Provider custom HTTP headers
 

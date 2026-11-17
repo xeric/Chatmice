@@ -2100,6 +2100,7 @@ struct ToolActivityView: View {
                             .foregroundStyle(.primary.opacity(0.88))
                             .textSelection(.enabled)
                             .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(ThinScrollbarConfiguration().allowsHitTesting(false))
                     }
                     .frame(maxHeight: 220)
                 }

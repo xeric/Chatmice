@@ -265,6 +265,7 @@ private struct ToolSelectionPopover: View {
                         skillSourceSection()
                         sourceSection(title: "MCP", sources: mcpSources)
                     }
+                    .background(ThinScrollbarConfiguration().allowsHitTesting(false))
                 }
                 .frame(height: toolListHeight)
                 .disabled(!toolsEnabled)
@@ -554,6 +555,7 @@ private struct ChatSkillSelectionPopover: View {
                             skillRow(skill)
                         }
                     }
+                    .background(ThinScrollbarConfiguration().allowsHitTesting(false))
                 }
                 .frame(minHeight: 120, maxHeight: 330)
             }
@@ -1386,6 +1388,7 @@ struct MessageInputView: View {
                 }
                 .padding(.horizontal, 0)
                 .padding(.bottom, 8)
+                .background(ThinScrollbarConfiguration().allowsHitTesting(false))
             }
             .frame(height: (attachedImages.isEmpty && attachedFiles.isEmpty && attachedAudio == nil) ? 0 : 100)
 

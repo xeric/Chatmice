@@ -923,6 +923,7 @@ private struct DefaultToolListSettingsView: View {
                                 .padding(.vertical, 3)
                             }
                         }
+                        .background(ThinScrollbarConfiguration().allowsHitTesting(false))
                     }
                     .frame(maxHeight: 220)
                 }

@@ -254,6 +254,7 @@ struct PersonaDetailView: View {
             VStack(alignment: .leading) {
                 Text("System message:")
                 TextEditor(text: $systemMessage)
+                    .background(ThinScrollbarConfiguration(target: .adjacentTextEditor))
                     .font(.system(size: 15))
                     .foregroundStyle(Color.primary)
                     .scrollContentBackground(.hidden)
@@ -297,6 +298,7 @@ struct PersonaDetailView: View {
 
         }
         .padding()
+        .background(ThinScrollbarConfiguration().allowsHitTesting(false))
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             Divider()

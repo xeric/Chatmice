@@ -79,6 +79,7 @@ enum ModelReasoningRegistry {
     static func resolve(modelID rawModelID: String, serviceType rawServiceType: String, serviceID: UUID? = nil) -> ModelReasoningProfile {
         let modelID = rawModelID.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
         let serviceType = rawServiceType.lowercased()
+        guard serviceType != "openai-images" else { return unsupported }
         let manual = ModelConfigurationStore.overrides(serviceID: serviceID, modelID: rawModelID).thinkingSupported
         if manual == false { return unsupported }
         if manual == true {
@@ -474,6 +475,14 @@ enum ModelCapabilityProbe {
         modelID: String,
         session: URLSession = .shared
     ) async -> ModelCapabilityTestResult {
+        if config.type.lowercased() == "openai-images" {
+            do {
+                try await OpenAIImagesHandler(config: config, session: session).testConnection(modelID: modelID)
+                return ModelCapabilityTestResult(connectionSucceeded: true, visionSupported: false, audioSupported: false, reasoningSupported: false, testedAt: Date(), errorMessage: nil)
+            } catch {
+                return ModelCapabilityTestResult(connectionSucceeded: false, visionSupported: nil, audioSupported: nil, reasoningSupported: nil, testedAt: Date(), errorMessage: error.localizedDescription)
+            }
+        }
         do {
             try await perform(config: config, modelID: modelID, kind: .connection, session: session)
         } catch {

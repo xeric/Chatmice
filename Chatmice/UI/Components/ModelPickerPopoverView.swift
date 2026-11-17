@@ -179,6 +179,7 @@ struct ModelPickerPopoverView: View {
                 .padding(.leading, 8)
                 .padding(.trailing, 8)
                 .padding(.vertical, 8)
+                .background(ThinScrollbarConfiguration().allowsHitTesting(false))
             }
             .frame(height: 380)
         }
@@ -250,21 +251,22 @@ struct ModelPickerPopoverView: View {
         let defaults = ModelConfigurationStore.metadataDefaults(serviceID: service.id, modelID: modelID)
         let metadata = ModelMetadataCatalog.shared
             .metadata(modelID: modelID, serviceType: service.type ?? "")?.metadata
-        let isVision = overrides.visionSupported
+        let isImagesProtocol = service.type?.lowercased() == "openai-images"
+        let isVision = !isImagesProtocol && (overrides.visionSupported
             ?? testedCapabilities?.visionSupported
             ?? defaults.visionSupported
             ?? metadata?.supportsVision
-            ?? isVisionModel(modelID)
-        let isAudio = overrides.audioSupported
+            ?? isVisionModel(modelID))
+        let isAudio = !isImagesProtocol && (overrides.audioSupported
             ?? testedCapabilities?.audioSupported
             ?? defaults.audioSupported
             ?? metadata?.supportsAudio
-            ?? false
-        let isReasoning = overrides.thinkingSupported
+            ?? false)
+        let isReasoning = !isImagesProtocol && (overrides.thinkingSupported
             ?? testedCapabilities?.reasoningSupported
             ?? defaults.thinkingSupported
             ?? metadata?.reasoning
-            ?? isReasoningModel(modelID)
+            ?? isReasoningModel(modelID))
 
         return Button(action: {
             onSelect(service, modelID)
@@ -350,6 +352,10 @@ struct ModelPickerPopoverView: View {
             list = [m]
         }
 
+        if service.type?.lowercased() == "openai-images", let configured = service.model, !configured.isEmpty,
+           !list.contains(configured) {
+            list.insert(configured, at: 0)
+        }
         // Apply search query
         if !searchQuery.trimmingCharacters(in: .whitespaces).isEmpty {
             let q = searchQuery.trimmingCharacters(in: .whitespaces).lowercased()

@@ -362,6 +362,7 @@ private struct TemplateOptionEntityList: View {
             .padding(.vertical, 6)
             .padding(.horizontal, 8)
             .frame(maxWidth: .infinity)
+            .background(ThinScrollbarConfiguration().allowsHitTesting(false))
         }
         .frame(maxWidth: .infinity)
     }

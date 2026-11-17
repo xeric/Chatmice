@@ -76,11 +76,7 @@ struct ContentView: View {
     @Environment(\.managedObjectContext) private var viewContext
 
     @Environment(\.openWindow) private var openWindow
-    @FetchRequest(
-        entity: ChatEntity.entity(),
-        sortDescriptors: [NSSortDescriptor(keyPath: \ChatEntity.updatedDate, ascending: false)]
-    )
-    private var chats: FetchedResults<ChatEntity>
+    @State private var chatCount = 0
 
     @FetchRequest(sortDescriptors: [NSSortDescriptor(keyPath: \APIServiceEntity.addedDate, ascending: false)])
     private var apiServices: FetchedResults<APIServiceEntity>
@@ -223,9 +219,10 @@ struct ContentView: View {
             } catch {
                 print("Error preparing temporary workspace: \(error.localizedDescription)")
             }
-            lastChatCount = chats.count
+            refreshChatCount()
+            lastChatCount = chatCount
             if let lastOpenedChatId = UUID(uuidString: lastOpenedChatId) {
-                if let lastOpenedChat = chats.first(where: { $0.id == lastOpenedChatId }) {
+                if let lastOpenedChat = try? SidebarChatLookup.chat(id: lastOpenedChatId, in: viewContext) {
                     selectedChat = lastOpenedChat
                 }
             }
@@ -234,7 +231,14 @@ struct ContentView: View {
                 applicationIsActive: scenePhase == .active && NSApp.isActive
             )
         })
-        .onChange(of: chats.count) { _, newCount in
+        .onReceive(NotificationCenter.default.publisher(for: .NSManagedObjectContextObjectsDidChange, object: viewContext)) { notification in
+            let inserted = notification.userInfo?[NSInsertedObjectsKey] as? Set<NSManagedObject> ?? []
+            let deleted = notification.userInfo?[NSDeletedObjectsKey] as? Set<NSManagedObject> ?? []
+            if notification.userInfo?[NSInvalidatedAllObjectsKey] != nil || inserted.contains(where: { $0 is ChatEntity }) || deleted.contains(where: { $0 is ChatEntity }) {
+                refreshChatCount()
+            }
+        }
+        .onChange(of: chatCount) { _, newCount in
             if let prev = lastChatCount {
                 updateSidebarVisibilityForChatCount(previousCount: prev, newCount: newCount)
             }
@@ -382,7 +386,8 @@ struct ContentView: View {
                 ChatListView(
                     selectedChat: $selectedChat,
                     searchText: $searchText,
-                    onNewChat: { workspace in newChat(in: workspace) }
+                    onNewChat: { workspace in newChat(in: workspace) },
+                    isVisible: isSidebarVisible
                 )
                 .environmentObject(activityStore)
 
@@ -584,7 +589,7 @@ struct ContentView: View {
             }
             else {
                 WelcomeScreen(
-                    chatsCount: chats.count,
+                    chatsCount: chatCount,
                     apiServiceIsPresent: apiServices.count > 0,
                     customUrl: apiUrl != AppConstants.apiUrlOpenAIResponses,
                     openPreferencesView: openPreferencesView,
@@ -656,7 +661,7 @@ struct ContentView: View {
             newChat.gptModel = globalModel
         }
         // 3. Fallback: inherit from the most recent chat if available
-        else if let lastChat = chats.first, let lastService = lastChat.apiService, !lastChat.gptModel.isEmpty {
+        else if let lastChat = try? SidebarChatLookup.latest(excluding: newChat.id, in: viewContext), let lastService = lastChat.apiService, !lastChat.gptModel.isEmpty {
             newChat.apiService = lastService
             newChat.gptModel = lastChat.gptModel
         }
@@ -744,13 +749,9 @@ struct ContentView: View {
         }
     }
 
-    private func getIndex(for chat: ChatEntity) -> Int {
-        if let index = chats.firstIndex(where: { $0.id == chat.id }) {
-            return index
-        }
-        else {
-            fatalError("Chat not found in array")
-        }
+    private func refreshChatCount() {
+        do { chatCount = try SidebarChatLookup.count(in: viewContext) }
+        catch { print("Error counting chats: \(error.localizedDescription)") }
     }
 
     private func handleServiceChange(_ chat: ChatEntity, _ newService: APIServiceEntity, selectedModel: String? = nil) {
@@ -827,17 +828,11 @@ struct ContentView: View {
 
 extension ContentView {
     fileprivate func chatDisplayName(for chatId: UUID, fallback: String?) -> String {
-        if let chat = chats.first(where: { $0.id == chatId }) {
-            if !chat.name.isEmpty {
-                return chat.name
-            }
-            if let persona = chat.persona?.name, !persona.isEmpty {
-                return persona
-            }
+        if let chat = try? SidebarChatLookup.chat(id: chatId, in: viewContext) {
+            if !chat.name.isEmpty { return chat.name }
+            if let persona = chat.persona?.name, !persona.isEmpty { return persona }
         }
-        if let fallback, !fallback.isEmpty {
-            return fallback
-        }
+        if let fallback, !fallback.isEmpty { return fallback }
         return "Chat"
     }
 

@@ -1759,3 +1759,293 @@ private final class ModelMetadataURLProtocol: URLProtocol {
 
     override func stopLoading() {}
 }
+
+@MainActor
+private final class ScrollbarEditorTestState: ObservableObject {
+    @Published var text = String(repeating: "Editable line\n", count: 30)
+    @Published var secondText = String(repeating: "Second editor line\n", count: 30)
+}
+
+private struct ScrollbarEditorTestSurface: View {
+    @ObservedObject var state: ScrollbarEditorTestState
+    let sentinel: NSScrollView
+
+    var body: some View {
+        VStack(spacing: 12) {
+            TextEditor(text: $state.text)
+                .background(ThinScrollbarConfiguration(target: .adjacentTextEditor))
+                .frame(height: 140)
+            TextEditor(text: $state.secondText)
+                .background(ThinScrollbarConfiguration(target: .adjacentTextEditor))
+                .frame(height: 140)
+            List(0..<30, id: \.self) { Text("Row \($0)") }
+                .background(ThinScrollbarConfiguration(target: .adjacentList))
+                .frame(height: 180)
+            ScrollbarUnrelatedSurface(scroll: sentinel).frame(height: 30)
+        }
+    }
+}
+
+private struct ScrollbarUnrelatedSurface: NSViewRepresentable {
+    let scroll: NSScrollView
+    func makeNSView(context: Context) -> NSScrollView { scroll }
+    func updateNSView(_ nsView: NSScrollView, context: Context) {}
+}
+
+extension ChatLayoutTests {
+    @MainActor
+    private func requireScrollbarRuntimeIsolation() throws {
+        guard let home = ProcessInfo.processInfo.environment["SCROLLBAR_TEST_HOME"],
+              let bundleID = ProcessInfo.processInfo.environment["SCROLLBAR_TEST_BUNDLE_ID"] else {
+            throw XCTSkip("Native scrollbar runtime requires an isolated app bundle and home")
+        }
+        XCTAssertEqual(FileManager.default.homeDirectoryForCurrentUser.path, home)
+        XCTAssertTrue(AppConstants.persistentStoreURL.path.hasPrefix(home + "/"))
+        XCTAssertEqual(Bundle.main.bundleIdentifier, bundleID)
+        print("Scrollbar isolation: bundle=\(bundleID); home=\(home); appStore=\(AppConstants.persistentStoreURL.path)")
+    }
+
+    @MainActor
+    private func activateScrollbarWindow(_ window: NSWindow) async throws {
+        func failure(_ phase: String) -> NSError {
+            func identity(_ candidate: NSWindow?) -> String {
+                candidate.map { "\($0.windowNumber)/\(ObjectIdentifier($0))" } ?? "none"
+            }
+            let message = "Native activation refused at \(phase): appActive=\(NSApp.isActive), target=\(identity(window)), windowKey=\(window.isKeyWindow), visible=\(window.isVisible), canBecomeKey=\(window.canBecomeKey), keyWindow=\(identity(NSApp.keyWindow)), mainWindow=\(identity(NSApp.mainWindow)), policy=\(NSApp.activationPolicy().rawValue)"
+            XCTFail(message)
+            return NSError(domain: "ScrollbarRuntime", code: 1, userInfo: [NSLocalizedDescriptionKey: message])
+        }
+        let deadline = ProcessInfo.processInfo.systemUptime + 3
+        NSApp.activate(ignoringOtherApps: true)
+        while !NSApp.isActive && ProcessInfo.processInfo.systemUptime < deadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        guard NSApp.isActive else { throw failure("application barrier") }
+        window.makeKeyAndOrderFront(nil)
+        while !window.isKeyWindow && ProcessInfo.processInfo.systemUptime < deadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        guard NSApp.isActive && window.isKeyWindow else { throw failure("key-window barrier") }
+    }
+
+    @MainActor
+    private func attachScrollbarWindow(_ window: NSWindow, name: String) throws {
+        guard ProcessInfo.processInfo.environment["SCROLLBAR_TEST_CAPTURE_WINDOWS"] == "1" else { return }
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("ScrollbarWindow-\(UUID().uuidString).png")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let capture = Process()
+        capture.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
+        capture.arguments = ["-x", "-l", String(window.windowNumber), url.path]
+        let errors = Pipe()
+        capture.standardError = errors
+        try capture.run()
+        capture.waitUntilExit()
+        guard capture.terminationStatus == 0 else {
+            let reason = String(decoding: errors.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+            print("Scrollbar window capture unavailable: status=\(capture.terminationStatus); \(reason.prefix(300))")
+            return
+        }
+        let attachment = XCTAttachment(data: try Data(contentsOf: url), uniformTypeIdentifier: "public.png")
+        attachment.name = "Thin scrollbars — \(name)"; attachment.lifetime = .keepAlways; add(attachment)
+    }
+
+    @MainActor
+    private func scrollbarContainers(in view: NSView) -> [NSScrollView] {
+        if let scroll = view as? NSScrollView { return [scroll] + scroll.subviews.flatMap { scrollbarContainers(in: $0) } }
+        return view.subviews.flatMap { scrollbarContainers(in: $0) }
+    }
+
+    @MainActor
+    private func assertThinScrollbars(_ scroll: NSScrollView, surface: String,
+                                      file: StaticString = #filePath, line: UInt = #line) {
+        XCTAssertEqual(scroll.scrollerStyle, .overlay, surface, file: file, line: line)
+        XCTAssertTrue(scroll.autohidesScrollers, surface, file: file, line: line)
+        if let scroller = scroll.verticalScroller {
+            XCTAssertEqual(scroller.controlSize, .mini, surface, file: file, line: line)
+        }
+        if let scroller = scroll.horizontalScroller {
+            XCTAssertEqual(scroller.controlSize, .mini, surface, file: file, line: line)
+        }
+    }
+
+    @MainActor
+    func testThinScrollbarsCoverRealMountedSurfaces() async throws {
+        try requireScrollbarRuntimeIsolation()
+        let model = PersistenceController.shared.container.managedObjectModel
+        let coordinator = NSPersistentStoreCoordinator(managedObjectModel: model)
+        try coordinator.addPersistentStore(ofType: NSInMemoryStoreType, configurationName: nil, at: nil)
+        let context = NSManagedObjectContext(concurrencyType: .mainQueueConcurrencyType)
+        context.persistentStoreCoordinator = coordinator
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("ScrollbarFixtures-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let workspace = WorkspaceEntity(entity: try XCTUnwrap(model.entitiesByName["WorkspaceEntity"]), insertInto: context)
+        workspace.id = UUID(); workspace.name = "Scrollbar workspace"; workspace.path = directory.path
+        let chat = ChatEntity(entity: try XCTUnwrap(model.entitiesByName["ChatEntity"]), insertInto: context)
+        chat.id = UUID(); chat.name = "Scrollbar conversation"; chat.workspace = workspace
+        chat.systemMessage = ""; chat.gptModel = "fixture"; chat.requestMessages = []
+        let message = MessageEntity(entity: try XCTUnwrap(model.entitiesByName["MessageEntity"]), insertInto: context)
+        message.id = 1; message.sequence = 1; message.timestamp = Date(); message.chat = chat
+        message.body = String(repeating: "A conversation paragraph.\n\n", count: 30); message.own = false
+        let persona = PersonaEntity(entity: try XCTUnwrap(model.entitiesByName["PersonaEntity"]), insertInto: context)
+        persona.name = "Scrollbar assistant"; persona.systemMessage = String(repeating: "Prompt line\n", count: 30)
+        try context.save()
+        let viewModel = ChatViewModel(chat: chat, viewContext: context)
+        let surfaces: [(String, AnyView, Int)] = [
+            ("Conversation", AnyView(ChatMessagesView(chat: chat, chatViewModel: viewModel,
+                isStreaming: .constant(false), currentError: .constant(nil), searchText: .constant(""),
+                reasoningDurations: [:], activeReasoningMessageID: nil)), 1),
+            ("Sidebar", AnyView(ChatListView(selectedChat: .constant(chat), searchText: .constant(""), onNewChat: { _ in })), 1),
+            ("Settings sidebar and detail", AnyView(PreferencesView()), 2),
+            ("Assistant editor and prompt", AnyView(PersonaDetailView(persona: .constant(persona), onSave: {}, onDelete: {})), 2),
+            ("Assistant popover", AnyView(PersonaPickerPopoverView(personas: [persona], selectedPersona: persona, onSelect: { _ in })), 2),
+            ("Model popover", AnyView(ModelPickerPopoverView(apiServices: [], selectedChat: nil, onSelect: { _, _ in })), 1),
+            ("Workspace native outline", AnyView(WorkspaceFileBrowser(workspace: workspace)), 1),
+            ("Appearance markdown preview", AnyView(TabAppearanceSettingsView()), 1)
+        ]
+        for (name, surface, minimumCount) in surfaces {
+            let host = NSHostingView(rootView: surface.environment(\.managedObjectContext, context)
+                .environmentObject(PreviewStateManager()).environmentObject(ChatActivityStore.shared))
+            let window = NSWindow(contentRect: NSRect(x: 100, y: 100, width: 980, height: 720),
+                styleMask: [.titled, .resizable], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false; window.title = "Scrollbar fixture — \(name)"
+            window.contentView = host
+            try await activateScrollbarWindow(window)
+            try await Task.sleep(for: .milliseconds(250))
+            host.layoutSubtreeIfNeeded()
+            let scrolls = scrollbarContainers(in: host)
+            XCTAssertGreaterThanOrEqual(scrolls.count, minimumCount, name)
+            for scroll in scrolls { assertThinScrollbars(scroll, surface: name) }
+            print("Scrollbar surface: \(name); nativeContainers=\(scrolls.count); window=\(window.windowNumber); host=\(ObjectIdentifier(host))")
+            try attachScrollbarWindow(window, name: name)
+            window.close()
+        }
+    }
+
+    @MainActor
+    func testScrollbarMountHooksStayScopedAcrossActivationAndWindowLifecycle() async throws {
+        try requireScrollbarRuntimeIsolation()
+        let sentinel = NSScrollView()
+        sentinel.hasVerticalScroller = true; sentinel.hasHorizontalScroller = true
+        sentinel.scrollerStyle = .legacy; sentinel.autohidesScrollers = false
+        sentinel.verticalScroller?.controlSize = .regular; sentinel.horizontalScroller?.controlSize = .regular
+        sentinel.documentView = NSView(frame: NSRect(x: 0, y: 0, width: 1200, height: 1200))
+        let state = ScrollbarEditorTestState()
+        let host = NSHostingView(rootView: ScrollbarEditorTestSurface(state: state, sentinel: sentinel))
+        let window = NSWindow(contentRect: NSRect(x: 100, y: 100, width: 500, height: 600),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; window.contentView = host
+        let other = NSWindow(contentRect: NSRect(x: 650, y: 100, width: 200, height: 200),
+            styleMask: [.titled], backing: .buffered, defer: false)
+        other.isReleasedWhenClosed = false
+        defer { other.close(); window.close() }
+        try await activateScrollbarWindow(window)
+        try await Task.sleep(for: .milliseconds(250))
+        host.layoutSubtreeIfNeeded()
+        let managed = scrollbarContainers(in: host).filter { $0 !== sentinel }
+        XCTAssertEqual(managed.filter { $0.documentView is NSTextView }.count, 2, "Both editors must be independently styled")
+        XCTAssertEqual(managed.filter { $0.documentView is NSTableView }.count, 1, "Native List must retain styling")
+        for scroll in managed { assertThinScrollbars(scroll, surface: "Mounted editor/list") }
+        let editors = managed.compactMap { $0.documentView as? NSTextView }
+        let firstMatches = editors.filter { $0.string == state.text }
+        let secondMatches = editors.filter { $0.string == state.secondText }
+        XCTAssertEqual(firstMatches.count, 1, "The first editor must have a unique native string identity")
+        XCTAssertEqual(secondMatches.count, 1, "The second editor must have a unique native string identity")
+        let editor = try XCTUnwrap(firstMatches.first)
+        let secondEditor = try XCTUnwrap(secondMatches.first)
+        XCTAssertFalse(editor === secondEditor)
+        let clip = try XCTUnwrap(editor.enclosingScrollView).contentView
+        let secondClip = try XCTUnwrap(secondEditor.enclosingScrollView).contentView
+        for visibleClip in [clip, secondClip] {
+            XCTAssertGreaterThan(visibleClip.visibleRect.width, 200)
+            XCTAssertGreaterThan(visibleClip.visibleRect.height, 100)
+            XCTAssertTrue(host.bounds.contains(host.convert(visibleClip.visibleRect, from: visibleClip)))
+        }
+        print("Scrollbar identities: first=\(ObjectIdentifier(editor)); second=\(ObjectIdentifier(secondEditor)); firstClip=\(clip.visibleRect); secondClip=\(secondClip.visibleRect)")
+        let localPoint = NSPoint(x: clip.visibleRect.midX, y: clip.visibleRect.midY)
+        let windowPoint = clip.convert(localPoint, to: nil)
+        let down = try XCTUnwrap(NSEvent.mouseEvent(with: .leftMouseDown, location: windowPoint,
+            modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+            context: nil, eventNumber: 1, clickCount: 1, pressure: 1))
+        let up = try XCTUnwrap(NSEvent.mouseEvent(with: .leftMouseUp, location: windowPoint,
+            modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+            context: nil, eventNumber: 2, clickCount: 1, pressure: 0))
+        XCTAssertTrue(window.makeFirstResponder(nil))
+        NSApp.postEvent(up, atStart: true)
+        window.sendEvent(down)
+        try await Task.sleep(for: .milliseconds(60))
+        XCTAssertTrue(window.firstResponder === editor, "The actual native click must focus the intended editor")
+        print("Scrollbar editor click: nativeFocus=\(window.firstResponder === editor); windowKey=\(window.isKeyWindow); appActive=\(NSApp.isActive)")
+        let secondBeforeEdit = state.secondText
+        editor.insertText("Typed into first editor. ", replacementRange: NSRange(location: 0, length: 0))
+        try await Task.sleep(for: .milliseconds(60))
+        XCTAssertTrue(state.text.hasPrefix("Typed into first editor. "), "Native editing must propagate through the first Binding")
+        XCTAssertEqual(state.secondText, secondBeforeEdit, "The adjacent hook must not associate the wrong editor")
+        for scroll in managed { assertThinScrollbars(scroll, surface: "After native editing") }
+        print("Scrollbar stage: nativeEdit; styles=\(managed.map { $0.scrollerStyle.rawValue })")
+        func assertSentinel() {
+            XCTAssertEqual(sentinel.scrollerStyle, .legacy, "Unrelated container must never be configured")
+            XCTAssertFalse(sentinel.autohidesScrollers)
+            XCTAssertEqual(sentinel.verticalScroller?.controlSize, .regular)
+            XCTAssertEqual(sentinel.horizontalScroller?.controlSize, .regular)
+        }
+        assertSentinel()
+        let originalWindow = ObjectIdentifier(window), originalHost = ObjectIdentifier(host)
+        let originalScrolls = managed.map(ObjectIdentifier.init)
+        var keyNotifications = 0
+        let observer = NotificationCenter.default.addObserver(forName: NSWindow.didBecomeKeyNotification, object: window, queue: .main) { _ in
+            MainActor.assumeIsolated { keyNotifications += 1 }
+        }
+        defer { NotificationCenter.default.removeObserver(observer) }
+        for _ in 0..<5 {
+            try await activateScrollbarWindow(other)
+            XCTAssertTrue(other.isKeyWindow)
+            try await activateScrollbarWindow(window)
+            XCTAssertTrue(window.isKeyWindow)
+        }
+        XCTAssertGreaterThanOrEqual(keyNotifications, 5)
+        for scroll in managed { assertThinScrollbars(scroll, surface: "After five key activations") }
+        print("Scrollbar stage: keyActivation; styles=\(managed.map { $0.scrollerStyle.rawValue })")
+        state.text += "A binding update must not touch the unrelated scroll view.\n"
+        try await Task.sleep(for: .milliseconds(60))
+        assertSentinel()
+        for scroll in managed { assertThinScrollbars(scroll, surface: "After Binding update") }
+        print("Scrollbar stage: bindingUpdate; styles=\(managed.map { $0.scrollerStyle.rawValue })")
+        window.orderOut(nil); XCTAssertFalse(window.isVisible)
+        try await activateScrollbarWindow(window); XCTAssertTrue(window.isVisible)
+        try await Task.sleep(for: .milliseconds(60))
+        for scroll in managed { assertThinScrollbars(scroll, surface: "After hide/show") }
+        print("Scrollbar stage: hideShow; styles=\(managed.map { $0.scrollerStyle.rawValue })")
+        window.miniaturize(nil)
+        try await Task.sleep(for: .milliseconds(120))
+        XCTAssertTrue(window.isMiniaturized)
+        window.deminiaturize(nil)
+        try await Task.sleep(for: .milliseconds(120))
+        XCTAssertFalse(window.isMiniaturized)
+        try await activateScrollbarWindow(window)
+        for scroll in managed { assertThinScrollbars(scroll, surface: "After minimize/deminiaturize") }
+        print("Scrollbar stage: minimize; styles=\(managed.map { $0.scrollerStyle.rawValue })")
+        window.close(); XCTAssertFalse(window.isVisible)
+        try await activateScrollbarWindow(window)
+        try await Task.sleep(for: .milliseconds(60))
+        XCTAssertTrue(window.isVisible)
+        XCTAssertEqual(ObjectIdentifier(window), originalWindow)
+        XCTAssertEqual(ObjectIdentifier(try XCTUnwrap(window.contentView)), originalHost)
+        XCTAssertEqual(scrollbarContainers(in: host).filter { $0 !== sentinel }.map(ObjectIdentifier.init), originalScrolls)
+        for scroll in managed { assertThinScrollbars(scroll, surface: "After activation/hide/minimize/retained reopen") }
+        assertSentinel()
+        print("Scrollbar hosted lifecycle: keyNotifications=\(keyNotifications); window=\(window.windowNumber); windowIdentity=\(originalWindow); hostIdentity=\(originalHost); managedContainers=\(managed.count); unrelatedContainerUnchanged=true")
+        window.contentView = nil
+        for scroll in managed { scroll.scrollerStyle = .legacy }
+        try await Task.sleep(for: .milliseconds(60))
+        for scroll in managed {
+            XCTAssertEqual(scroll.scrollerStyle, .legacy, "Detached controls must no longer be observed")
+        }
+        window.contentView = host
+        try await activateScrollbarWindow(window)
+        try await Task.sleep(for: .milliseconds(60))
+        for scroll in managed { assertThinScrollbars(scroll, surface: "Reassociated native controls") }
+        assertSentinel()
+        try attachScrollbarWindow(window, name: "Scoped editor and List lifecycle")
+    }
+}

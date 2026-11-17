@@ -73,6 +73,27 @@ enum APIServiceTemplateProvider {
                 ]
             },
             {
+                "id": "openai-images",
+                "displayName": "OpenAI Images",
+                "defaultName": "GPT Image",
+                "note": "Text-to-image generation only; input images and edits are not supported.",
+                "models": [
+                    {
+                        "id": "gpt-image-1",
+                        "displayName": "GPT Image 1",
+                        "isDefault": true,
+                        "settings": {
+                            "generateChatNames": false,
+                            "contextSize": 1,
+                            "useStreaming": true,
+                            "allowImageUploads": false,
+                            "allowPdfUploads": false,
+                            "imageGenerationSupported": true
+                        }
+                    }
+                ]
+            },
+            {
                 "id": "chatgpt",
                 "displayName": "Generic Completions API",
                 "defaultName": "OpenAI GPT-5",

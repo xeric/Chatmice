@@ -18,13 +18,25 @@ struct SidebarConversationPresentation: Equatable {
     let color: String?
     let symbolName: String?
     let overlaySymbolName: String?
+    let timestamp: Date
+    let preview: String
+    let isImagePreview: Bool
+    let isPinned: Bool
 
     init(
         chatName: String,
         personaColor: String?,
         personaSymbolName: String?,
-        personaOverlaySymbolName: String?
+        personaOverlaySymbolName: String?,
+        timestamp: Date = .distantPast,
+        preview: String = "",
+        isImagePreview: Bool = false,
+        isPinned: Bool = false
     ) {
+        self.timestamp = timestamp
+        self.preview = preview
+        self.isImagePreview = isImagePreview
+        self.isPinned = isPinned
         let trimmedName = chatName.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmedName.isEmpty {
             title = Self.untitledName
@@ -35,37 +47,18 @@ struct SidebarConversationPresentation: Equatable {
         else {
             title = trimmedName
             color = personaColor
-            symbolName = personaSymbolName
-            overlaySymbolName = personaOverlaySymbolName
+            symbolName = PersonaAppearance.validatedSymbol(personaSymbolName, fallback: PersonaAppearance.defaultSymbol)
+            overlaySymbolName = personaOverlaySymbolName.flatMap {
+                let normalized = $0.trimmingCharacters(in: .whitespacesAndNewlines)
+                return PersonaAppearance.isValidSymbol(normalized) ? normalized : nil
+            }
         }
     }
 }
 
-struct ChatListRow: View, Equatable {
-    static func == (lhs: ChatListRow, rhs: ChatListRow) -> Bool {
-        lhs.chatObjectID == rhs.chatObjectID &&
-        lhs.updatedDate == rhs.updatedDate &&
-        lhs.personaColor == rhs.personaColor &&
-        lhs.personaSymbolName == rhs.personaSymbolName &&
-        lhs.personaOverlaySymbolName == rhs.personaOverlaySymbolName &&
-        lhs.chatName == rhs.chatName &&
-        lhs.lastMessageBody == rhs.lastMessageBody &&
-        lhs.isPinned == rhs.isPinned &&
-        lhs.showsAttentionIndicator == rhs.showsAttentionIndicator &&
-        lhs.activitySnapshot == rhs.activitySnapshot &&
-        (lhs.selectedChat?.objectID == rhs.selectedChat?.objectID) &&
-        lhs.searchText == rhs.searchText
-    }
+struct ChatListRow: View {
     let chat: ChatEntity
-    let chatObjectID: NSManagedObjectID
-    let personaColor: String?
-    let personaSymbolName: String?
-    let personaOverlaySymbolName: String?
-    let chatName: String
-    let isPinned: Bool
-    let lastMessageBody: String
-    let lastMessageTimestamp: Date
-    let updatedDate: Date?
+    let presentation: SidebarConversationPresentation
     let showsAttentionIndicator: Bool
     let activitySnapshot: ChatActivitySnapshot?
     @Binding var selectedChat: ChatEntity?
@@ -75,29 +68,15 @@ struct ChatListRow: View, Equatable {
 
     init(
         chat: ChatEntity,
+        presentation: SidebarConversationPresentation,
         showsAttentionIndicator: Bool,
         activitySnapshot: ChatActivitySnapshot?,
         selectedChat: Binding<ChatEntity?>,
         viewContext: NSManagedObjectContext,
         searchText: String
     ) {
-        let lastMessage = chat.lastMessage
-        let presentation = SidebarConversationPresentation(
-            chatName: chat.name,
-            personaColor: chat.persona?.color,
-            personaSymbolName: chat.persona?.symbolName,
-            personaOverlaySymbolName: chat.persona?.symbolOverlayName
-        )
         self.chat = chat
-        self.chatObjectID = chat.objectID
-        self.personaColor = presentation.color
-        self.personaSymbolName = presentation.symbolName
-        self.personaOverlaySymbolName = presentation.overlaySymbolName
-        self.chatName = presentation.title
-        self.isPinned = chat.isPinned
-        self.lastMessageBody = lastMessage?.body ?? ""
-        self.lastMessageTimestamp = lastMessage?.timestamp ?? .distantPast
-        self.updatedDate = chat.updatedDate
+        self.presentation = presentation
         self.showsAttentionIndicator = showsAttentionIndicator
         self.activitySnapshot = activitySnapshot
         self._selectedChat = selectedChat
@@ -108,42 +87,23 @@ struct ChatListRow: View, Equatable {
         )
     }
 
-    var isActive: Binding<Bool> {
-        Binding<Bool>(
-            get: {
-                selectedChat == chat
-            },
-            set: { newValue in
-                if newValue {
-                    selectedChat = chat
-                }
-                else {
-                    selectedChat = nil
-                }
-            }
-        )
-    }
 
     var body: some View {
         MessageCell(
-            chatObjectID: chatObjectID,
-            personaColor: personaColor,
-            personaSymbolName: personaSymbolName,
-            personaOverlaySymbolName: personaOverlaySymbolName,
-            chatName: chatName,
-            timestamp: lastMessageTimestamp,
-            message: lastMessageBody,
+            chatObjectID: chat.objectID,
+            presentation: presentation,
             showsAttentionIndicator: showsAttentionIndicator,
             activitySnapshot: activitySnapshot,
-            isPinned: isPinned,
-            isActive: isActive,
-            searchText: searchText
+            isActive: selectedChat?.objectID == chat.objectID,
+            searchText: searchText,
+            onSelect: { selectedChat = chat }
         )
+        .equatable()
         .contextMenu {
             Button(action: { 
                 togglePinChat(chat)
             }) {
-                Label(isPinned ? "Unpin" : "Pin", systemImage: isPinned ? "pin.slash" : "pin")
+                Label(presentation.isPinned ? "Unpin" : "Pin", systemImage: presentation.isPinned ? "pin.slash" : "pin")
             }
             .keyboardShortcut("p", modifiers: [.command, .shift])
             

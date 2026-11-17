@@ -198,6 +198,7 @@ private struct WorkspaceFileOutline: NSViewRepresentable {
         scroll.hasVerticalScroller = true
         scroll.autohidesScrollers = true
         scroll.documentView = outline
+        ThinScrollbarConfiguration.configure(scroll)
         context.coordinator.outline = outline
         return scroll
     }

@@ -730,7 +730,7 @@ class OpenAIResponsesHandler: OpenAIHandlerBase, APIService {
     private func storeGeneratedImage(base64: String, formatHint: String?) -> String? {
         guard let data = Data(base64Encoded: base64) else { return nil }
         let format = determineImageFormat(for: data, hint: formatHint)
-        guard let uuid = saveImageData(data, format: format) else { return nil }
+        guard let uuid = try? saveGeneratedImages([data], format: format).first else { return nil }
         return "<image-uuid>\(uuid.uuidString)</image-uuid>"
     }
 
@@ -784,61 +784,6 @@ class OpenAIResponsesHandler: OpenAIHandlerBase, APIService {
         return hint
     }
 
-    private func saveImageData(_ data: Data, format: String) -> UUID? {
-        guard !data.isEmpty, let image = NSImage(data: data) else { return nil }
-        let uuid = UUID()
-        let context = PersistenceController.shared.container.viewContext
-        var saveSucceeded = false
-
-        context.performAndWait {
-            let imageEntity = ImageEntity(context: context)
-            imageEntity.id = uuid
-            imageEntity.image = data
-            imageEntity.imageFormat = format
-            imageEntity.thumbnail = createThumbnailData(from: image)
-
-            do {
-                try context.save()
-                saveSucceeded = true
-            }
-            catch {
-                context.rollback()
-                print("Error saving generated image: \(error)")
-            }
-        }
-
-        return saveSucceeded ? uuid : nil
-    }
-
-    private func createThumbnailData(from image: NSImage) -> Data? {
-        let thumbnailSize = CGFloat(AppConstants.thumbnailSize)
-        let originalSize = image.size
-        guard originalSize.width > 0, originalSize.height > 0 else { return nil }
-
-        let aspectRatio = originalSize.width / originalSize.height
-        var targetSize = CGSize(width: thumbnailSize, height: thumbnailSize)
-
-        if aspectRatio > 1 {
-            targetSize.height = thumbnailSize / aspectRatio
-        }
-        else {
-            targetSize.width = thumbnailSize * aspectRatio
-        }
-
-        let thumbnail = NSImage(size: targetSize)
-        thumbnail.lockFocus()
-        NSGraphicsContext.current?.imageInterpolation = .high
-        image.draw(in: CGRect(origin: .zero, size: targetSize), from: .zero, operation: .copy, fraction: 1.0)
-        thumbnail.unlockFocus()
-
-        guard let tiffData = thumbnail.tiffRepresentation,
-            let bitmap = NSBitmapImageRep(data: tiffData)
-        else {
-            return nil
-        }
-
-        return bitmap.representation(using: .jpeg, properties: [.compressionFactor: 0.7])
-    }
 
     private func shouldIncludeImageGenerationTool() -> Bool {
         imageGenerationSupported

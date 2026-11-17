@@ -178,7 +178,8 @@ class ChatViewModel: NSObject, ObservableObject, NSFetchedResultsControllerDeleg
                 config: config,
                 imageGenerationSupported: supportsImageGeneration,
                 chatID: chat.id,
-                workspaceURL: chat.workspace?.rootURL
+                workspaceURL: chat.workspace?.rootURL,
+                imageContext: viewContext
             ),
             viewContext: self.viewContext
         )

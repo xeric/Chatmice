@@ -437,6 +437,7 @@ struct SyncDebugLogView: View {
                         }
                         .id(entry.id)
                     }
+                    .background(ThinScrollbarConfiguration(target: .adjacentList))
                     .onChange(of: filteredLogs.count) {
                         if autoScroll, let lastEntry = filteredLogs.last {
                             withAnimation {

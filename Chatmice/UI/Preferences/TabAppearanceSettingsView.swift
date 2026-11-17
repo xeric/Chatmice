@@ -175,6 +175,7 @@ struct TabAppearanceSettingsView: View {
                 ScrollView {
                     typographyPreview
                         .padding(16)
+                        .background(ThinScrollbarConfiguration().allowsHitTesting(false))
                 }
                 .frame(minHeight: 320, maxHeight: 420)
                 .background(Color(NSColor.textBackgroundColor).opacity(0.55))

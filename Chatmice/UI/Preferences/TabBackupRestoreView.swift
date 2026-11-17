@@ -526,6 +526,7 @@ struct BackupRestoreView: View {
                                     }
                                 }
                             }
+                            .background(ThinScrollbarConfiguration().allowsHitTesting(false))
                         }
                         .frame(maxHeight: 240)
                     }

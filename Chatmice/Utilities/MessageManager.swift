@@ -364,6 +364,13 @@ class MessageManager: ObservableObject {
     }
 
     func generateChatNameIfNeeded(chat: ChatEntity, force: Bool = false) {
+        if apiService is OpenAIImagesHandler {
+            // A title prompt must never trigger another paid image generation.
+            guard force || chat.name.isEmpty else { return }
+            chat.name = String((chat.messagesArray.first(where: { $0.own })?.body ?? "").prefix(80))
+            viewContext.saveWithRetry(attempts: 3)
+            return
+        }
         guard force || chat.name == "", !chat.messagesArray.isEmpty else {
             #if DEBUG
                 print("Chat name not needed, skipping generation")
@@ -410,6 +417,14 @@ class MessageManager: ObservableObject {
     }
 
     func testAPI(model: String, completion: @escaping (Result<Void, Error>) -> Void) {
+        if let images = apiService as? OpenAIImagesHandler {
+            Task { @MainActor in
+                do { try await images.testConnection(modelID: model); completion(.success(())) }
+                catch let error as APIError { completion(.failure(error)) }
+                catch { completion(.failure(APIError.requestFailed(error))) }
+            }
+            return
+        }
         var requestMessages: [[String: String]] = []
         let temperature: Float = 1
 
@@ -443,6 +458,9 @@ class MessageManager: ObservableObject {
         contextSize: Int,
         excluding responseToReplace: MessageEntity? = nil
     ) throws -> [[String: String]] {
+        if apiService is OpenAIImagesHandler {
+            return [["role": "user", "content": userMessage]]
+        }
         var messages = try constructRequestMessages(
             chat: chat,
             forUserMessage: userMessage,
@@ -630,6 +648,7 @@ class MessageManager: ObservableObject {
         chat: ChatEntity,
         recentMessageLimit: Int
     ) async throws -> Bool {
+        guard !(apiService is OpenAIImagesHandler) else { return false }
         guard !chat.isDeleted,
               let resolution = ModelContextRegistry.resolve(service: chat.apiService, modelID: chat.gptModel)
         else { return false }

@@ -44,6 +44,12 @@ struct TabAPIServicesView: View {
                                 subtitle: "Official OpenAI API"
                             ))
                         }
+                        Button("OpenAI Image Generations") {
+                            presentAddSheet(preset: ProviderPresetItem(
+                                name: "OpenAI Images", type: "openai-images", defaultURL: "https://api.openai.com/v1", defaultModel: "gpt-image-1",
+                                subtitle: "GPT Image text-to-image API"
+                            ))
+                        }
                         Button("Anthropic") {
                             presentAddSheet(preset: ProviderPresetItem(
                                 name: "Anthropic", type: "claude", defaultURL: "https://api.anthropic.com/v1", defaultModel: "claude-3-5-sonnet-latest",
@@ -409,6 +415,7 @@ struct ModelConfigurationEditor: View {
                     Text("Automatic uses detected or default capabilities. Overrides apply only to this model on this provider; they do not add capabilities to the server. Save the provider with Done to apply changes.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
+                .background(ThinScrollbarConfiguration().allowsHitTesting(false))
             }
             HStack {
                 Button("Reset to Automatic") {
@@ -582,7 +589,7 @@ struct ProviderEditorSheet: View {
                                     TextField("", text: $urlText, prompt: Text(apiBaseURLPrompt))
                                         .textFieldStyle(.roundedBorder)
 
-                                    Text("Do not include /chat/completions in the URL")
+                                    Text(typeText == "openai-images" ? "Use the API base URL or /v1/images/generations" : "Do not include /chat/completions in the URL")
                                         .font(.caption2)
                                         .foregroundStyle(Color.secondary)
                                 }
@@ -597,6 +604,7 @@ struct ProviderEditorSheet: View {
                                 Picker("", selection: $typeText) {
                                     Text("Chat Completions (OpenAI Compatible)").tag("chatgpt")
                                     Text("Responses (OpenAI)").tag("openai-responses")
+                                    Text("Image Generations (OpenAI / GPT Image)").tag("openai-images")
                                     Text("Anthropic Messages").tag("claude")
                                     Text("Google Gemini").tag("gemini")
                                     Text("Ollama").tag("ollama")
@@ -606,6 +614,15 @@ struct ProviderEditorSheet: View {
                                 }
                                 .labelsHidden()
                                 .pickerStyle(.menu)
+                            }
+                            if typeText == "openai-images" {
+                                GridRow {
+                                    Color.clear.frame(width: 110, height: 1)
+                                    Text("Current text prompt only. Conversation context, Thinking, tools, and search are not used. Input images and edits are not supported.")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
                             }
 
                             GridRow {
@@ -641,6 +658,7 @@ struct ProviderEditorSheet: View {
                         DisclosureGroup(isExpanded: $isHeadersExpanded) {
                             VStack(alignment: .leading, spacing: 8) {
                                 TextEditor(text: $headersText)
+                                    .background(ThinScrollbarConfiguration(target: .adjacentTextEditor))
                                     .font(.system(.body, design: .monospaced))
                                     .frame(height: 90)
                                     .onChange(of: headersText) { _, value in
@@ -804,6 +822,7 @@ struct ProviderEditorSheet: View {
                                         }
                                     }
                                     .padding(.vertical, 2)
+                                    .background(ThinScrollbarConfiguration().allowsHitTesting(false))
                                 }
                                 .frame(height: 140)
                                 .background(
@@ -876,6 +895,7 @@ struct ProviderEditorSheet: View {
                     }
                 }
                 .padding(20)
+                .background(ThinScrollbarConfiguration().allowsHitTesting(false))
             }
 
             // Bottom Footer
@@ -964,7 +984,7 @@ struct ProviderEditorSheet: View {
             Text("Add Custom Model")
                 .font(.headline)
 
-            TextField("e.g. gpt-4o, claude-3-5-sonnet", text: $newModelInput)
+            TextField(typeText == "openai-images" ? "e.g. gpt-image-1, gpt-image-2.6" : "e.g. gpt-4o, claude-3-5-sonnet", text: $newModelInput)
                 .textFieldStyle(.roundedBorder)
                 .font(.system(size: 12, design: .monospaced))
                 .frame(width: 280)
@@ -999,8 +1019,9 @@ struct ProviderEditorSheet: View {
                 Text("Test Models")
                     .font(.headline)
                 Text(
-                    "Each selected model receives connection, audio-input, image-input, and thinking probes. "
-                        + "Tested results override model metadata defaults."
+                    typeText == "openai-images"
+                        ? "Checks authentication and each exact model ID in the provider's model catalog. No images are generated; chat, audio, vision, and thinking probes do not apply."
+                        : "Each selected model receives connection, audio-input, image-input, and thinking probes. Tested results override model metadata defaults."
                 )
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -1071,6 +1092,7 @@ struct ProviderEditorSheet: View {
                         }
                     }
                 }
+                .background(ThinScrollbarConfiguration().allowsHitTesting(false))
             }
             .frame(height: 300)
             .background(
@@ -1201,6 +1223,10 @@ struct ProviderEditorSheet: View {
                     refreshMetadataDefaults()
                 }
             }
+            if typeText == "openai-images", modelsList.isEmpty,
+               let configuredModel = service.model, !configuredModel.isEmpty {
+                modelsList = [makeModelRow(modelID: configuredModel)]
+            }
             return
         }
 
@@ -1245,6 +1271,12 @@ struct ProviderEditorSheet: View {
         targetService.url = URL(string: urlText)
         targetService.type = typeText
         targetService.model = modelsList.first?.modelID ?? ""
+        if typeText == "openai-images" {
+            targetService.generateChatNames = false
+            targetService.imageUploadsAllowed = false
+            targetService.pdfUploadsAllowed = false
+            targetService.imageGenerationSupported = true
+        }
         if let id = targetService.id {
             let credentialIdentifier = id.uuidString
             targetService.tokenIdentifier = credentialIdentifier
@@ -1271,6 +1303,9 @@ struct ProviderEditorSheet: View {
     }
 
     private func displayedCapabilities(for model: ServiceModelRow) -> DisplayedCapabilities {
+        if typeText == "openai-images" {
+            return DisplayedCapabilities(vision: false, files: false, audio: false, reasoning: false, tested: capabilityResults[model.modelID])
+        }
         let tested = capabilityResults[model.modelID]
         let metadata = ModelMetadataCatalog.shared
             .metadata(modelID: model.modelID, serviceType: typeText)?.metadata
@@ -1454,6 +1489,7 @@ struct ProviderEditorSheet: View {
                     }
                 }
                 .padding(.vertical, 4)
+                .background(ThinScrollbarConfiguration().allowsHitTesting(false))
             }
             .frame(height: 280)
             .background(
@@ -1543,6 +1579,8 @@ struct ProviderEditorSheet: View {
             return ["gpt-4o", "gpt-4o-mini", "o3", "o3-mini"]
         case "openai-responses":
             return ["gpt-4o", "gpt-4o-mini", "o1", "o3-mini"]
+        case "openai-images":
+            return AppConstants.defaultApiConfigurations["openai-images"]?.models ?? []
         case "claude":
             return ["claude-sonnet-4-5", "claude-haiku-4-5", "claude-opus-4-1"]
         case "gemini":

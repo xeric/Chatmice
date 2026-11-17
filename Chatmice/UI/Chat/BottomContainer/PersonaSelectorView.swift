@@ -12,6 +12,7 @@ import SwiftUI
 enum PersonaAppearance {
     static let defaultColor = "#FF4444"
     static let defaultSymbol = "person.fill"
+    private static let symbolValidity = NSCache<NSString, NSNumber>()
 
     static func color(for persona: PersonaEntity?) -> Color {
         Color(hex: persona?.color ?? defaultColor) ?? Color(hex: defaultColor) ?? .red
@@ -36,7 +37,12 @@ enum PersonaAppearance {
     }
 
     static func isValidSymbol(_ name: String) -> Bool {
-        NSImage(systemSymbolName: name, accessibilityDescription: nil) != nil
+        let normalized = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty else { return false }
+        if let cached = symbolValidity.object(forKey: normalized as NSString) { return cached.boolValue }
+        let valid = NSImage(systemSymbolName: normalized, accessibilityDescription: nil) != nil
+        symbolValidity.setObject(NSNumber(value: valid), forKey: normalized as NSString)
+        return valid
     }
 
     static func defaultSymbol(for personaName: String?) -> String {
@@ -141,6 +147,7 @@ struct PersonaPickerPopoverView: View {
                 }
                 .padding(.horizontal, 8)
                 .padding(.bottom, 8)
+                .background(ThinScrollbarConfiguration().allowsHitTesting(false))
             }
         }
         .frame(width: 340, height: 420)
@@ -165,6 +172,7 @@ struct PersonaPickerPopoverView: View {
                     .foregroundStyle(.secondary)
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(ThinScrollbarConfiguration().allowsHitTesting(false))
             }
             .frame(maxHeight: 120)
             .padding(10)
@@ -464,6 +472,7 @@ struct PersonaSymbolPicker: View {
     ) -> some View {
         ScrollView {
             if options.isEmpty {
+                ThinScrollbarConfiguration().frame(width: 0, height: 0).allowsHitTesting(false)
                 Text("No matching symbols. You can still enter any valid SF Symbol name below.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -477,6 +486,7 @@ struct PersonaSymbolPicker: View {
                         }
                     }
                 }
+                .background(ThinScrollbarConfiguration().allowsHitTesting(false))
             }
         }
     }

@@ -31,6 +31,7 @@ struct HighlightedText: View {
     }
 
     var body: some View {
+        if highlight.isEmpty && elementType != "table" { return Text(text).eraseToAnyView() }
         let shouldUseHighlight = !highlight.isEmpty
         let shouldUseAttributedText = (text.count < AppConstants.maxHighlightableTextLength && !text.contains("data:image") && !text.contains("base64"))
             || elementType == "table"

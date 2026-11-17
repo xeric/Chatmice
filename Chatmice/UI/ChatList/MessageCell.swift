@@ -12,76 +12,51 @@ struct MessageCell: View, Equatable {
 
     static func == (lhs: MessageCell, rhs: MessageCell) -> Bool {
         lhs.chatObjectID == rhs.chatObjectID &&
-        lhs.timestamp == rhs.timestamp &&
-        lhs.message == rhs.message &&
+        lhs.presentation == rhs.presentation &&
         lhs.showsAttentionIndicator == rhs.showsAttentionIndicator &&
         lhs.activitySnapshot == rhs.activitySnapshot &&
-        lhs.$isActive.wrappedValue == rhs.$isActive.wrappedValue &&
-        lhs.isPinned == rhs.isPinned &&
-        lhs.searchText == rhs.searchText &&
-        lhs.personaColor == rhs.personaColor &&
-        lhs.personaSymbolName == rhs.personaSymbolName &&
-        lhs.personaOverlaySymbolName == rhs.personaOverlaySymbolName
+        lhs.isActive == rhs.isActive &&
+        lhs.searchText == rhs.searchText
     }
 
     let chatObjectID: NSManagedObjectID
-    let personaColor: String?
-    let personaSymbolName: String?
-    let personaOverlaySymbolName: String?
-    let chatName: String
-    @State var timestamp: Date
-    var message: String
+    let presentation: SidebarConversationPresentation
     let showsAttentionIndicator: Bool
     let activitySnapshot: ChatActivitySnapshot?
-    let isPinned: Bool
-    @Binding var isActive: Bool
+    let isActive: Bool
     let searchText: String
+    let onSelect: () -> Void
     @State private var isHovered = false
     @Environment(\.colorScheme) var colorScheme
 
 
-    
-    private var filteredMessage: String {
-        let withoutToolActivity = ToolActivityRecord.removingMarkers(in: message)
-        let withoutThinking = withoutToolActivity.replacingOccurrences(
-            of: "<think>.*?</think>",
-            with: "",
-            options: .regularExpression
-        )
-        return withoutThinking
-            .replacingOccurrences(of: "\n", with: " ")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
     var body: some View {
-        Button {
-            isActive = true
-        } label: {
+        Button(action: onSelect) {
             HStack(spacing: 8) {
                 PersonaIconView(
-                    color: Color(hex: personaColor ?? PersonaAppearance.defaultColor) ?? .red,
-                    symbolName: personaSymbolName ?? PersonaAppearance.defaultSymbol,
-                    overlaySymbolName: personaOverlaySymbolName,
+                    color: Color(hex: presentation.color ?? PersonaAppearance.defaultColor) ?? .red,
+                    symbolName: presentation.symbolName ?? PersonaAppearance.defaultSymbol,
+                    overlaySymbolName: presentation.overlaySymbolName,
                     size: 22
                 )
                 .padding(.leading, 8)
 
                 VStack(alignment: .leading, spacing: 4) {
 
-                    if chatName != "" {
-                        HighlightedText(chatName, highlight: searchText, elementType: "chatlist")
+                    if !presentation.title.isEmpty {
+                        HighlightedText(presentation.title, highlight: searchText, elementType: "chatlist")
                             .font(.headline)
                             .lineLimit(1)
                             .truncationMode(.tail)
                     }
 
-                    if filteredMessage != "" {
-                        if message.starts(with: "<image-uuid>") {
+                    if !presentation.preview.isEmpty {
+                        if presentation.isImagePreview {
                             Text("🖼️ Image")
                                 .lineLimit(1)
                                 .truncationMode(.tail)
                         } else {
-                            HighlightedText(filteredMessage, highlight: searchText, elementType: "chatlist")
+                            HighlightedText(presentation.preview, highlight: searchText, elementType: "chatlist")
                                 .lineLimit(1)
                                 .truncationMode(.tail)
                         }
@@ -96,7 +71,7 @@ struct MessageCell: View, Equatable {
                     } else if showsAttentionIndicator && !isActive {
                         ChatCompletionBadge()
                     }
-                    if isPinned {
+                    if presentation.isPinned {
                         Image(systemName: "pin.fill")
                             .foregroundColor(self.isActive ? .white : .gray)
                             .font(.caption)
@@ -164,17 +139,17 @@ struct MessageCell_Previews: PreviewProvider {
         let chat = createPreviewChat(name: name, isPinned: isPinned)
         return MessageCell(
             chatObjectID: chat.objectID,
-            personaColor: chat.persona?.color,
-            personaSymbolName: chat.persona?.symbolName,
-            personaOverlaySymbolName: chat.persona?.symbolOverlayName,
-            chatName: chat.name,
-            timestamp: Date(),
-            message: message,
+            presentation: SidebarConversationPresentation(
+                chatName: chat.name, personaColor: chat.persona?.color,
+                personaSymbolName: chat.persona?.symbolName,
+                personaOverlaySymbolName: chat.persona?.symbolOverlayName,
+                timestamp: Date(), preview: message, isPinned: isPinned
+            ),
             showsAttentionIndicator: showsAttentionIndicator,
             activitySnapshot: nil,
-            isPinned: isPinned,
-            isActive: .constant(isActive),
-            searchText: ""
+            isActive: isActive,
+            searchText: "",
+            onSelect: {}
         )
     }
 

@@ -616,6 +616,8 @@ final class AppPresentationController: NSObject, ObservableObject {
 
     func registerMainWindow(_ window: NSWindow) {
         window.identifier = .chatmiceMainWindow
+        // Avoid the native close fade and reopen zoom without changing SwiftUI scene ownership.
+        window.animationBehavior = .none
         applyActivationPolicy(hasMainWindow: true)
     }
 
@@ -677,57 +679,103 @@ private struct MainWindowTracker: NSViewRepresentable {
         nsView.stopTracking()
     }
 }
-@MainActor
-private final class ThinScrollerController: NSObject {
-    static let shared = ThinScrollerController()
-    private var scheduledWindows: Set<ObjectIdentifier> = []
 
-    private override init() {
-        super.init()
-        for name in [
-            NSWindow.didBecomeKeyNotification,
-        ] {
-            NotificationCenter.default.addObserver(
-                self,
-                selector: #selector(windowNeedsScrollerConfiguration(_:)),
-                name: name,
-                object: nil
-            )
-        }
+/// Configure only the native scroll container owned by this mount point, never a window's view tree.
+struct ThinScrollbarConfiguration: NSViewRepresentable {
+    enum Target {
+        /// Place the probe inside ScrollView content.
+        case ancestor
+        /// Place the probe directly in the native control's background.
+        case adjacentTextEditor
+        case adjacentList
     }
 
-    func applyToExistingWindows() {
-        for window in NSApp.windows {
-            scheduleConfiguration(for: window)
-        }
-    }
+    var target: Target = .ancestor
 
-    @objc private func windowNeedsScrollerConfiguration(_ notification: Notification) {
-        guard let window = notification.object as? NSWindow else { return }
-        scheduleConfiguration(for: window)
-    }
+    final class Probe: NSView {
+        var target: Target = .ancestor
+        private weak var configuredScrollView: NSScrollView?
+        private var styleObservation: NSKeyValueObservation?
+        private var associationGeneration: UInt = 0
+        private var isRefreshScheduled = false
 
-    private func scheduleConfiguration(for window: NSWindow) {
-        let windowID = ObjectIdentifier(window)
-        guard scheduledWindows.insert(windowID).inserted else { return }
+        // Native passiveness avoids adding a SwiftUI graphics wrapper around adjacent mount hooks.
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
-        DispatchQueue.main.async { [weak self, weak window] in
-            guard let self else { return }
-            self.scheduledWindows.remove(windowID)
-            guard let contentView = window?.contentView else { return }
-            self.configure(contentView)
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            stopObserving()
+            guard window != nil else { return }
+            DispatchQueue.main.async { [weak self] in self?.configureContainer() }
         }
-    }
 
-    private func configure(_ view: NSView) {
-        if let scrollView = view as? NSScrollView {
-            Self.configure(scrollView)
+        func stopObserving() {
+            styleObservation?.invalidate()
+            styleObservation = nil
+            configuredScrollView = nil
+            isRefreshScheduled = false
+            associationGeneration &+= 1
         }
-        else if let scroller = view as? NSScroller, scroller.controlSize != .mini {
-            scroller.controlSize = .mini
+
+        private func scheduleRefresh(for scroll: NSScrollView) {
+            guard configuredScrollView === scroll, window != nil,
+                  scroll.window === window, !isRefreshScheduled else { return }
+            isRefreshScheduled = true
+            let generation = associationGeneration
+            DispatchQueue.main.async { [weak self, weak scroll] in
+                guard let self, self.associationGeneration == generation else { return }
+                self.isRefreshScheduled = false
+                guard let scroll, self.window != nil,
+                      self.configuredScrollView === scroll, scroll.window === self.window else { return }
+                ThinScrollbarConfiguration.configure(scroll)
+            }
         }
-        for subview in view.subviews {
-            configure(subview)
+
+        func configureContainer() {
+            guard window != nil, configuredScrollView == nil else { return }
+            let scroll: NSScrollView?
+            switch target {
+            case .ancestor:
+                var ancestor = superview
+                while let view = ancestor, !(view is NSScrollView) { ancestor = view.superview }
+                scroll = ancestor as? NSScrollView
+            case .adjacentTextEditor, .adjacentList:
+                // SwiftUI mounts the background host immediately before this control's native host.
+                // Inspect that one sibling only; never search the enclosing hosting view or outer scroll.
+                guard let host = superview, let parent = host.superview,
+                      let index = parent.subviews.firstIndex(where: { $0 === host }),
+                      index + 1 < parent.subviews.count else { return }
+                scroll = Self.findScrollView(in: parent.subviews[index + 1], target: target)
+            }
+            guard let scroll else { return }
+            ThinScrollbarConfiguration.configure(scroll)
+            configuredScrollView = scroll
+            switch target {
+            case .ancestor:
+                break
+            case .adjacentTextEditor, .adjacentList:
+                // SwiftUI can reset even an unchanged control when its parent's native properties update.
+                styleObservation = scroll.observe(\.scrollerStyle, options: []) { [weak self] observed, _ in
+                    MainActor.assumeIsolated {
+                        guard observed.scrollerStyle != .overlay else { return }
+                        self?.scheduleRefresh(for: observed)
+                    }
+                }
+            }
+        }
+
+        private static func findScrollView(in view: NSView, target: Target) -> NSScrollView? {
+            if let scroll = view as? NSScrollView {
+                switch target {
+                case .adjacentTextEditor: return scroll.documentView is NSTextView ? scroll : nil
+                case .adjacentList: return scroll.documentView is NSTableView ? scroll : nil
+                case .ancestor: return nil
+                }
+            }
+            for child in view.subviews {
+                if let scroll = findScrollView(in: child, target: target) { return scroll }
+            }
+            return nil
         }
     }
 
@@ -737,34 +785,16 @@ private final class ThinScrollerController: NSObject {
         if scrollView.verticalScroller?.controlSize != .mini { scrollView.verticalScroller?.controlSize = .mini }
         if scrollView.horizontalScroller?.controlSize != .mini { scrollView.horizontalScroller?.controlSize = .mini }
     }
-}
-
-/// Configure a newly mounted SwiftUI scroll container without scanning the conversation on window redraws.
-struct ThinScrollbarConfiguration: NSViewRepresentable {
-    final class Probe: NSView {
-        override func viewDidMoveToWindow() {
-            super.viewDidMoveToWindow()
-            DispatchQueue.main.async { [weak self] in self?.configureAncestor() }
-        }
-
-        func configureAncestor() {
-            var ancestor = superview
-            while let view = ancestor {
-                if let scroll = view as? NSScrollView {
-                    ThinScrollerController.configure(scroll)
-                    return
-                }
-                ancestor = view.superview
-            }
-        }
-    }
 
     func makeNSView(context: Context) -> Probe {
         let view = Probe()
+        view.target = target
         view.setAccessibilityElement(false)
         return view
     }
-    func updateNSView(_ nsView: Probe, context: Context) { nsView.configureAncestor() }
+    func updateNSView(_ nsView: Probe, context: Context) { nsView.configureContainer() }
+
+    static func dismantleNSView(_ nsView: Probe, coordinator: ()) { nsView.stopObserving() }
 }
 
 
@@ -887,7 +917,6 @@ struct ChatmiceApp: App {
             DatabasePatcher.deliverPendingGeminiMigrationNotificationIfNeeded()
         }
         NotificationPresenter.shared.requestAuthorizationIfNeeded()
-        _ = ThinScrollerController.shared
 
         // Enable badge for existing users who were authorized without .badge
         NotificationPresenter.shared.enableBadgeForExistingUsers()
@@ -929,11 +958,6 @@ struct ChatmiceApp: App {
                 if UserDefaults.standard.bool(forKey: "autoCheckForUpdates") {
                     updateCoordinator.checkForUpdatesInBackground()
                 }
-            }
-        }
-        .onChange(of: persistenceController.loadState) { _, state in
-            if state == .ready {
-                ThinScrollerController.shared.applyToExistingWindows()
             }
         }
         .commands {

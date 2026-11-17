@@ -48,7 +48,7 @@ struct APIServiceDetailView: View {
                             Text("API Type:")
                                 .frame(width: 100, alignment: .leading)
 
-                            Image("logo_\(viewModel.type)")
+                            Image("logo_\(viewModel.type == "openai-images" ? "openai-responses" : viewModel.type)")
                                 .resizable()
                                 .renderingMode(.template)
                                 .interpolation(.high)
@@ -57,7 +57,7 @@ struct APIServiceDetailView: View {
 
                             Picker("", selection: $viewModel.type) {
                                 ForEach(types, id: \.self) {
-                                    Text(AppConstants.defaultApiConfigurations[$0]?.name ?? $0)
+                                    Text($0 == "openai-images" ? "Image Generations (OpenAI / GPT Image)" : (AppConstants.defaultApiConfigurations[$0]?.name ?? $0))
                                 }
                             }
                             .frame(maxWidth: .infinity, alignment: .leading)

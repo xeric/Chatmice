@@ -53,6 +53,9 @@ extension ServiceModelRow {
         serviceType: String,
         providerContextTokens: Int? = nil
     ) -> ModelConfigurationOverrides? {
+        if serviceType.lowercased() == "openai-images" {
+            return ModelConfigurationOverrides(visionSupported: false, filesSupported: false, audioSupported: false, thinkingSupported: false)
+        }
         let metadata = ModelMetadataCatalog.shared
             .metadata(modelID: modelID, serviceType: serviceType)?.metadata
         let audioSupported = metadata?.supportsAudio
@@ -112,6 +115,7 @@ enum ModelConfigurationStore {
 enum ModelAttachmentCapabilities {
     static func vision(service: APIServiceEntity?, modelID: String) -> Bool {
         guard let service else { return false }
+        guard service.type?.lowercased() != "openai-images" else { return false }
         let overrides = ModelConfigurationStore.overrides(serviceID: service.id, modelID: modelID)
         if let manual = overrides.visionSupported { return manual }
         if let tested = service.id.flatMap({ ModelCapabilityTestStore.results(for: $0)[modelID]?.visionSupported }) {
@@ -126,6 +130,7 @@ enum ModelAttachmentCapabilities {
     }
 
     static func files(service: APIServiceEntity?, modelID: String) -> Bool {
+        guard service?.type?.lowercased() != "openai-images" else { return false }
         let overrides = ModelConfigurationStore.overrides(serviceID: service?.id, modelID: modelID)
         if let manual = overrides.filesSupported { return manual }
         let defaults = ModelConfigurationStore.metadataDefaults(serviceID: service?.id, modelID: modelID)
@@ -137,6 +142,7 @@ enum ModelAttachmentCapabilities {
     }
 
     static func audio(service: APIServiceEntity?, modelID: String) -> Bool {
+        guard service?.type?.lowercased() != "openai-images" else { return false }
         let overrides = ModelConfigurationStore.overrides(serviceID: service?.id, modelID: modelID)
         if let manual = overrides.audioSupported { return manual }
         if let tested = service?.id.flatMap({ ModelCapabilityTestStore.results(for: $0)[modelID]?.audioSupported }) {

@@ -288,7 +288,7 @@ final class ModelMetadataCatalog: @unchecked Sendable {
             return RemoteTarget(provider: provider, modelID: modelID)
         }
 
-        let genericServiceTypes = ["openai", "chatgpt", "openai-responses"]
+        let genericServiceTypes = ["openai", "chatgpt", "openai-responses", "openai-images"]
         if !genericServiceTypes.contains(serviceType.lowercased()),
             let provider = providerAlias(serviceType)
         {

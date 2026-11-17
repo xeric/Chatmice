@@ -27,6 +27,12 @@ class APIServiceManager {
         apiService.useStreamResponse = useStreamResponse
         apiService.generateChatNames = generateChatNames
         apiService.tokenIdentifier = serviceID.uuidString
+        if type.lowercased() == "openai-images" {
+            apiService.generateChatNames = false
+            apiService.imageGenerationSupported = true
+            apiService.imageUploadsAllowed = false
+            apiService.pdfUploadsAllowed = false
+        }
         
         do {
             try viewContext.save()

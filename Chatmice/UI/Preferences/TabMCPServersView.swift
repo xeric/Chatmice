@@ -405,6 +405,7 @@ struct TabMCPServersView: View {
                             }
                         }
                     }
+                    .background(ThinScrollbarConfiguration().allowsHitTesting(false))
                 }
             }
         }
@@ -568,7 +569,10 @@ struct TabMCPServersView: View {
             }
 
             ScrollView {
-                if formMode == .form { visualFormView } else { rawJSONView }
+                Group {
+                    if formMode == .form { visualFormView } else { rawJSONView }
+                }
+                .background(ThinScrollbarConfiguration().allowsHitTesting(false))
             }
             .frame(height: formMode == .form ? 520 : 260)
 
@@ -639,6 +643,7 @@ struct TabMCPServersView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     TextEditor(text: $formEnv)
+                        .background(ThinScrollbarConfiguration(target: .adjacentTextEditor))
                         .font(.system(.body, design: .monospaced))
                         .frame(height: 80)
                         .padding(4)
@@ -664,6 +669,7 @@ struct TabMCPServersView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     TextEditor(text: $formEnv)
+                        .background(ThinScrollbarConfiguration(target: .adjacentTextEditor))
                         .font(.system(.body, design: .monospaced))
                         .frame(height: 80)
                         .padding(4)
@@ -733,6 +739,7 @@ struct TabMCPServersView: View {
                 .foregroundStyle(.secondary)
 
             TextEditor(text: $rawJSON)
+                .background(ThinScrollbarConfiguration(target: .adjacentTextEditor))
                 .font(.system(.body, design: .monospaced))
                 .frame(height: 220)
                 .padding(4)

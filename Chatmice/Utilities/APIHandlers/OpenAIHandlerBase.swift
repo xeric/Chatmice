@@ -5,6 +5,7 @@
 //  Created by Renat on 19.10.2025.
 //
 
+import AppKit
 import CoreData
 import Foundation
 
@@ -28,6 +29,28 @@ enum OpenAIEndpointURL {
             base.deleteLastPathComponent()
         }
         return base.appendingPathComponent("responses")
+    }
+    static func imagesGenerations(from configuredURL: URL) -> URL {
+        var components = URLComponents(url: configuredURL, resolvingAgainstBaseURL: false)
+        let path = configuredURL.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        components?.path = path.isEmpty ? "" : "/" + path
+        var base = components?.url ?? configuredURL
+        if base.path.hasSuffix("/images/generations") { return base }
+        if base.path.hasSuffix("/chat/completions") {
+            base.deleteLastPathComponent()
+            base.deleteLastPathComponent()
+        } else if base.lastPathComponent == "responses" {
+            base.deleteLastPathComponent()
+        } else if base.lastPathComponent == "images" {
+            return base.appendingPathComponent("generations")
+        }
+        if base.path.isEmpty || base.path == "/" { base.appendPathComponent("v1") }
+        return base.appendingPathComponent("images/generations")
+    }
+
+    static func imagesModels(from configuredURL: URL) -> URL {
+        imagesGenerations(from: configuredURL)
+            .deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("models")
     }
 }
 
@@ -71,22 +94,17 @@ class OpenAIHandlerBase {
         }
 
         if !(200...299).contains(httpResponse.statusCode) {
-            if let data = data, let errorResponse = String(data: data, encoding: .utf8) {
-                switch httpResponse.statusCode {
-                case 401:
-                    return .failure(.unauthorized)
-                case 429:
-                    return .failure(.rateLimited)
-                case 400...499:
-                    return .failure(.serverError("Client Error: \(errorResponse)"))
-                case 500...599:
-                    return .failure(.serverError("Server Error: \(errorResponse)"))
-                default:
-                    return .failure(.unknown("Unknown error: \(errorResponse)"))
-                }
-            }
-            else {
-                return .failure(.serverError("HTTP \(httpResponse.statusCode)"))
+            switch httpResponse.statusCode {
+            case 401:
+                return .failure(.unauthorized)
+            case 429:
+                return .failure(.rateLimited)
+            default:
+                let body = data.flatMap { String(data: $0, encoding: .utf8) }?
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                let detail = body.flatMap { $0.isEmpty ? nil : String($0.prefix(2_048)) }
+                    ?? "Empty or unreadable response body."
+                return .failure(.serverError("HTTP \(httpResponse.statusCode): \(detail)"))
             }
         }
 
@@ -151,6 +169,53 @@ class OpenAIHandlerBase {
 
     func isNotSSEComment(_ string: String) -> Bool {
         return !string.starts(with: ":")
+    }
+
+    func saveGeneratedImages(_ payloads: [Data], format: String, context suppliedContext: NSManagedObjectContext? = nil) throws -> [UUID] {
+        let images = try payloads.map { data -> NSImage in
+            guard !data.isEmpty, let image = NSImage(data: data), image.isValid else {
+                throw APIError.decodingFailed("The image response contains invalid image bytes.")
+            }
+            return image
+        }
+        let context = suppliedContext ?? PersistenceController.shared.container.viewContext
+        return try context.performAndWait {
+            var inserted: [ImageEntity] = []
+            do {
+                for (data, image) in zip(payloads, images) {
+                    let entity = ImageEntity(context: context)
+                    entity.id = UUID()
+                    entity.image = data
+                    entity.imageFormat = format
+                    entity.thumbnail = createThumbnailData(from: image)
+                    inserted.append(entity)
+                }
+                try context.save()
+                return inserted.compactMap(\.id)
+            } catch {
+                // Do not roll back unrelated pending chat edits in the supplied context.
+                inserted.forEach(context.delete)
+                throw APIError.unknown("Failed to save generated images: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    private func createThumbnailData(from image: NSImage) -> Data? {
+        let thumbnailSize = CGFloat(AppConstants.thumbnailSize)
+        let originalSize = image.size
+        guard originalSize.width > 0, originalSize.height > 0 else { return nil }
+        let aspectRatio = originalSize.width / originalSize.height
+        var targetSize = CGSize(width: thumbnailSize, height: thumbnailSize)
+        if aspectRatio > 1 { targetSize.height = thumbnailSize / aspectRatio }
+        else { targetSize.width = thumbnailSize * aspectRatio }
+        let thumbnail = NSImage(size: targetSize)
+        thumbnail.lockFocus()
+        NSGraphicsContext.current?.imageInterpolation = .high
+        image.draw(in: CGRect(origin: .zero, size: targetSize), from: .zero, operation: .copy, fraction: 1.0)
+        thumbnail.unlockFocus()
+        guard let tiffData = thumbnail.tiffRepresentation,
+              let bitmap = NSBitmapImageRep(data: tiffData) else { return nil }
+        return bitmap.representation(using: .jpeg, properties: [.compressionFactor: 0.7])
     }
 
     func recordTokenUsage(from data: Data) {

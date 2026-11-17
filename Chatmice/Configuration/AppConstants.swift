@@ -305,6 +305,15 @@ struct AppConstants {
             pdfUploadsSupported: true,
             imageGenerationSupported: true
         ),
+        "openai-images": defaultApiConfiguration(
+            name: "OpenAI Images",
+            url: Self.apiUrlOpenAIResponses,
+            apiKeyRef: "https://platform.openai.com/docs/api-reference/api-keys",
+            apiModelRef: "https://developers.openai.com/api/docs/models",
+            defaultModel: "gpt-image-1",
+            models: ["gpt-image-1", "gpt-image-1-mini", "gpt-image-1.5"],
+            imageGenerationSupported: true
+        ),
         "chatgpt": defaultApiConfiguration(
             name: "Generic Completions API",
             url: Self.apiUrlChatCompletions,
@@ -430,7 +439,7 @@ struct AppConstants {
     ]
 
     static let apiTypes = [
-        "openai-responses", "chatgpt", "ollama", "claude", "xai", "gemini", "perplexity", "deepseek", "openrouter",
+        "openai-responses", "openai-images", "chatgpt", "ollama", "claude", "xai", "gemini", "perplexity", "deepseek", "openrouter",
     ]
     static let newChatNotification = Notification.Name("newChatNotification")
     static let largeMessageSymbolsThreshold = 25000
