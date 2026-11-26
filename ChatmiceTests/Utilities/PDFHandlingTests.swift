@@ -6,6 +6,7 @@
 //
 
 import XCTest
+import Combine
 @testable import Chatmice
 
 final class PDFHandlingTests: XCTestCase {
@@ -18,31 +19,24 @@ final class PDFHandlingTests: XCTestCase {
             .appendingPathComponent(name)
     }
 
-    private func waitForAttachment(_ attachment: DocumentAttachment, timeout: TimeInterval = 5.0) {
-        let expectation = XCTestExpectation(description: "Wait for attachment load")
-        let start = Date()
-
-        func poll() {
-            if !attachment.isLoading {
-                expectation.fulfill()
-                return
-            }
-            if Date().timeIntervalSince(start) > timeout {
-                expectation.fulfill()
-                return
-            }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05, execute: poll)
-        }
-
-        poll()
-        wait(for: [expectation], timeout: timeout + 1.0)
+    @MainActor
+    private func waitForAttachment(_ attachment: DocumentAttachment, timeout: TimeInterval = 5.0) async {
+        let loaded = expectation(description: "Wait for attachment load")
+        // Yield the main actor while the loader publishes completion on the main queue.
+        // A timeout must fail the expectation, never masquerade as completed loading.
+        let observation = attachment.$isLoading
+            .first(where: { !$0 })
+            .sink { _ in loaded.fulfill() }
+        defer { observation.cancel() }
+        await fulfillment(of: [loaded], timeout: timeout)
     }
 
-    func testNormalPDFLoadsAndGeneratesPreview() {
+    @MainActor
+    func testNormalPDFLoadsAndGeneratesPreview() async {
         let url = fileURL(named: "lorem-ipsum.pdf")
         let attachment = DocumentAttachment(url: url)
 
-        waitForAttachment(attachment)
+        await waitForAttachment(attachment)
 
         XCTAssertNil(attachment.error)
         XCTAssertTrue(attachment.isReadyForUpload)
@@ -50,21 +44,23 @@ final class PDFHandlingTests: XCTestCase {
         XCTAssertNotNil(attachment.thumbnail)
     }
 
-    func testCorruptedPDFDoesNotCrashAndRemainsSendable() {
+    @MainActor
+    func testCorruptedPDFDoesNotCrashAndRemainsSendable() async {
         let url = fileURL(named: "lorem-ipsum-corrupted.pdf")
         let attachment = DocumentAttachment(url: url)
 
-        waitForAttachment(attachment)
+        await waitForAttachment(attachment)
 
         XCTAssertNil(attachment.error)
         XCTAssertTrue(attachment.isReadyForUpload)
     }
 
-    func testEncryptedPDFDoesNotCrashAndRemainsSendable() {
+    @MainActor
+    func testEncryptedPDFDoesNotCrashAndRemainsSendable() async {
         let url = fileURL(named: "lorem-ipsum-password.pdf")
         let attachment = DocumentAttachment(url: url)
 
-        waitForAttachment(attachment)
+        await waitForAttachment(attachment)
 
         XCTAssertNil(attachment.error)
         XCTAssertTrue(attachment.isReadyForUpload)

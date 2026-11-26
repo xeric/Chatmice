@@ -299,6 +299,197 @@ final class ChatLayoutTests: XCTestCase {
         }
     }
     @MainActor
+    func testQuotePrefixShorteningPreservesNativeTextAndCalloutFormatting() async throws {
+        let prefix = String(repeating: "p", count: 135) + "\n"
+        let tail = String(repeating: "q", count: 66)
+        let exactSource = prefix + ">  " + tail
+        XCTAssertEqual((exactSource as NSString).length, 205)
+        XCTAssertEqual((exactSource as NSString).range(of: tail), NSRange(location: 139, length: 66))
+        let fixtures: [(source: String, expected: String, callout: Bool)] = [
+            (exactSource, prefix + "│ " + tail, false),
+            ("  >   First\n\t>  >   Second 🧑🏽‍💻 e\u{301}",
+             "│ First\n│ │ Second 🧑🏽‍💻 e\u{301}", false),
+            ("  >   [!WARNING] Keep 🧑🏽‍💻 e\u{301}\n >  Following\n  > >   Last",
+             "│ WARNING Keep 🧑🏽‍💻 e\u{301}\n│ Following\n│ │ Last", true),
+            (">>[!NOTE] text", "│ │ NOTE text", false),
+        ]
+        func richTextViews(in view: NSView) -> [SelectableRichTextView] {
+            let current = (view as? SelectableRichTextView).map { [$0] } ?? []
+            return current + view.subviews.flatMap(richTextViews(in:))
+        }
+        for fixture in fixtures {
+            let state = StreamingMarkdownTestState(content: fixture.source, isStreaming: false)
+            let host = NSHostingView(rootView: StreamingMarkdownTestHarness(state: state))
+            let window = NSWindow(
+                contentRect: NSRect(x: 100, y: 100, width: 760, height: 600),
+                styleMask: [.titled], backing: .buffered, defer: false
+            )
+            window.isReleasedWhenClosed = false
+            window.contentView = host
+            window.makeKeyAndOrderFront(nil)
+            defer { window.close() }
+            try await Task.sleep(for: .milliseconds(100))
+            host.layoutSubtreeIfNeeded()
+            let textView = try XCTUnwrap(richTextViews(in: host).first)
+            let rendered = try XCTUnwrap(textView.textStorage)
+            XCTAssertEqual(rendered.string, fixture.expected)
+            XCTAssertGreaterThan(textView.bounds.width, 0)
+            XCTAssertGreaterThan(textView.bounds.height, 0)
+            let body = rendered.string as NSString
+            let indicator = body.range(of: "│ ")
+            XCTAssertNotEqual(indicator.location, NSNotFound)
+            let style = try XCTUnwrap(rendered.attribute(
+                .paragraphStyle, at: indicator.location, effectiveRange: nil
+            ) as? NSParagraphStyle)
+            XCTAssertGreaterThan(style.headIndent, 0)
+            if fixture.callout {
+                let label = body.range(of: "WARNING")
+                XCTAssertNotEqual(label.location, NSNotFound)
+                XCTAssertEqual(rendered.attribute(.foregroundColor, at: label.location,
+                                                   effectiveRange: nil) as? NSColor, .systemOrange)
+                let font = try XCTUnwrap(rendered.attribute(.font, at: label.location,
+                                                           effectiveRange: nil) as? NSFont)
+                XCTAssertEqual(font.pointSize, 14)
+                XCTAssertTrue(font.fontDescriptor.symbolicTraits.contains(.bold))
+            }
+        }
+    }
+
+    @MainActor
+    func testHeatingCostParagraphPreservesNativeRangesAndBoldSpans() async throws {
+        let markdown = "* **真实反馈：** 许多江浙沪100~140㎡平层的业主晒单，冬天24小时常开（设定20~22℃），开启峰谷电后，平均每个月采暖电费在 **600元~1200元** 左右。而同小区用燃气壁挂炉的邻居，因为触发了第三阶梯气价，普遍在 **2000元~3000元/月**。实现“地暖自由”不心疼，是最大的好评点。"
+        let rendered = try await nativeInlineMarkdown(markdown)
+        let expected = "真实反馈： 许多江浙沪100~140㎡平层的业主晒单，冬天24小时常开（设定20~22℃），开启峰谷电后，平均每个月采暖电费在 600元~1200元 左右。而同小区用燃气壁挂炉的邻居，因为触发了第三阶梯气价，普遍在 2000元~3000元/月。实现“地暖自由”不心疼，是最大的好评点。"
+        let body = rendered.string as NSString
+        let bodyRange = body.range(of: expected)
+        XCTAssertNotEqual(bodyRange.location, NSNotFound)
+        XCTAssertFalse(rendered.string.contains("*"))
+        let ordinary = body.range(of: "许多江浙沪")
+        let baseFont = try XCTUnwrap(rendered.attribute(.font, at: ordinary.location, effectiveRange: nil) as? NSFont)
+        let baseBaseline = (rendered.attribute(.baselineOffset, at: ordinary.location, effectiveRange: nil) as? NSNumber)?.doubleValue ?? 0
+        let boldRanges = ["真实反馈：", "600元~1200元", "2000元~3000元/月"].map { body.range(of: $0) }
+        for range in boldRanges { XCTAssertNotEqual(range.location, NSNotFound) }
+        for range in ["100~140㎡", "20~22℃", "600元~1200元", "2000元~3000元/月"].map({ body.range(of: $0) }) {
+            XCTAssertNotEqual(range.location, NSNotFound)
+        }
+        guard bodyRange.location != NSNotFound else { return }
+        for index in bodyRange.location..<NSMaxRange(bodyRange) {
+            let font = try XCTUnwrap(rendered.attribute(.font, at: index, effectiveRange: nil) as? NSFont)
+            let baseline = (rendered.attribute(.baselineOffset, at: index, effectiveRange: nil) as? NSNumber)?.doubleValue ?? 0
+            XCTAssertEqual(font.pointSize, baseFont.pointSize, accuracy: 0.01, "Ordinary text and ranges must not become scripts")
+            XCTAssertEqual(baseline, baseBaseline, accuracy: 0.01)
+            let isBold = boldRanges.contains { NSLocationInRange(index, $0) }
+            if isBold {
+                XCTAssertGreaterThan(NSFontManager.shared.weight(of: font), NSFontManager.shared.weight(of: baseFont), "Only the label and two amounts are emphasized")
+            } else {
+                XCTAssertEqual(NSFontManager.shared.weight(of: font), NSFontManager.shared.weight(of: baseFont))
+            }
+        }
+    }
+
+    @MainActor
+    func testNumericRangeTildesAndHyphensRemainLiteralInNativeText() async throws {
+        let source = "Plain 100-140㎡; 100~140㎡; 20~22℃; 1~2~3; **600元~1200元**，**2000元~3000元/月**; ~~removed~~; H~2~O; X^2^."
+        let rendered = try await nativeInlineMarkdown(source)
+        XCTAssertEqual(rendered.string, "Plain 100-140㎡; 100~140㎡; 20~22℃; 1~2~3; 600元~1200元，2000元~3000元/月; removed; H2O; X2.")
+        let body = rendered.string as NSString
+        let baseFont = try XCTUnwrap(rendered.attribute(.font, at: 0, effectiveRange: nil) as? NSFont)
+        for token in ["100-140㎡", "100~140㎡", "20~22℃", "1~2~3", "600元~1200元", "2000元~3000元/月"] {
+            let range = body.range(of: token)
+            XCTAssertNotEqual(range.location, NSNotFound)
+            guard range.location != NSNotFound else { continue }
+            for index in range.location..<NSMaxRange(range) {
+                let font = try XCTUnwrap(rendered.attribute(.font, at: index, effectiveRange: nil) as? NSFont)
+                XCTAssertEqual(font.pointSize, baseFont.pointSize, accuracy: 0.01)
+                XCTAssertEqual((rendered.attribute(.baselineOffset, at: index, effectiveRange: nil) as? NSNumber)?.doubleValue ?? 0, 0)
+                XCTAssertEqual((rendered.attribute(.strikethroughStyle, at: index, effectiveRange: nil) as? NSNumber)?.intValue ?? 0, 0)
+            }
+        }
+        for token in ["600元~1200元", "2000元~3000元/月"] {
+            let range = body.range(of: token)
+            guard range.location != NSNotFound else { continue }
+            for index in range.location..<NSMaxRange(range) {
+                let font = try XCTUnwrap(rendered.attribute(.font, at: index, effectiveRange: nil) as? NSFont)
+                XCTAssertGreaterThan(NSFontManager.shared.weight(of: font), NSFontManager.shared.weight(of: baseFont))
+            }
+        }
+        for (token, direction) in [("H2O", -1.0), ("X2", 1.0)] {
+            let range = body.range(of: token)
+            let index = range.location + 1
+            let font = try XCTUnwrap(rendered.attribute(.font, at: index, effectiveRange: nil) as? NSFont)
+            let baseline = try XCTUnwrap(rendered.attribute(.baselineOffset, at: index, effectiveRange: nil) as? NSNumber)
+            XCTAssertLessThan(font.pointSize, baseFont.pointSize)
+            XCTAssertGreaterThan(baseline.doubleValue * direction, 0)
+        }
+        let strike = body.range(of: "removed")
+        XCTAssertEqual(rendered.attribute(.strikethroughStyle, at: strike.location, effectiveRange: nil) as? Int, NSUnderlineStyle.single.rawValue)
+    }
+
+    @MainActor
+    func testScriptBoundariesPreserveEscapesCodeEmphasisAndUnmatchedMarkers() async throws {
+        let source = #"Plain ~subscript~ ^superscript^; **bold** *italic*; \~escaped\~ \^escaped\^; `~code~ ^code^ **code** ~~code~~`; ~two words~ ^two words^; ~before`code`after~; unmatched~ and unmatched^."#
+        let rendered = try await nativeInlineMarkdown(source)
+        XCTAssertEqual(rendered.string, "Plain subscript superscript; bold italic; ~escaped~ ^escaped^; ~code~ ^code^ **code** ~~code~~; ~two words~ ^two words^; ~beforecodeafter~; unmatched~ and unmatched^.")
+        let body = rendered.string as NSString
+        let baseFont = try XCTUnwrap(rendered.attribute(.font, at: 0, effectiveRange: nil) as? NSFont)
+        for (token, direction) in [("subscript", -1.0), ("superscript", 1.0)] {
+            let range = body.range(of: token)
+            let font = try XCTUnwrap(rendered.attribute(.font, at: range.location, effectiveRange: nil) as? NSFont)
+            let baseline = try XCTUnwrap(rendered.attribute(.baselineOffset, at: range.location, effectiveRange: nil) as? NSNumber)
+            XCTAssertLessThan(font.pointSize, baseFont.pointSize)
+            XCTAssertGreaterThan(baseline.doubleValue * direction, 0)
+        }
+        for token in ["~escaped~", "^escaped^", "~two words~", "^two words^", "~before", "after~", "unmatched~", "unmatched^"] {
+            let range = body.range(of: token)
+            XCTAssertNotEqual(range.location, NSNotFound)
+            guard range.location != NSNotFound else { continue }
+            for index in range.location..<NSMaxRange(range) {
+                let font = try XCTUnwrap(rendered.attribute(.font, at: index, effectiveRange: nil) as? NSFont)
+                XCTAssertEqual(font.pointSize, baseFont.pointSize, accuracy: 0.01)
+                XCTAssertEqual((rendered.attribute(.baselineOffset, at: index, effectiveRange: nil) as? NSNumber)?.doubleValue ?? 0, 0)
+                XCTAssertEqual((rendered.attribute(.strikethroughStyle, at: index, effectiveRange: nil) as? NSNumber)?.intValue ?? 0, 0)
+            }
+        }
+        let boldFont = try XCTUnwrap(rendered.attribute(.font, at: body.range(of: "bold").location, effectiveRange: nil) as? NSFont)
+        let italicFont = try XCTUnwrap(rendered.attribute(.font, at: body.range(of: "italic").location, effectiveRange: nil) as? NSFont)
+        XCTAssertGreaterThan(NSFontManager.shared.weight(of: boldFont), NSFontManager.shared.weight(of: baseFont))
+        XCTAssertTrue(italicFont.fontDescriptor.symbolicTraits.contains(.italic))
+        let codeRange = body.range(of: "~code~ ^code^ **code** ~~code~~")
+        for index in codeRange.location..<NSMaxRange(codeRange) {
+            let font = try XCTUnwrap(rendered.attribute(.font, at: index, effectiveRange: nil) as? NSFont)
+            XCTAssertTrue(font.fontDescriptor.symbolicTraits.contains(.monoSpace))
+            XCTAssertEqual((rendered.attribute(.baselineOffset, at: index, effectiveRange: nil) as? NSNumber)?.doubleValue ?? 0, 0)
+        }
+    }
+
+    @MainActor
+    private func nativeInlineMarkdown(_ markdown: String) async throws -> NSAttributedString {
+        let state = StreamingMarkdownTestState(content: markdown, isStreaming: false)
+        let host = NSHostingView(rootView: StreamingMarkdownTestHarness(state: state))
+        let window = NSWindow(contentRect: NSRect(x: 100, y: 100, width: 760, height: 320),
+                              styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        window.makeKeyAndOrderFront(nil)
+        defer { window.close() }
+        try await Task.sleep(for: .milliseconds(100))
+        host.layoutSubtreeIfNeeded()
+        func richTextViews(in view: NSView) -> [SelectableRichTextView] {
+            let current = (view as? SelectableRichTextView).map { [$0] } ?? []
+            return current + view.subviews.flatMap(richTextViews(in:))
+        }
+        let text = try XCTUnwrap(richTextViews(in: host).first)
+        let storage = try XCTUnwrap(text.textStorage)
+        let manager = try XCTUnwrap(text.layoutManager)
+        let container = try XCTUnwrap(text.textContainer)
+        manager.ensureLayout(for: container)
+        XCTAssertGreaterThan(text.bounds.width, 0)
+        XCTAssertGreaterThan(text.bounds.height, 0)
+        XCTAssertGreaterThan(manager.usedRect(for: container).height, 0)
+        return NSAttributedString(attributedString: storage)
+    }
+
+    @MainActor
     func testEnhancedMarkdownRendersInNativeMessageView() async throws {
         let filler = String(repeating: "A paragraph keeps this text on the TextKit rendering path.\n", count: 24)
         let markdown = """

@@ -265,6 +265,15 @@ private struct PreparedInlineScripts {
                     continue
                 }
             }
+            // Only paired script tokens reach placeholders. Other single tildes are literal,
+            // not Foundation Markdown's single-tilde strikethrough shorthand.
+            if delimiter == "~", Self.isSingleTilde(at: index, in: source) {
+                appendText(until: index)
+                output.append("\\~")
+                index = source.index(after: index)
+                textStart = index
+                continue
+            }
             index = source.index(after: index)
         }
 
@@ -281,16 +290,28 @@ private struct PreparedInlineScripts {
         return !previousIsTilde && !nextIsTilde
     }
 
+    private static func isNumericRangeTilde(at index: String.Index, in source: String) -> Bool {
+        let next = source.index(after: index)
+        return index > source.startIndex && next < source.endIndex
+            && source[source.index(before: index)].isNumber && source[next].isNumber
+    }
+
     private static func closingDelimiter(
         _ delimiter: Character,
         after opening: String.Index,
         in source: String
     ) -> String.Index? {
+        // Scripts are single non-whitespace tokens and cannot consume inline code.
+        // A tilde between numbers belongs to a literal range, even beside another range.
+        if delimiter == "~", isNumericRangeTilde(at: opening, in: source) { return nil }
         var index = source.index(after: opening)
         while index < source.endIndex {
-            guard source[index] != "\n" else { return nil }
+            guard !source[index].isWhitespace else { return nil }
+            // A script must not hide emphasis or code delimiters from Markdown parsing.
+            if "`*_".contains(source[index]), !isEscaped(index, in: source) { return nil }
             if source[index] == delimiter, !isEscaped(index, in: source) {
-                if delimiter != "~" || isSingleTilde(at: index, in: source) {
+                if delimiter == "~", !isSingleTilde(at: index, in: source) { return nil }
+                if delimiter != "~" || !isNumericRangeTilde(at: index, in: source) {
                     return index
                 }
             }
@@ -1174,6 +1195,7 @@ struct MessageContentView: View {
                 let fullMatchRange = match.range(at: 0)
                 let markerRange = match.range(at: 2)
                 let contentRange = match.range(at: 3)
+                let content = source.substring(with: contentRange)
                 let quoteDepth = source.substring(with: markerRange).filter { $0 == ">" }.count
                 let quoteBars = String(repeating: "│ ", count: quoteDepth)
                 let prefixRange = NSRange(
@@ -1213,7 +1235,6 @@ struct MessageContentView: View {
                     )
                 }
 
-                let content = source.substring(with: contentRange)
                 if let callout = calloutStyles.first(where: {
                     content.uppercased().hasPrefix($0.marker)
                 }) {
